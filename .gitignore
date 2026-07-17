@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/output/
+*.egg-info/
+config.json
+frontend/lib/*.min.js
+.pytest_cache/
+*.log
+tmp/

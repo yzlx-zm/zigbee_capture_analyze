@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Zigbee 分析</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;color:#1a1a1a;background:#f5f6fa}
+#nb{display:flex;align-items:center;background:#1e293b;color:#f1f5f9;padding:0 16px;height:44px;gap:16px}
+#nb .logo{font-weight:700;font-size:14px}
+.nt{display:flex;gap:2px;flex:1}
+.nt a{color:#94a3b8;text-decoration:none;padding:8px 14px;border-radius:6px 6px 0 0;font-size:12px;cursor:pointer}
+.nt a:hover{color:#e2e8f0;background:#334155}
+.nt a.on{color:#fff;background:#3b82f6}
+.card{background:#fff;border-radius:8px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}
+h3{margin-bottom:10px;font-size:14px}
+.btn{padding:6px 14px;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:500}
+.btn-p{background:#3b82f6;color:#fff}.btn-p:hover{background:#2563eb}
+.btn-o{border:1px solid #d1d5db;background:#fff;color:#374151}
+.btn-s{padding:3px 8px;font-size:11px}
+input,select{padding:5px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px}
+.file-drop{border:2px dashed #94a3b8;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;margin:12px 0}
+.file-drop:hover{border-color:#3b82f6;background:#eff6ff}
+.stats{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#64748b;margin-bottom:10px}
+.stats span{background:#f1f5f9;padding:3px 8px;border-radius:4px}
+canvas{border:1px solid #e2e8f0;border-radius:4px}
+</style></head>
+<body>
+<nav id="nb"><span class="logo">📡 Zigbee 分析</span><div class="nt">
+<a class="nt on" data-r="import">导入</a><a class="nt" data-r="topo">拓扑</a>
+<a class="nt" data-r="tl">时间线</a><a class="nt" data-r="ai">AI</a></div>
+<span id="sb" style="font-size:11px;color:#94a3b8;margin-left:auto">就绪</span></nav>
+<div id="mc"></div>
+<script>
+var A={get:u=>fetch(u).then(r=>r.json()),post:(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())};
+var S={stats:{}};
+var R={};function reg(n,h){R[n]=h}
+function rt(){var h=location.hash.slice(1)||'import';
+document.querySelectorAll('.nt a').forEach(t=>t.classList.toggle('on',t.dataset.r===h));
+document.getElementById('mc').innerHTML='';if(R[h])R[h]()}
+window.addEventListener('hashchange',rt);
+function sb(m){document.getElementById('sb').textContent=m||'就绪'}
+
+// IMPORT
+reg('import',function(){
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📂 导入抓包</h3>'
+    +'<div class="file-drop" id="drop"><p>拖拽 pcap/pcapng/.cubx</p><input type="file" id="finp" multiple accept=".pcap,.pcapng,.cubx" style="display:none"></div>'
+    +'<button class="btn btn-o btn-s" id="lpath">本地路径...</button>'
+    +'<div id="prog" style="display:none;margin-top:8px"><div class="progress"><div id="bar" style="width:0%"></div></div><p id="imsg"></p></div></div>'
+    +'<div class="card" id="sout" style="display:none"><h3>结果</h3><div id="sdiv"></div>'
+    +'<button class="btn btn-p btn-s" data-r="topo" style="margin-top:8px">查看拓扑→</button> '
+    +'<button class="btn btn-p btn-s" data-r="tl" style="margin-top:8px">查看时间线→</button></div>';
+  var drop=document.getElementById('drop'),inp=document.getElementById('finp');
+  drop.addEventListener('click',function(){inp.click()});
+  drop.addEventListener('dragover',function(e){e.preventDefault()});
+  drop.addEventListener('drop',function(e){e.preventDefault();if(e.dataTransfer.files.length)doI(e.dataTransfer.files)});
+  inp.addEventListener('change',function(){if(inp.files.length)doI(inp.files)});
+  document.getElementById('lpath').addEventListener('click',function(){
+    var p=prompt('文件路径或目录:');if(!p)return;
+    document.getElementById('prog').style.display='block';document.getElementById('imsg').textContent='tshark解析中...';
+    var fd=new FormData();fd.append('path',p);
+    fetch('/api/import/local',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){sr(d);document.getElementById('prog').style.display='none'})
+      .catch(function(e){alert('错误: '+e.message);document.getElementById('prog').style.display='none'});
+  });
+  document.querySelectorAll('[data-r]').forEach(function(b){b.addEventListener('click',function(){location.hash=this.dataset.r})});
+});
+function doI(files){document.getElementById('prog').style.display='block';document.getElementById('imsg').textContent='上传中...';
+  var fd=new FormData();for(var i=0;i<files.length;i++)fd.append('files',files[i]);
+  fetch('/api/import/files',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){sr(d);document.getElementById('prog').style.display='none'})
+    .catch(function(e){alert('错误: '+e.message);document.getElementById('prog').style.display='none'});}
+function sr(d){document.getElementById('sout').style.display='block';var s=d.stats||{};
+  document.getElementById('sdiv').innerHTML='<div class="stats"><span>总包:'+s.total+'</span><span>节点:'+s.nodes+'</span></div>'+JSON.stringify(s.by_type||{});
+  S.stats=s;sb(s.total+'包 | '+s.nodes+'节点');}
+
+// TOPOLOGY
+reg('topo',function(){
+  document.getElementById('mc').innerHTML='<div class="card"><div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><h3 style="margin:0">📡 拓扑</h3>'
+    +'<input id="tpan" placeholder="PAN (FEED)" style="width:120px;font-family:monospace"><input id="taddr" placeholder="地址 (0x0000)" style="width:120px;font-family:monospace">'
+    +'<button class="btn btn-o btn-s" id="tgo">筛选</button><button class="btn btn-o btn-s" id="trst">重置</button>'
+    +'<span style="font-size:11px;color:#94a3b8">🖱缩放|拖拽</span><span id="tinfo" style="font-size:11px;color:#64748b"></span></div>'
+    +'<canvas id="tcv" style="width:100%;height:calc(100vh - 160px);cursor:grab"></canvas></div>';
+  var zoom=1,px=0,py=0,dr=false,lx=0,ly=0,hl=null,pf=null;
+  function draw(){A.get('/api/topology/graph').then(function(d){
+      var ns=d.nodes||[],coord=d.coord;var fns=ns;
+      if(pf!==null)fns=ns.filter(function(n){return n.id===pf||n.pan==='0x'+pf.toString(16).toUpperCase().padStart(4,'0')});
+      document.getElementById('tinfo').textContent=fns.length+'节点 | Coord:'+(coord!=null?'0x'+coord.toString(16).toUpperCase():'?');
+      var cv=document.getElementById('tcv');cv.width=cv.offsetWidth;cv.height=cv.offsetHeight;
+      var ctx=cv.getContext('2d'),W=cv.width,H=cv.height;ctx.clearRect(0,0,W,H);
+      if(fns.length===0){ctx.fillText('无匹配',20,30);return}
+      var layers={},visited={};var root=null;for(var i=0;i<fns.length;i++){if(fns[i].id===coord||fns[i].is_coord){root=fns[i];break}}
+      if(!root)root=fns[0];layers[0]=[root];visited[root.id]=true;
+      var others=[];for(var i=0;i<fns.length;i++){if(!visited[fns[i].id])others.push(fns[i])}
+      if(others.length){var ch=Math.max(1,Math.ceil(others.length/15));for(var i=0;i<others.length;i++){var d=1+Math.floor(i/ch);if(!layers[d])layers[d]=[];layers[d].push(others[i])}}
+      var lh=70,nr=10,sx=140;ctx.save();ctx.translate(W/2+px,30+py);ctx.scale(zoom,zoom);
+      var tw=0;for(var k in layers){tw=Math.max(tw,layers[k].length*sx)}var ox=-tw/2;
+      for(var d in layers){for(var i=0;i<layers[d].length;i++){var n=layers[d][i];
+          var x=ox+sx*(i+1-(layers[d].length-1)/2),y=parseInt(d)*lh+30;
+          var isH=hl!==null&&n.id===hl;var clr=n.is_coord?'#fbbf24':n.dev_type!=='?'?'#3b82f6':n.seen>100?'#22c55e':n.seen>20?'#3b82f6':'#94a3b8';
+          if(isH)clr='#ef4444';ctx.beginPath();ctx.arc(x,y,isH?nr+2:nr,0,Math.PI*2);
+          ctx.fillStyle=clr;ctx.fill();ctx.strokeStyle=isH?'#ef4444':'#fff';ctx.lineWidth=isH?3:1.5;ctx.stroke();
+          ctx.fillStyle='#1a1a1a';ctx.font='10px monospace';ctx.textAlign='center';
+          ctx.fillText('0x'+n.id.toString(16).toUpperCase().padStart(4,'0'),x,y+nr+10);
+          if(n.eui64){ctx.fillStyle='#94a3b8';ctx.font='8px monospace';ctx.fillText(n.eui64.substr(0,16),x,y+nr+18);}
+      }}ctx.restore();});}
+  setTimeout(function(){var cv=document.getElementById('tcv');
+    cv.addEventListener('wheel',function(e){e.preventDefault();zoom*=e.deltaY<0?1.1:0.9;zoom=Math.max(0.1,Math.min(5,zoom));draw()});
+    cv.addEventListener('mousedown',function(e){dr=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing'});
+    cv.addEventListener('mousemove',function(e){if(dr){px+=(e.clientX-lx)/zoom;py+=(e.clientY-ly)/zoom;lx=e.clientX;ly=e.clientY;draw()}});
+    cv.addEventListener('mouseup',function(){dr=false;cv.style.cursor='grab'});cv.addEventListener('mouseleave',function(){dr=false;cv.style.cursor='grab'});
+  },500);
+  document.getElementById('tgo').addEventListener('click',function(){var v=document.getElementById('tpan').value.trim();pf=v?parseInt(v,16):null;v=document.getElementById('taddr').value.trim();hl=v?parseInt(v):null;draw()});
+  document.getElementById('trst').addEventListener('click',function(){document.getElementById('tpan').value='';document.getElementById('taddr').value='';pf=null;hl=null;draw()});
+  draw();
+});
+
+// TIMELINE
+reg('tl',function(){
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 设备交互时间线</h3>'
+    +'<div style="display:flex;gap:8px;margin-bottom:8px"><input id="tnode" placeholder="地址 (0x0000)" style="width:160px;font-family:monospace">'
+    +'<button class="btn btn-p btn-s" id="tshow">查看</button><span id="tstat" style="font-size:11px;color:#64748b"></span></div>'
+    +'<canvas id="tlcv" style="width:100%;height:calc(100vh - 200px)"></canvas></div>';
+  document.getElementById('tshow').addEventListener('click',function(){
+    var addr=document.getElementById('tnode').value.trim();
+    document.getElementById('tstat').textContent=addr?'设备 '+addr+' 的时间线 (功能开发中)':'输入设备地址后查看';
+    A.get('/api/import/status').then(function(s){if(s.total)document.getElementById('tstat').textContent='共 '+s.total+' 包 — 时间线后续版本实现'});
+  });
+});
+
+// AI
+reg('ai',function(){
+  document.getElementById('mc').innerHTML='<div class="card"><h3>🤖 AI 分析</h3>'
+    +'<p style="font-size:11px;color:#64748b;margin-bottom:8px">配置 API Key 后可使用 AI 分析抓包中的典型问题(路由故障、控制失败等)。</p>'
+    +'<input id="aikey" type="password" placeholder="OpenAI API Key" style="width:300px;margin-bottom:8px;font-family:monospace">'
+    +'<button class="btn btn-p btn-s" id="aisave">保存</button>'
+    +'<div style="margin-top:12px"><textarea id="aiq" rows="3" placeholder="例: 分析PAN 0xFEED网络的路由健康状况" style="width:100%;font-size:12px"></textarea>'
+    +'<button class="btn btn-p btn-s" id="aisend" style="margin-top:4px">分析</button></div>'
+    +'<div id="aiout" style="margin-top:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto"></div></div>';
+  document.getElementById('aisave').addEventListener('click',function(){alert('AI功能将在后续版本实现')});
+  document.getElementById('aisend').addEventListener('click',function(){document.getElementById('aiout').textContent='AI功能将在后续版本实现, 请先确认基本功能正常'});
+});
+
+document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('.nt a').forEach(function(t){t.addEventListener('click',function(e){e.preventDefault();location.hash=this.dataset.r})});
+  rt();A.get('/api/import/status').then(function(s){if(s.total)sb(s.total+'包 | '+s.nodes+'节点')}).catch(function(){});
+});
+</script></body></html>
