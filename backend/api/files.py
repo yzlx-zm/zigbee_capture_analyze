@@ -23,6 +23,40 @@ def get_nodes():
     return _nodes
 
 
+
+@router.post("/import/files")
+async def import_upload(files: list[UploadFile] = File(...)):
+    global _packets, _nodes, _file_type
+    import tempfile
+    all_pkts = []
+    for f in files:
+        tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        try:
+            with open(tmp_path, "wb") as out:
+                while data := await f.read(1024 * 1024):
+                    out.write(data)
+            pkts = csv_reader.read_csv(tmp_path)
+            all_pkts.extend(pkts)
+        finally:
+            try: os.unlink(tmp_path)
+            except OSError: pass
+    if not all_pkts:
+        return JSONResponse({"error": "无有效数据"}, 400)
+    all_pkts.sort(key=lambda p: p["ts"])
+    _packets = all_pkts
+    _nodes = csv_reader.extract_nodes(all_pkts)
+    _file_type = "csv"
+    types = {}
+    for p in all_pkts:
+        t = p["pkt_type"] or "Unknown"
+        types[t] = types.get(t, 0) + 1
+    return {"ok": True, "packets": len(all_pkts), "nodes": len(_nodes),
+            "file_type": "csv", "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20])}
+
+
+
 @router.post("/import/local")
 async def import_local(path: str = Form(...)):
     global _packets, _nodes, _file_type
@@ -56,6 +90,13 @@ async def import_local(path: str = Form(...)):
         "file_type": _file_type,
         "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
     }
+
+
+@router.delete("/import/clear")
+async def import_clear():
+    global _packets, _nodes, _file_type
+    _packets = []; _nodes = {}; _file_type = ""
+    return {"ok": True}
 
 
 @router.get("/import/status")
