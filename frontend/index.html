@@ -130,7 +130,10 @@ reg('topo',function(){
     var ns=d.nodes||[],es=d.edges||[];
     // Apply PAN filter
     var filtered=ns;
-    if(filterPan!==null&&filterPan!==undefined)filtered=ns.filter(function(n){return n.pan===filterPan});
+    if(filterPan!==null&&filterPan!==undefined){
+      filtered=ns.filter(function(n){return n.pan===filterPan||n.aid===0});
+    }
+    var treeCoord=d.coord;
     // Build filtered node lookup
     var filteredIds={};for(var i=0;i<filtered.length;i++)filteredIds[filtered[i].aid]=true;
     // Count filtered
@@ -141,7 +144,7 @@ reg('topo',function(){
     // Also update main stats to reflect filter
     document.getElementById('tstat').innerHTML='<div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:6px">'
       +(displayPan?'PAN:0x'+displayPan+' | ':'')+d.total_nodes+' 节点 | '+d.tree_node_count+' 树节点 | <span style="color:#3b82f6">主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?')+'</span></div>'
-      +'<div class="stats"><span>协调器: '+(d.coord!=null?'0x'+d.coord.toString(16).toUpperCase():'?')+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span>'
+      +'<div class="stats"><span>协调器: '+(treeCoord!=null?'0x'+treeCoord.toString(16).toUpperCase():'?')+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span>'
       +'<span>边:'+d.total_edges+'</span></div>'
       +'<p style="font-size:11px;margin-top:4px">深度: '+JSON.stringify(d.tree_depths||{})+'</p>';
 
@@ -150,7 +153,7 @@ reg('topo',function(){
     var pCount=Object.keys(d.parents||{}).length;
     document.getElementById('tstat').innerHTML='<div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:6px">'
       +(displayPan?'PAN:0x'+displayPan+' | ':'')+'显示 '+filtered.length+' / '+d.total_nodes+' 节点 | <span style="color:#3b82f6">主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?')+'</span></div>'
-      +'<div class="stats"><span>协调器: '+(d.coord!=null?'0x'+d.coord.toString(16).toUpperCase():'?')+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span>'
+      +'<div class="stats"><span>协调器: '+(treeCoord!=null?'0x'+treeCoord.toString(16).toUpperCase():'?')+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span>'
       +'<span>边:'+d.total_edges+'</span></div>'
       +'<p style="font-size:11px;margin-top:4px">深度: '+JSON.stringify(d.tree_depths||{})+'</p>';
     // Filter edges: only those where both endpoints are in filtered set
@@ -236,11 +239,12 @@ reg('topo',function(){
     }
 
     var root=document.getElementById('tree-root');root.innerHTML='';
-    if(d.coord!=null&&nmap[d.coord])renderNode(d.coord, root);
+    var treeCoord=d._filterCoord!=null?d._filterCoord:d.coord;
+    if(treeCoord!=null&&nmap[treeCoord])renderNode(treeCoord, root);
     // Also render orphan nodes
-    var orphans=[];for(var i=0;i<filtered.length;i++){if(filtered[i].parent==null&&filtered[i].aid!==d.coord)orphans.push(filtered[i])}
+    var orphans=[];for(var i=0;i<filtered.length;i++){if(filtered[i].parent==null&&filtered[i].aid!==treeCoord)orphans.push(filtered[i])}
     if(orphans.length>0){
-      var oli=document.createElement('li');oli.classList.add('collapsed');var otog=document.createElement('span');otog.className='toggle';otog.textContent='▶';otog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});oli.appendChild(otog);oli.innerHTML+='<span class="node low" style="font-weight:bold;background:#fef2f2">❓ 未归类节点 ('+orphans.length+')</span>';
+      var oli=document.createElement('li');oli.classList.add('collapsed');var otog=document.createElement('span');otog.className='toggle';otog.textContent='▶';otog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});oli.appendChild(otog);var ospan=document.createElement('span');ospan.className='node low';ospan.style.fontWeight='bold';ospan.style.background='#fef2f2';ospan.textContent='❓ 未归类节点 ('+orphans.length+')';oli.appendChild(ospan);
       var oul=document.createElement('ul');
       for(var i=0;i<Math.min(orphans.length,20);i++)renderNode(orphans[i].aid, oul);
       if(orphans.length>20){var fli=document.createElement('li');fli.innerHTML='<span class="fold">...'+(orphans.length-20)+' more</span>';oul.appendChild(fli)}
