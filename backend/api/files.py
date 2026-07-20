@@ -102,3 +102,30 @@ async def import_clear():
 @router.get("/import/status")
 async def import_status():
     return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type}
+
+
+@router.get("/packets")
+async def packet_list(addr: str = "", pan: str = "", limit: int = 500, offset: int = 0):
+    """查询原始包列表，可按地址或PAN过滤"""
+    result = []
+    addr_int = int(addr, 16) if addr else None
+    pan_int = int(pan, 16) if pan else None
+    for p in _packets:
+        if addr_int is not None:
+            if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
+                continue
+        if pan_int is not None:
+            if p["pan_src"] != pan_int and p["pan_dst"] != pan_int:
+                continue
+        result.append(p)
+        if len(result) >= offset + limit:
+            break
+    page = result[offset:offset + limit]
+    # Convert to serializable format
+    return [{
+        "ts": p["ts"], "ch": p.get("ch", 0), "pkt_type": p.get("pkt_type", ""),
+        "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
+        "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
+        "pan_src": p.get("pan_src"), "pan_dst": p.get("pan_dst"),
+        "security": p.get("security", ""), "status": p.get("status", ""),
+    } for p in page]

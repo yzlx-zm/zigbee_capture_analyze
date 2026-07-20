@@ -1,0 +1,4 @@
+{
+    "cortex-debug.armToolchainPath": "${userRoot}/.eide/tools/gcc_arm\\bin",
+    "cortex-debug.JLinkGDBServerPath": "${userRoot}/.eide/tools/jlink\\JLinkGDBServerCL.exe"
+}

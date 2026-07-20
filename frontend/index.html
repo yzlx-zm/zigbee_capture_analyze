@@ -27,11 +27,29 @@ input,select{padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-siz
 .stats{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#64748b}
 .stats span{background:#f1f5f9;padding:2px 6px;border-radius:3px}
 canvas{border:1px solid #e2e8f0;border-radius:4px;cursor:grab}
+.tree{margin:0;padding:0;list-style:none;font-size:12px;font-family:monospace}
+.tree li{position:relative;padding:4px 0 4px 24px;border-left:1px solid #d1d5db}
+.tree li:last-child{border-left:none}
+.tree li::before{content:'';position:absolute;top:15px;left:0;width:18px;height:1px;background:#d1d5db}
+.tree .node{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;cursor:pointer;white-space:nowrap}
+.tree .node:hover{background:#f0f9ff}
+.tree .node.coord{background:#fef3c7;font-weight:bold}
+.tree .node.router{background:#dbeafe}
+.tree .node.leaf{background:#f0fdf4}
+.tree .node.low{background:#f1f5f9;color:#94a3b8}
+.tree .toggle{display:inline-block;width:16px;text-align:center;cursor:pointer;color:#64748b;font-weight:bold;margin-right:2px}
+.tree .fold{color:#3b82f6;cursor:pointer;font-size:11px;margin-left:4px}
+.tree .node.hl{background:#fee2e2!important;outline:2px solid #ef4444}
+.tree .edge-label{font-size:10px;color:#94a3b8;margin-left:4px}
+.tree ul{margin:0;padding:0;list-style:none}
+.tree .collapsed>ul{display:none}
+.tree .collapsed>.node>.toggle{color:#3b82f6}
 </style></head>
 <body>
 <nav id="nb"><span class="logo">📡 Zigbee 拓扑分析</span><div class="nt">
 <a class="nt on" data-r="import">导入</a><a class="nt" data-r="topo">拓扑</a>
-<a class="nt" data-r="nodes">节点</a><a class="nt" data-r="ai">AI</a></div>
+<a class="nt" data-r="tl">时间线</a><a class="nt" data-r="nodes">节点</a>
+<a class="nt" data-r="ai">AI</a></div>
 <span id="sb" style="font-size:11px;color:#94a3b8;margin-left:auto">就绪</span></nav>
 <div id="mc"></div>
 <script>
@@ -93,111 +111,168 @@ function sr(d){document.getElementById('sout').style.display='block';
 // ===== TOPOLOGY =====
 reg('topo',function(){
   document.getElementById('mc').style.padding='0';
-  var h='<div style="display:flex;height:calc(100vh - 44px)"><div style="width:340px;flex-shrink:0;overflow-y:auto;padding:12px;background:#fff;border-right:1px solid #e2e8f0">'
+  var h='<div style="display:flex;height:calc(100vh - 44px)"><div style="width:360px;flex-shrink:0;overflow-y:auto;padding:12px;background:#fff;border-right:1px solid #e2e8f0">'
     +'<div class="card"><h3>📊 拓扑统计</h3><div id="tstat"></div></div>'
-    +'<div class="card"><h3>🔗 链路评分 Top20</h3><div id="tlinks"></div></div></div>'
-    +'<div style="flex:1;display:flex;flex-direction:column"><div id="topo-bar" style="display:flex;gap:8px;align-items:center;padding:8px 12px;background:#fff;border-bottom:1px solid #e2e8f0">'
-    +'<input id="tpan" placeholder="PAN (16B6)" style="width:120px;font-family:monospace;font-size:11px">'
-    +'<input id="taddr" placeholder="地址 (0000)" style="width:120px;font-family:monospace;font-size:11px">'
+    +'<div class="card"><h3>🔗 链路评分</h3><div id="tlinks"></div></div><div class="card"><h3>📡 PAN 列表</h3><div id="pan-list"></div></div></div>'
+    +'<div style="flex:1;overflow:auto;padding:12px"><div style="display:flex;gap:8px;margin-bottom:8px">'
+    +'<input id="tpan" placeholder="PAN (16B6)" style="width:110px;font-family:monospace;font-size:11px">'
+    +'<input id="taddr" placeholder="地址 (0000)" style="width:110px;font-family:monospace;font-size:11px">'
     +'<button class="btn btn-p" id="tgo">筛选</button><button class="btn btn-o" id="trst">重置</button>'
-    +'<span style="font-size:11px;color:#94a3b8">🖱缩放|拖拽</span><span id="tinfo" style="font-size:11px;color:#64748b"></span></div>'
-    +'<canvas id="tcv" style="flex:1"></canvas></div></div>';
+    +'<button class="btn btn-o" id="texp">全部展开</button><button class="btn btn-o" id="tcol">全部折叠</button><span id="tinfo" style="font-size:11px;color:#64748b"></span></div>'
+    +'<ul class="tree" id="tree-root"></ul></div></div>';
   document.getElementById('mc').innerHTML=h;
 
-  var z=1,px=0,py=0,dr=false,lx=0,ly=0,hl=null,pf=null;
-  function load(){A.get('/api/topology/graph').then(function(d){S.topo=d;draw();updSidebar()})}
-  function updSidebar(){
+  function load(){A.get('/api/topology/graph').then(function(d){S.topo=d;renderTree(null,null)})}
+
+  function renderTree(filterPan, highlightAddr){
     var d=S.topo;if(!d)return;
+    var ns=d.nodes||[],es=d.edges||[];
+    // Apply PAN filter
+    if(filterPan!==null&&filterPan!==undefined)ns=ns.filter(function(n){return n.pan===filterPan});
+    // Count filtered
+    document.getElementById('tinfo').textContent=ns.length+' 节点 | '+(d.tree_node_count)+' 树节点';
+    if(filterPan!==null)document.getElementById('tinfo').textContent+=' | PAN:0x'+filterPan.toString(16).toUpperCase();
+
+    // Stats sidebar
     var pCount=Object.keys(d.parents||{}).length;
-    document.getElementById('tstat').innerHTML='<div class="stats"><span>总节点:'+d.total_nodes+'</span><span>树节点:'+d.tree_node_count+'</span><span>父子:'+pCount+'</span>'
-      +'<span>叶子:'+d.leaf_count+'</span><span>边:'+d.total_edges+'</span></div>'
-      +'<p style="font-size:11px;margin-top:4px">协调器: '+(d.coord!=null?'0x'+d.coord.toString(16).toUpperCase():'?')+' | 主PAN: '+(d.main_pan!=null?'0x'+d.main_pan.toString(16).toUpperCase():'?')+'</p>'
+    document.getElementById('tstat').innerHTML='<div class="stats"><span>总节点:'+d.total_nodes+'</span><span>树节点:'+d.tree_node_count+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span></div>'
+      +'<p style="font-size:11px;margin-top:4px">协调器: '+(d.coord!=null?'0x'+d.coord.toString(16).toUpperCase():'?')+' | PAN: '+(d.main_pan!=null?'0x'+d.main_pan.toString(16).toUpperCase():'?')+'</p>'
       +'<p style="font-size:11px">深度: '+JSON.stringify(d.tree_depths||{})+'</p>';
-    var es=(d.edges||[]).sort(function(a,b){return b.count-a.count}).slice(0,20);
-    var lh='<table class="tbl"><tr><th>链路</th><th>包数</th><th>成功率</th><th>LS</th></tr>';
-    for(var i=0;i<es.length;i++){var e=es[i];
+    var ess=(d.edges||[]).sort(function(a,b){return b.count-a.count}).slice(0,15);
+    var lh='<table class="tbl"><tr><th>链路</th><th>包数</th><th>成功率</th></tr>';
+    for(var i=0;i<ess.length;i++){var e=ess[i];
       lh+='<tr><td>0x'+e.src.toString(16).toUpperCase().padStart(4,'0')+'→0x'+e.dst.toString(16).toUpperCase().padStart(4,'0')+'</td>'
-        +'<td>'+e.count+'</td><td style="color:'+(e.success_rate>0.8?'#16a34a':e.success_rate>0.5?'#d97706':'#dc2626')+'">'+(e.success_rate*100).toFixed(0)+'%</td><td>'+(e.is_link_status?'✅':'')+'</td></tr>';}
-    document.getElementById('tlinks').innerHTML=lh+'</table>';}
+        +'<td>'+e.count+'</td><td style="color:'+(e.success_rate>0.8?'#16a34a':e.success_rate>0.5?'#d97706':'#dc2626')+'">'+(e.success_rate*100).toFixed(0)+'%</td></tr>';}
+    document.getElementById('tlinks').innerHTML=lh+'</table>';
+    // PAN list
+    var pl=d.pan_list||[];
+    var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
+    for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td></tr>';}
+    document.getElementById('pan-list').innerHTML=ph+'</table>';
+    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(){location.hash='tl';setTimeout(function(){document.getElementById('tnode').value='PAN:'+this.dataset.pan;document.getElementById('tshow').click()},200)})});
 
-  function draw(){
-    var d=S.topo;if(!d)return;var ns=d.nodes||[],es=d.edges||[];
-    var fns=ns;if(pf!==null)fns=ns.filter(function(n){return n.pan===pf});
-    var cv=document.getElementById('tcv');cv.width=cv.offsetWidth;cv.height=cv.offsetHeight;
-    var ctx=cv.getContext('2d'),W=cv.width,H=cv.height;ctx.clearRect(0,0,W,H);
-    document.getElementById('tinfo').textContent=fns.length+' 节点';
-    if(fns.length===0){ctx.fillText('无匹配节点',20,30);return}
+    // Build node lookup
+    var nmap={};for(var i=0;i<ns.length;i++){nmap[ns[i].aid]=ns[i]}
 
-    // Find coord & build parent-child tree for layout
-    var coordNode=null;for(var i=0;i<fns.length;i++){if(fns[i].aid===d.coord){coordNode=fns[i];break}}
-    if(!coordNode)coordNode=fns[0];
+    // Build adjacency for edges
+    var edgeMap={};for(var i=0;i<es.length;i++){edgeMap[es[i].src+'-'+es[i].dst]=es[i];edgeMap[es[i].dst+'-'+es[i].src]=es[i]}
 
-    // Build layout tree: coord at top, children wrapped in rows of 12
-    var placed={};
-    function placeNode(n, x, y){
-      n._x=x;n._y=y;placed[n.aid]=true;var kids=(n.children||[]);
-      if(kids.length===0)return;
-      // Wrap children in rows of 12
-      var perRow=12,rowGap=80,colGap=150;
-      var rows=Math.ceil(kids.length/perRow);
-      var yOff=0;
-      for(var r=0;r<rows;r++){
-        var rowKids=kids.slice(r*perRow,(r+1)*perRow);
-        var startX=x-(rowKids.length-1)*colGap/2;
-        for(var i=0;i<rowKids.length;i++){
-          var child=null;for(var j=0;j<fns.length;j++){if(fns[j].aid===rowKids[i]){child=fns[j];break}}
-          if(child&&!placed[child.aid])placeNode(child,startX+i*colGap,y+90+yOff);
-        }
-        yOff+=rowGap;
-      }
-    }
-    placeNode(coordNode, 0, 20);
-
-    // Place unplaced nodes in a grid below
-    var unplaced=[];for(var i=0;i<fns.length;i++){if(!placed[fns[i].aid])unplaced.push(fns[i])}
-    var maxY=20;for(var i=0;i<fns.length;i++){if(fns[i]._y&&fns[i]._y>maxY)maxY=fns[i]._y}
-    for(var i=0;i<unplaced.length;i++){unplaced[i]._x=(i%10-4.5)*150;unplaced[i]._y=maxY+110+Math.floor(i/10)*80}
-
-    var nr=10;ctx.save();ctx.translate(W/2+px,30+py);ctx.scale(z,z);
-
-    // Draw edges (parent→child, green+thick; other traffic, gray+thin)
-    for(var i=0;i<es.length;i++){var e=es[i];var sn=null,dn=null;
-      for(var j=0;j<fns.length;j++){if(fns[j].aid===e.src)sn=fns[j];if(fns[j].aid===e.dst)dn=fns[j]}
-      if(!sn||!dn||sn._x===undefined||dn._x===undefined)continue;
-      var isPC=e.is_parent_child;
-      ctx.beginPath();ctx.moveTo(sn._x,sn._y+nr);ctx.lineTo(dn._x,dn._y-nr);
-      if(isPC){ctx.strokeStyle='rgba(34,197,94,0.7)';ctx.lineWidth=2.5}
-      else{ctx.strokeStyle='rgba(148,163,184,0.25)';ctx.lineWidth=1}
-      ctx.stroke();
-      if(isPC){ctx.fillStyle='#16a34a';ctx.font='bold 9px sans-serif';ctx.textAlign='center';
-        ctx.fillText(e.count,(sn._x+dn._x)/2,(sn._y+dn._y)/2)}
-    }
-
-    // Draw nodes
-    for(var i=0;i<fns.length;i++){var n=fns[i];if(n._x===undefined)continue;
-      var isH=hl!==null&&n.aid===hl;
+    // Render HTML tree
+    function renderNode(aid, ul){
+      var n=nmap[aid];if(!n)return;
+      var li=document.createElement('li');
       var isRouter=n.children&&n.children.length>0;
-      var clr=n.is_coord?'#fbbf24':isRouter?'#3b82f6':n.seen>100?'#22c55e':n.seen>20?'#94a3b8':'#e2e8f0';
-      if(isH)clr='#ef4444';
-      ctx.beginPath();ctx.arc(n._x,n._y,isH?nr+4:isRouter?nr+2:nr,0,Math.PI*2);
-      ctx.fillStyle=clr;ctx.fill();
-      ctx.strokeStyle=isH?'#ef4444':isRouter?'#1e40af':'#fff';ctx.lineWidth=isH?3:isRouter?2:1.5;ctx.stroke();
-      ctx.fillStyle='#1a1a1a';ctx.font='10px monospace';ctx.textAlign='center';
-      var lb='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
-      if(n.children&&n.children.length>0)lb+=' ['+n.children.length+']';
-      ctx.fillText(lb,n._x,n._y+nr+10);
-      if(n.depth>=0){ctx.fillStyle='#94a3b8';ctx.font='8px sans-serif';ctx.fillText('L'+n.depth,n._x,n._y+nr+20)}
-    }ctx.restore();}
+      var cls=n.is_coord?'coord':isRouter?'router':n.seen>100?'leaf':'low';
+      if(highlightAddr!==null&&highlightAddr!==undefined&&n.aid===highlightAddr)cls+=' hl';
+      var kids=n.children||[];
+      // Sort kids by coord_traffic
+      kids.sort(function(a,b){return (nmap[b]?nmap[b].coord_traffic||0:0)-(nmap[a]?nmap[a].coord_traffic||0:0)});
 
-  setTimeout(function(){var cv=document.getElementById('tcv');
-    cv.addEventListener('wheel',function(e){e.preventDefault();z*=e.deltaY<0?1.1:0.9;z=Math.max(0.1,Math.min(5,z));draw()});
-    cv.addEventListener('mousedown',function(e){dr=true;lx=e.clientX;ly=e.clientY;cv.style.cursor='grabbing'});
-    cv.addEventListener('mousemove',function(e){if(dr){px+=(e.clientX-lx)/z;py+=(e.clientY-ly)/z;lx=e.clientX;ly=e.clientY;draw()}});
-    cv.addEventListener('mouseup',function(){dr=false;cv.style.cursor='grab'});cv.addEventListener('mouseleave',function(){dr=false;cv.style.cursor='grab'});
-  },500);
-  document.getElementById('tgo').addEventListener('click',function(){var v=document.getElementById('tpan').value.trim();pf=v?parseInt(v,16):null;v=document.getElementById('taddr').value.trim();hl=v?parseInt(v):null;draw()});
-  document.getElementById('trst').addEventListener('click',function(){document.getElementById('tpan').value='';document.getElementById('taddr').value='';pf=null;hl=null;draw()});
+      if(kids.length>0){
+        var tog=document.createElement('span');tog.className='toggle';tog.textContent='▼';
+        tog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});
+        li.appendChild(tog);
+      }
+      var nd=document.createElement('span');nd.className='node '+cls;
+      nd.innerHTML='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
+      if(isRouter)nd.innerHTML+=' ['+kids.length+']';
+      nd.title='seen:'+n.seen+' depth:'+n.depth+' parent:'+(n.parent!=null?'0x'+n.parent.toString(16).toUpperCase():'-');
+      nd.addEventListener('click',function(){location.hash='nodes';setTimeout(function(){document.getElementById('ns').value='0x'+aid.toString(16).toUpperCase().padStart(4,'0');document.getElementById('ngo').click()},100)});
+      li.appendChild(nd);
+
+      // Edge info (parent→this)
+      if(n.parent!=null){
+        var ek=n.parent+'-'+aid;var edge=edgeMap[ek];
+        if(edge){
+          var el=document.createElement('span');el.className='edge-label';
+          el.textContent='← '+edge.count+'pkts '+(edge.success_rate*100).toFixed(0)+'%';
+          if(edge.is_link_status)el.textContent+=' LS';
+          li.appendChild(el);
+        }
+      }
+
+      // Children
+      if(kids.length>0){
+        var childUl=document.createElement('ul');
+        var MAX=15;
+        var show=kids.slice(0,MAX);
+        for(var i=0;i<show.length;i++)renderNode(show[i], childUl);
+        if(kids.length>MAX){
+          var foldLi=document.createElement('li');
+          var foldSpan=document.createElement('span');foldSpan.className='fold';
+          foldSpan.textContent='...'+(kids.length-MAX)+' more (click to expand)';
+          foldSpan.addEventListener('click',function(e){
+            e.stopPropagation();
+            var pli=this.parentElement;
+            pli.style.display='none';
+            var rest=kids.slice(MAX);
+            for(var i=0;i<rest.length;i++)renderNode(rest[i], childUl);
+          });
+          foldLi.appendChild(foldSpan);
+          childUl.appendChild(foldLi);
+        }
+        li.appendChild(childUl);
+      }
+      ul.appendChild(li);
+    }
+
+    var root=document.getElementById('tree-root');root.innerHTML='';
+    if(d.coord!=null&&nmap[d.coord])renderNode(d.coord, root);
+    // Also render orphan nodes
+    var orphans=[];for(var i=0;i<ns.length;i++){if(ns[i].parent==null&&ns[i].aid!==d.coord)orphans.push(ns[i])}
+    if(orphans.length>0){
+      var oli=document.createElement('li');oli.classList.add('collapsed');var otog=document.createElement('span');otog.className='toggle';otog.textContent='▶';otog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});oli.appendChild(otog);oli.innerHTML+='<span class="node low" style="font-weight:bold;background:#fef2f2">❓ 未归类节点 ('+orphans.length+')</span>';
+      var oul=document.createElement('ul');
+      for(var i=0;i<Math.min(orphans.length,20);i++)renderNode(orphans[i].aid, oul);
+      if(orphans.length>20){var fli=document.createElement('li');fli.innerHTML='<span class="fold">...'+(orphans.length-20)+' more</span>';oul.appendChild(fli)}
+      oli.appendChild(oul);root.appendChild(oli);
+    }
+  }
+
+  document.getElementById('tgo').addEventListener('click',function(){
+    var panVal=document.getElementById('tpan').value.trim();
+    var addrVal=document.getElementById('taddr').value.trim();
+    var pan=panVal?parseInt(panVal,16):null;
+    var addr=addrVal?parseInt(addrVal):null;
+    renderTree(pan,addr);
+  });
+  document.getElementById('trst').addEventListener('click',function(){document.getElementById('tpan').value='';document.getElementById('taddr').value='';renderTree(null,null)});
+  document.getElementById('texp').addEventListener('click',function(){
+    document.querySelectorAll('#tree-root .collapsed').forEach(function(el){el.classList.remove('collapsed');var t=el.querySelector('.toggle');if(t)t.textContent='▼'})});
+  document.getElementById('tcol').addEventListener('click',function(){
+    document.querySelectorAll('#tree-root li').forEach(function(el){if(el.querySelector('ul')){el.classList.add('collapsed');var t=el.querySelector('.toggle');if(t)t.textContent='▶'}})});
   load();
+});
+
+// ===== NODES =====
+// ===== TIMELINE =====
+reg('tl',function(){
+  document.getElementById('mc').style.padding='16px';
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
+    +'<div style="display:flex;gap:8px;margin-bottom:8px"><input id="tnode" placeholder="地址或PAN (如 0x0000 或 FEED)" style="width:200px;font-family:monospace">'
+    +'<button class="btn btn-p" id="tshow">查看</button><span id="tstat" style="font-size:11px;color:#64748b"></span></div>'
+    +'<div style="max-height:calc(100vh - 200px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
+    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>状态</th>'
+    +'</tr></thead><tbody id="tltb"></tbody></table></div></div>';
+  function ld(filter){
+    A.get('/api/import/status').then(function(st){
+      if(!st.total){document.getElementById('tstat').textContent='请先导入数据';return}
+      var q=filter||'';var params='limit=500&offset=0';
+      if(q.match(/^[0-9A-Fa-f]+$/)){if(q.length<=4)params+='&pan='+q;else params+='&addr='+q}
+      A.get('/api/packets?'+params).then(function(pkts){
+        document.getElementById('tstat').textContent=pkts.length+' 包';
+        var h='';for(var i=0;i<pkts.length;i++){var p=pkts[i];
+          var ts=new Date(p.ts*1000).toISOString().substr(11,12);
+          var ms=typeof p.mac_src==='number'?'0x'+p.mac_src.toString(16).toUpperCase():'-';
+          var md=typeof p.mac_dst==='number'?'0x'+p.mac_dst.toString(16).toUpperCase():'-';
+          var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
+          var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
+          h+='<tr><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ms+'</td><td>'+md+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.status||'')+'</td></tr>';}
+        document.getElementById('tltb').innerHTML=h||'<tr><td colspan=\"7\">无匹配</td></tr>';
+      });
+    });}
+  document.getElementById('tshow').addEventListener('click',function(){ld(document.getElementById('tnode').value.trim())});
+  ld();
 });
 
 // ===== NODES =====

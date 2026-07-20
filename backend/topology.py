@@ -26,7 +26,14 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
         s, d = p["nwk_src"], p["nwk_dst"]
         if is_unicast(s) and is_unicast(d): traffic[(s, d)] += 1
 
-    # 3. 推断父子: 节点与coord通信→直连子节点; 其余节点找通信最多的已知parent
+    # 3. coord通信量(用于排序)
+    coord_traffic = {}
+    if coord is not None:
+        for (s, d), cnt in traffic.items():
+            if s == coord: coord_traffic[d] = coord_traffic.get(d, 0) + cnt
+            if d == coord: coord_traffic[s] = coord_traffic.get(s, 0) + cnt
+
+    # 4. 推断父子: 节点与coord通信→直连子节点; 其余节点找通信最多的已知parent
     parents = {}; children = defaultdict(list)
     if coord is not None:
         children[coord] = []
@@ -82,6 +89,7 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
     # 6. 输出
     node_list = []
     for aid, n in sorted(nodes.items()):
+        ct = coord_traffic.get(aid, 0)
         node_list.append({
             "aid": aid, "label": f"0x{aid:04X}",
             "seen": n["seen"], "pan": n["pan"],
@@ -89,6 +97,7 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
             "depth": depths.get(aid, -1),
             "parent": parents.get(aid),
             "children": children.get(aid, []),
+            "coord_traffic": ct,
             "type_list": n["type_list"][:10],
         })
 
@@ -107,7 +116,9 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
     for d in depths.values(): depth_counts[d] += 1
     leaf_count = sum(1 for aid in children if not children[aid])
 
+    pan_list = [{"pan": p, "count": c, "label": f"0x{p:04X}"} for p, c in sorted(pan_counts.items(), key=lambda x: -x[1])[:50]]
     return {
+        "pan_list": pan_list,
         "nodes": node_list, "edges": edge_list,
         "coord": coord, "main_pan": main_pan,
         "pans": sorted(pan_counts.keys()),

@@ -53,23 +53,29 @@ def is_unicast(addr: int | None) -> bool:
 
 
 def extract_nodes(packets: list[dict]) -> dict[int, dict]:
-    """提取节点: {aid: {aid, seen, pan, is_coord, types_seen}}"""
+    """提取节点: {aid: {aid, seen, pan, is_coord, types_seen}}
+    PAN 取该节点出现次数最多的 PAN（处理多通道 sniffer 场景）"""
     nodes: dict[int, dict] = {}
+    pan_counts: dict[int, dict[int, int]] = {}  # aid -> {pan: count}
     for p in packets:
+        pan = p["pan_src"] or p["pan_dst"]
         for addr in (p["mac_src"], p["mac_dst"], p["nwk_src"], p["nwk_dst"]):
             if not is_unicast(addr):
                 continue
             if addr not in nodes:
                 nodes[addr] = {"aid": addr, "seen": 0, "pan": None, "is_coord": False, "types": set()}
+                pan_counts[addr] = {}
             nodes[addr]["seen"] += 1
             nodes[addr]["types"].add(p["pkt_type"])
-            # PAN association
-            pan = p["pan_src"] or p["pan_dst"]
-            if pan and not nodes[addr]["pan"]:
-                nodes[addr]["pan"] = pan
+            if pan:
+                pan_counts[addr][pan] = pan_counts[addr].get(pan, 0) + 1
             # Coordinator detection (Beacon sender in its own PAN)
             if "Beacon" in p["pkt_type"] and addr == p["mac_src"]:
                 nodes[addr]["is_coord"] = True
+    # Assign most common PAN to each node
+    for aid, pc in pan_counts.items():
+        if pc:
+            nodes[aid]["pan"] = max(pc, key=pc.get)
     # Clean up types
     for n in nodes.values():
         n["type_list"] = sorted(n["types"])
