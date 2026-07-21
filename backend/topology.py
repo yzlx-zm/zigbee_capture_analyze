@@ -98,12 +98,17 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
     node_list = []
     for aid in sorted(active_nodes):
         n = nodes.get(aid, {"seen":0,"pan":None,"is_coord":False,"type_list":[]})
-        # When filtering by PAN, all nodes get that PAN
+        # When filtering by PAN, all nodes get that PAN; and seen count is PAN-scoped
         node_pan = filter_pan if filter_pan is not None else n["pan"]
+        if filter_pan is not None:
+            pan_seen = sum(1 for p in packets if (p["nwk_src"]==aid or p["nwk_dst"]==aid or p["mac_src"]==aid or p["mac_dst"]==aid) and ((p["pan_src"]==filter_pan or p["pan_dst"]==filter_pan)))
+            node_seen = pan_seen
+        else:
+            node_seen = n["seen"]
         ct = coord_traffic.get(aid, 0)
         node_list.append({
             "aid": aid, "label": f"0x{aid:04X}",
-            "seen": n["seen"], "pan": node_pan,
+            "seen": node_seen, "pan": node_pan,
             "is_coord": aid == 0,
             "depth": depths.get(aid, -1),
             "parent": parents.get(aid),

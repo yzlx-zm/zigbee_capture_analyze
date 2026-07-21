@@ -31,9 +31,15 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
         if pan_int is not None:
             if n["pan"] != pan_int and aid != 0:
                 continue
+        # seen count: per-PAN if filter is set
+        if pan_int is not None:
+            pkts = get_packets()
+            nd_seen = sum(1 for p in pkts if (p["nwk_src"]==aid or p["nwk_dst"]==aid or p["mac_src"]==aid or p["mac_dst"]==aid) and ((p["pan_src"]==pan_int or p["pan_dst"]==pan_int)))
+        else:
+            nd_seen = n["seen"]
         result.append({
             "aid": aid, "label": label,
-            "seen": n["seen"], "pan": n["pan"] if not pan_int else pan_int,
+            "seen": nd_seen, "pan": n["pan"] if not pan_int else pan_int,
             "is_coord": aid == 0,
             "type_list": n["type_list"][:8],
         })
