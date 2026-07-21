@@ -98,11 +98,13 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
     node_list = []
     for aid in sorted(active_nodes):
         n = nodes.get(aid, {"seen":0,"pan":None,"is_coord":False,"type_list":[]})
+        # When filtering by PAN, all nodes get that PAN
+        node_pan = filter_pan if filter_pan is not None else n["pan"]
         ct = coord_traffic.get(aid, 0)
         node_list.append({
             "aid": aid, "label": f"0x{aid:04X}",
-            "seen": n["seen"], "pan": n["pan"],
-            "is_coord": n["is_coord"],
+            "seen": n["seen"], "pan": node_pan,
+            "is_coord": aid == 0,
             "depth": depths.get(aid, -1),
             "parent": parents.get(aid),
             "children": children.get(aid, []),
