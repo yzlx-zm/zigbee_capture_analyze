@@ -161,9 +161,10 @@ reg('topo',function(){
     // PAN list
     var pl=d.pan_list||[];
     var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
-    for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td></tr>';}
+    for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→时间线</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
-    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(){var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();document.getElementById('tpan').value=panStr;S.topoPan=panStr;A.get('/api/topology/graph?pan='+panStr).then(function(d){S.topo=d;renderTree(null,null)})})});
+    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();document.getElementById('tpan').value=panStr;S.topoPan=panStr;A.get('/api/topology/graph?pan='+panStr).then(function(d){S.topo=d;renderTree(null,null)})})});
+  document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();S.topoPan=panStr;location.hash='tl';setTimeout(function(){var tn=document.getElementById('tnode');if(tn)tn.value=panStr;var tb=document.getElementById('tshow');if(tb)tb.click()},200)})});
 
     // Build node lookup from FILTERED nodes
     var nmap={};for(var i=0;i<filtered.length;i++){nmap[filtered[i].aid]=filtered[i]}
@@ -264,6 +265,77 @@ reg('topo',function(){
   if(S.topoAddr)document.getElementById('taddr').value=S.topoAddr;
   renderTree(null,null);
   });
+});
+
+// ===== NODES =====
+// ===== TIMELINE =====
+reg('tl',function(){
+  document.getElementById('mc').style.padding='16px';
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
+    +'<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">'
+    +'<span style="font-size:11px">时间:</span><input id="tlt0" placeholder="开始 HH:MM:SS" style="width:120px;font-family:monospace;font-size:11px">'
+    +'<span style="font-size:11px">~</span><input id="tlt1" placeholder="结束 HH:MM:SS" style="width:120px;font-family:monospace;font-size:11px">'
+    +'<input id="tnode" placeholder="PAN或地址 (FEED/0x8141)" style="width:180px;font-family:monospace;font-size:11px">'
+    +'<button class="btn btn-p" id="tshow">查看</button><span id="tstat" style="font-size:11px;color:#64748b"></span></div>'
+    +'<div id="tl-summary" style="display:none;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px"></div>'
+    +'<div style="max-height:calc(100vh - 320px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
+    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
+    +'</tr></thead><tbody id="tltb"></tbody></table></div>'
+    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0;margin-top:8px">'
+    +'<button class="btn btn-outline btn-sm" id="tl-pp">上一页</button><span id="tl-pi">-</span><button class="btn btn-outline btn-sm" id="tl-pn">下一页</button>'
+    +'<span>跳至</span><input id="tl-pj" style="width:50px"><span>页</span><button class="btn btn-sm btn-primary" id="tl-pgo">Go</button>'
+    +'<span>每页</span><select id="tl-ps"><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option><option value="1000">1000</option></select></div></div>';
+
+  var tlPage=1,tlLimit=200,tlTotal=0;
+  function updPgr(){var mp=Math.ceil(tlTotal/tlLimit)||1;document.getElementById('tl-pi').textContent='第 '+tlPage+' / '+mp+' 页 (共 '+tlTotal+' 条)';
+    document.getElementById('tl-pp').disabled=tlPage<=1;document.getElementById('tl-pn').disabled=tlPage>=mp;}
+
+  function search(){
+    var ta=document.getElementById('tnode').value.trim();
+    var ts0=document.getElementById('tlt0').value.trim();
+    var ts1=document.getElementById('tlt1').value.trim();
+    var params='limit='+tlLimit+'&offset='+((tlPage-1)*tlLimit);
+    if(ta.match(/^[0-9A-Fa-f]+$/)){if(ta.length<=4)params+='&pan='+ta;else params+='&addr='+ta;}
+    if(ts0)params+='&time_start='+encodeURIComponent(ts0);
+    if(ts1)params+='&time_end='+encodeURIComponent(ts1);
+    // Fetch summary
+    var sumParams='';
+    if(ta.match(/^[0-9A-Fa-f]+$/)){if(ta.length<=4)sumParams+='&pan='+ta;else sumParams+='&addr='+ta;}
+    if(ts0)sumParams+='&time_start='+encodeURIComponent(ts0);
+    if(ts1)sumParams+='&time_end='+encodeURIComponent(ts1);
+    A.get('/api/packets/summary?'+sumParams).then(function(s){
+      var el=document.getElementById('tl-summary');el.style.display='block';
+      if(s.type==='device'){
+        el.innerHTML='<b>设备 '+s.addr+'</b>: '+s.total_packets+' 包<br>'
+          +Object.entries(s.type_counts).map(function(e){return e[0]+'×'+e[1]}).join(' + ')+'<br>'
+          +'⇄ 通信: '+(s.top_peers||[]).map(function(p){return p.addr+'('+p.count+')'}).join(', ');
+      }else{
+        el.innerHTML='<b>PAN '+s.pan+'</b>: '+s.total_packets+' 包 | '+s.active_devices+' 活跃设备<br>'
+          +Object.entries(s.type_counts).map(function(e){return e[0]+'×'+e[1]}).join(' + ');
+      }
+    }).catch(function(){});
+    // Fetch packets
+    A.get('/api/packets?'+params).then(function(d){
+      var pkts=d.packets||[];tlTotal=d.total||pkts.length;
+      document.getElementById('tstat').textContent='共 '+tlTotal+' 包';
+      document.getElementById('tl-pager').style.display='flex';
+      var h='';for(var i=0;i<pkts.length;i++){var p=pkts[i];
+        var ts=new Date(p.ts*1000).toISOString().substr(11,12);
+        var ms=typeof p.mac_src==='number'?'0x'+p.mac_src.toString(16).toUpperCase():'-';
+        var md=typeof p.mac_dst==='number'?'0x'+p.mac_dst.toString(16).toUpperCase():'-';
+        var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
+        var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
+        h+='<tr><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ms+'</td><td>'+md+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+(p.status||'')+'</td></tr>';}
+      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="8">无匹配数据</td></tr>';updPgr();
+    });}
+
+  document.getElementById('tshow').addEventListener('click',function(){tlPage=1;search()});
+  document.getElementById('tl-pp').addEventListener('click',function(){if(tlPage>1){tlPage--;search()}});
+  document.getElementById('tl-pn').addEventListener('click',function(){tlPage++;search()});
+  document.getElementById('tl-pgo').addEventListener('click',function(){var v=parseInt(document.getElementById('tl-pj').value);if(v>0){tlPage=v;search()}});
+  document.getElementById('tl-ps').addEventListener('change',function(){tlLimit=parseInt(this.value);tlPage=1;search()});
+  // Auto-search if pre-filled from PAN list jump
+  setTimeout(function(){if(document.getElementById('tnode')&&document.getElementById('tnode').value.trim()){tlPage=1;search()}},100);
 });
 
 // ===== NODES =====

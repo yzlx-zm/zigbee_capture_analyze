@@ -99,17 +99,25 @@ async def import_clear():
     return {"ok": True}
 
 
-@router.get("/import/status")
-async def import_status():
-    return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type}
-
-
-@router.get("/packets")
-async def packet_list(addr: str = "", pan: str = "", limit: int = 500, offset: int = 0):
-    """查询原始包列表，可按地址或PAN过滤"""
-    result = []
+@router.get("/packets/summary")
+async def packet_summary(addr: str = "", pan: str = "",
+                         time_start: str = "", time_end: str = ""):
+    """事件摘要 — 按地址→设备行为 / 按PAN→整体统计"""
     addr_int = int(addr, 16) if addr else None
     pan_int = int(pan, 16) if pan else None
+    ts_start = None; ts_end = None
+    if _packets:
+        base_ts = _packets[0]["ts"]
+        if time_start:
+            parts = time_start.split(":")
+            if len(parts) >= 2:
+                ts_start = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+        if time_end:
+            parts = time_end.split(":")
+            if len(parts) >= 2:
+                ts_end = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+    # Collect matching packets
+    matched = []
     for p in _packets:
         if addr_int is not None:
             if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
@@ -117,15 +125,101 @@ async def packet_list(addr: str = "", pan: str = "", limit: int = 500, offset: i
         if pan_int is not None:
             if p["pan_src"] != pan_int and p["pan_dst"] != pan_int:
                 continue
-        result.append(p)
-        if len(result) >= offset + limit:
-            break
-    page = result[offset:offset + limit]
-    # Convert to serializable format
-    return [{
-        "ts": p["ts"], "ch": p.get("ch", 0), "pkt_type": p.get("pkt_type", ""),
-        "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
-        "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
-        "pan_src": p.get("pan_src"), "pan_dst": p.get("pan_dst"),
-        "security": p.get("security", ""), "status": p.get("status", ""),
-    } for p in page]
+        if ts_start is not None and p["ts"] < ts_start: continue
+        if ts_end is not None and p["ts"] > ts_end: continue
+        matched.append(p)
+    # Build summary
+    if addr_int is not None:
+        # Device behavior summary for one specific address
+        type_counts = {}
+        peers = {}
+        for p in matched:
+            t = p.get("pkt_type", "?")
+            type_counts[t] = type_counts.get(t, 0) + 1
+            # Find communication peer
+            peer = None
+            if p.get("nwk_src") == addr_int and p.get("nwk_dst") and p["nwk_dst"] != 0xFFFF:
+                peer = p["nwk_dst"]
+            elif p.get("nwk_dst") == addr_int and p.get("nwk_src") and p["nwk_src"] != 0xFFFF:
+                peer = p["nwk_src"]
+            if peer is not None:
+                peers[peer] = peers.get(peer, 0) + 1
+        top_peers = sorted(peers.items(), key=lambda x: -x[1])[:5]
+        return {
+            "type": "device",
+            "addr": f"0x{addr_int:04X}",
+            "total_packets": len(matched),
+            "type_counts": dict(sorted(type_counts.items(), key=lambda x: -x[1])),
+            "top_peers": [{"addr": f"0x{p:04X}", "count": c} for p, c in top_peers],
+        }
+    else:
+        # PAN overall statistics
+        type_counts = {}
+        device_counts = {}
+        for p in matched:
+            t = p.get("pkt_type", "?")
+            type_counts[t] = type_counts.get(t, 0) + 1
+            for addr in (p.get("nwk_src"), p.get("nwk_dst"), p.get("mac_src"), p.get("mac_dst")):
+                if isinstance(addr, int) and 0x0000 <= addr < 0xFFF0:
+                    device_counts[addr] = device_counts.get(addr, 0) + 1
+        top_devices = sorted(device_counts.items(), key=lambda x: -x[1])[:20]
+        return {
+            "type": "pan",
+            "pan": f"0x{pan_int:04X}" if pan_int else "全部",
+            "total_packets": len(matched),
+            "type_counts": dict(sorted(type_counts.items(), key=lambda x: -x[1])[:15]),
+            "active_devices": len(device_counts),
+            "top_devices": [{"addr": f"0x{d:04X}", "count": c} for d, c in top_devices],
+        }
+
+
+@router.get("/import/status")
+async def import_status():
+    return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type}
+
+
+@router.get("/packets")
+async def packet_list(addr: str = "", pan: str = "",
+                      time_start: str = "", time_end: str = "",
+                      limit: int = 500, offset: int = 0):
+    """查询原始包列表，可按地址/PAN/时间过滤，返回分页+总数"""
+    addr_int = int(addr, 16) if addr else None
+    pan_int = int(pan, 16) if pan else None
+    # Parse time: HH:MM:SS → seconds from start of capture
+    ts_start = None; ts_end = None
+    if _packets:
+        base_ts = _packets[0]["ts"]
+        if time_start:
+            parts = time_start.split(":")
+            if len(parts) >= 2:
+                ts_start = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+        if time_end:
+            parts = time_end.split(":")
+            if len(parts) >= 2:
+                ts_end = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+    # Filter
+    matched = []
+    for p in _packets:
+        if addr_int is not None:
+            if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
+                continue
+        if pan_int is not None:
+            if p["pan_src"] != pan_int and p["pan_dst"] != pan_int:
+                continue
+        if ts_start is not None and p["ts"] < ts_start:
+            continue
+        if ts_end is not None and p["ts"] > ts_end:
+            continue
+        matched.append(p)
+    total = len(matched)
+    page = matched[offset:offset + limit]
+    return {
+        "packets": [{
+            "ts": p["ts"], "ch": p.get("ch", 0), "pkt_type": p.get("pkt_type", ""),
+            "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
+            "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
+            "pan_src": p.get("pan_src"), "pan_dst": p.get("pan_dst"),
+            "security": p.get("security", ""), "status": p.get("status", ""),
+        } for p in page],
+        "total": total, "limit": limit, "offset": offset,
+    }
