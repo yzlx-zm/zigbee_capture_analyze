@@ -164,7 +164,7 @@ reg('topo',function(){
     for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→时间线</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
     document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();document.getElementById('tpan').value=panStr;S.topoPan=panStr;A.get('/api/topology/graph?pan='+panStr).then(function(d){S.topo=d;renderTree(null,null)})})});
-  document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();S.topoPan=panStr;location.hash='tl';setTimeout(function(){var tn=document.getElementById('tnode');if(tn)tn.value=panStr;var tb=document.getElementById('tshow');if(tb)tb.click()},200)})});
+  document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();var panVal=parseInt(this.dataset.pan);S.topoPan=panVal.toString(16).toUpperCase();location.hash='tl'})});
 
     // Build node lookup from FILTERED nodes
     var nmap={};for(var i=0;i<filtered.length;i++){nmap[filtered[i].aid]=filtered[i]}
@@ -267,106 +267,191 @@ reg('topo',function(){
   });
 });
 
-// ===== NODES =====
 // ===== TIMELINE =====
 reg('tl',function(){
-  document.getElementById('mc').style.padding='16px';
-  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
-    +'<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">'
-    +'<span style="font-size:11px">时间:</span><input id="tlt0" placeholder="开始 HH:MM:SS" style="width:120px;font-family:monospace;font-size:11px">'
-    +'<span style="font-size:11px">~</span><input id="tlt1" placeholder="结束 HH:MM:SS" style="width:120px;font-family:monospace;font-size:11px">'
-    +'<input id="tnode" placeholder="PAN或地址 (FEED/0x8141)" style="width:180px;font-family:monospace;font-size:11px">'
-    +'<button class="btn btn-p" id="tshow">查看</button><span id="tstat" style="font-size:11px;color:#64748b"></span></div>'
-    +'<div id="tl-summary" style="display:none;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px"></div>'
-    +'<div style="max-height:calc(100vh - 320px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
-    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
-    +'</tr></thead><tbody id="tltb"></tbody></table></div>'
-    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0;margin-top:8px">'
-    +'<button class="btn btn-outline btn-sm" id="tl-pp">上一页</button><span id="tl-pi">-</span><button class="btn btn-outline btn-sm" id="tl-pn">下一页</button>'
-    +'<span>跳至</span><input id="tl-pj" style="width:50px"><span>页</span><button class="btn btn-sm btn-primary" id="tl-pgo">Go</button>'
-    +'<span>每页</span><select id="tl-ps"><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option><option value="1000">1000</option></select></div></div>';
+  // Init state: remember last filter
+  if(!S.tlPan) S.tlPan='';
+  if(!S.tlNode) S.tlNode='';
+  if(!S.tlTs0H) S.tlTs0H=''; if(!S.tlTs0M) S.tlTs0M=''; if(!S.tlTs0S) S.tlTs0S='';
+  if(!S.tlTs1H) S.tlTs1H=''; if(!S.tlTs1M) S.tlTs1M=''; if(!S.tlTs1S) S.tlTs1S='';
+  if(!S.tlHasSearched) S.tlHasSearched=false;
+  // Override PAN if jumped from topology
+  if(S.topoPan){S.tlPan=S.topoPan; S.tlHasSearched=true;}
 
-  var tlPage=1,tlLimit=200,tlTotal=0;
-  function updPgr(){var mp=Math.ceil(tlTotal/tlLimit)||1;document.getElementById('tl-pi').textContent='第 '+tlPage+' / '+mp+' 页 (共 '+tlTotal+' 条)';
-    document.getElementById('tl-pp').disabled=tlPage<=1;document.getElementById('tl-pn').disabled=tlPage>=mp;}
+  document.getElementById('mc').style.padding='16px';
+  // Build H/M/S dropdown helpers
+  function hmssel(id,val,opts){var h='<select id="'+id+'" style="font-size:10px;font-family:monospace;width:48px">';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
+  var hourOpts=[];for(var hi=0;hi<24;hi++)hourOpts.push(hi);
+  var minSecOpts=[];for(var mi=0;mi<60;mi++)minSecOpts.push(mi);
+
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
+    // Row 1: PAN + Node text inputs
+    +'<div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'
+    +'<span style="font-size:11px;font-weight:600">PAN:</span><input id="tl-pan" placeholder="FEED" style="width:90px;font-family:monospace;font-size:11px" value="'+S.tlPan+'">'
+    +'<span style="font-size:11px;font-weight:600">节点:</span><input id="tl-node" placeholder="0x0000 或 0000" style="width:130px;font-family:monospace;font-size:11px" value="'+S.tlNode+'">'
+    +'</div>'
+    // Row 2: Time dropdowns (start ~ end)
+    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'
+    +'<span style="font-size:11px;font-weight:600">时间:</span>'
+    +hmssel('tl-h0',S.tlTs0H,hourOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-m0',S.tlTs0M,minSecOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-s0',S.tlTs0S,minSecOpts)
+    +'<span style="font-size:10px;margin:0 4px">~</span>'
+    +hmssel('tl-h1',S.tlTs1H,hourOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-m1',S.tlTs1M,minSecOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-s1',S.tlTs1S,minSecOpts)
+    +'<button class="btn btn-o" id="tl-tclear" style="font-size:10px;margin-left:4px" title="清除时间过滤">✕</button>'
+    +'</div>'
+    // Row 3: View button + status
+    +'<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+    +'<button class="btn btn-p" id="tshow" style="font-size:11px">🔍 查看</button>'
+    +'<span id="tl-capture-info" style="font-size:10px;color:#94a3b8"></span>'
+    +'<span id="tl-stat" style="font-size:11px;color:#64748b;margin-left:auto"></span></div>'
+    // Summary
+    +'<div id="tl-summary" style="display:none;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px"></div>'
+    // Packet table
+    +'<div style="max-height:calc(100vh - 360px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
+    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
+    +'</tr></thead><tbody id="tltb"><tr><td colspan="8" style="color:#94a3b8;text-align:center;padding:40px">请输入过滤条件后点击「查看」</td></tr></tbody></table></div>'
+    // Pagination
+    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0;margin-top:8px">'
+    +'<button class="btn btn-o" id="tl-pp" style="font-size:10px">上一页</button><span id="tl-pi">-</span><button class="btn btn-o" id="tl-pn" style="font-size:10px">下一页</button>'
+    +'<span>跳至</span><input id="tl-pj" style="width:45px;font-size:10px"><span>页</span><button class="btn btn-o" id="tl-pgo" style="font-size:10px">Go</button>'
+    +'<span>每页</span><select id="tl-ps" style="font-size:10px"><option value="50">50</option><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div></div>';
+
+  var tlPage=1,tlLimit=200,tlTotal=0,tlCaptureStart=null,tlCaptureEnd=null;
+
+  function tlFmtTs(ts){var d=new Date(ts*1000);return d.toISOString().substr(11,12);}
+
+  function tlGetTimeFilter(){
+    var h0=document.getElementById('tl-h0').value;
+    var m0=document.getElementById('tl-m0').value;
+    var s0=document.getElementById('tl-s0').value;
+    var h1=document.getElementById('tl-h1').value;
+    var m1=document.getElementById('tl-m1').value;
+    var s1=document.getElementById('tl-s1').value;
+    var ts0=String(h0).padStart(2,'0')+':'+String(m0).padStart(2,'0')+':'+String(s0).padStart(2,'0');
+    var ts1=String(h1).padStart(2,'0')+':'+String(m1).padStart(2,'0')+':'+String(s1).padStart(2,'0');
+    return {ts0:ts0, ts1:ts1};
+  }
+
+  function tlSaveFilter(){
+    S.tlPan=document.getElementById('tl-pan').value.trim();
+    S.tlNode=document.getElementById('tl-node').value.trim();
+    S.tlTs0H=document.getElementById('tl-h0').value; S.tlTs0M=document.getElementById('tl-m0').value; S.tlTs0S=document.getElementById('tl-s0').value;
+    S.tlTs1H=document.getElementById('tl-h1').value; S.tlTs1M=document.getElementById('tl-m1').value; S.tlTs1S=document.getElementById('tl-s1').value;
+    S.tlHasSearched=true;
+  }
+
+  function updPgr(){
+    var mp=Math.ceil(tlTotal/tlLimit)||1;
+    document.getElementById('tl-pi').textContent='第 '+tlPage+' / '+mp+' 页 (共 '+tlTotal+' 条)';
+    document.getElementById('tl-pp').disabled=tlPage<=1;
+    document.getElementById('tl-pn').disabled=tlPage>=mp;
+  }
 
   function search(){
-    var ta=document.getElementById('tnode').value.trim();
-    var ts0=document.getElementById('tlt0').value.trim();
-    var ts1=document.getElementById('tlt1').value.trim();
+    var panVal=document.getElementById('tl-pan').value.trim();
+    var nodeVal=document.getElementById('tl-node').value.trim();
+    // Normalize: strip 0x prefix
+    if(panVal.match(/^0x/i))panVal=panVal.slice(2);
+    if(nodeVal.match(/^0x/i))nodeVal=nodeVal.slice(2);
+    var tf=tlGetTimeFilter();
+    tlSaveFilter();
+    // Build params
     var params='limit='+tlLimit+'&offset='+((tlPage-1)*tlLimit);
-    if(ta.match(/^[0-9A-Fa-f]+$/)){if(ta.length<=4)params+='&pan='+ta;else params+='&addr='+ta;}
-    if(ts0)params+='&time_start='+encodeURIComponent(ts0);
-    if(ts1)params+='&time_end='+encodeURIComponent(ts1);
+    if(panVal)params+='&pan='+panVal;
+    if(nodeVal)params+='&addr='+nodeVal;
+    if(tf.ts0)params+='&time_start='+encodeURIComponent(tf.ts0);
+    if(tf.ts1)params+='&time_end='+encodeURIComponent(tf.ts1);
+    // Show what we're querying
+    document.getElementById('tl-stat').textContent='查询中... '+[panVal?'PAN='+panVal:'',nodeVal?'节点='+nodeVal:'',tf.ts0?'时间:'+tf.ts0+'~'+tf.ts1:''].filter(Boolean).join(' | ')||'全部包';
+    // Summary params
+    var sp=[];
+    if(panVal)sp.push('pan='+panVal);
+    if(nodeVal)sp.push('addr='+nodeVal);
+    if(tf.ts0)sp.push('time_start='+encodeURIComponent(tf.ts0));
+    if(tf.ts1)sp.push('time_end='+encodeURIComponent(tf.ts1));
+    var sumUrl='/api/packets/summary'+(sp.length?'?'+sp.join('&'):'');
     // Fetch summary
-    var sumParams='';
-    if(ta.match(/^[0-9A-Fa-f]+$/)){if(ta.length<=4)sumParams+='&pan='+ta;else sumParams+='&addr='+ta;}
-    if(ts0)sumParams+='&time_start='+encodeURIComponent(ts0);
-    if(ts1)sumParams+='&time_end='+encodeURIComponent(ts1);
-    A.get('/api/packets/summary?'+sumParams).then(function(s){
+    A.get(sumUrl).then(function(s){
       var el=document.getElementById('tl-summary');el.style.display='block';
       if(s.type==='device'){
         el.innerHTML='<b>设备 '+s.addr+'</b>: '+s.total_packets+' 包<br>'
-          +Object.entries(s.type_counts).map(function(e){return e[0]+'×'+e[1]}).join(' + ')+'<br>'
+          +Object.entries(s.type_counts||{}).map(function(e){return e[0]+'×'+e[1]}).join(' + ')+'<br>'
           +'⇄ 通信: '+(s.top_peers||[]).map(function(p){return p.addr+'('+p.count+')'}).join(', ');
       }else{
         el.innerHTML='<b>PAN '+s.pan+'</b>: '+s.total_packets+' 包 | '+s.active_devices+' 活跃设备<br>'
-          +Object.entries(s.type_counts).map(function(e){return e[0]+'×'+e[1]}).join(' + ');
+          +Object.entries(s.type_counts||{}).map(function(e){return e[0]+'×'+e[1]}).join(' + ');
       }
     }).catch(function(){});
     // Fetch packets
     A.get('/api/packets?'+params).then(function(d){
       var pkts=d.packets||[];tlTotal=d.total||pkts.length;
-      document.getElementById('tstat').textContent='共 '+tlTotal+' 包';
-      document.getElementById('tl-pager').style.display='flex';
+      var ctx=[panVal?'PAN='+panVal:'',nodeVal?'节点=0x'+nodeVal.toUpperCase():'',tf.ts0?'时间:'+tf.ts0+'~'+tf.ts1:''].filter(Boolean).join(' | ');
+      document.getElementById('tl-stat').textContent='共 '+tlTotal+' 包'+(ctx?' ('+ctx+')':'');
+      document.getElementById('tl-pager').style.display=tlTotal>0?'flex':'none';
       var h='';for(var i=0;i<pkts.length;i++){var p=pkts[i];
-        var ts=new Date(p.ts*1000).toISOString().substr(11,12);
+        var ts=tlFmtTs(p.ts);
         var ms=typeof p.mac_src==='number'?'0x'+p.mac_src.toString(16).toUpperCase():'-';
         var md=typeof p.mac_dst==='number'?'0x'+p.mac_dst.toString(16).toUpperCase():'-';
         var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
         var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
         h+='<tr><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ms+'</td><td>'+md+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+(p.status||'')+'</td></tr>';}
-      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="8">无匹配数据</td></tr>';updPgr();
-    });}
+      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="8" style="color:#94a3b8;text-align:center;padding:20px">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span style="font-size:10px">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
+      updPgr();
+    }).catch(function(e){document.getElementById('tl-stat').textContent='加载失败';});
+  }
 
+  // On Enter key in inputs, trigger search
+  document.getElementById('tl-pan').addEventListener('keydown',function(e){if(e.key==='Enter'){tlPage=1;search()}});
+  document.getElementById('tl-node').addEventListener('keydown',function(e){if(e.key==='Enter'){tlPage=1;search()}});
+
+  // Clear time button — reset to capture start/end
+  document.getElementById('tl-tclear').addEventListener('click',function(){
+    if(tlCaptureStart&&tlCaptureEnd){
+      var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
+      document.getElementById('tl-h0').value=csd.getUTCHours();document.getElementById('tl-m0').value=csd.getUTCMinutes();document.getElementById('tl-s0').value=csd.getUTCSeconds();
+      document.getElementById('tl-h1').value=ced.getUTCHours();document.getElementById('tl-m1').value=ced.getUTCMinutes();document.getElementById('tl-s1').value=ced.getUTCSeconds();
+    } else {
+      document.getElementById('tl-h0').value='00';document.getElementById('tl-m0').value='00';document.getElementById('tl-s0').value='00';
+      document.getElementById('tl-h1').value='00';document.getElementById('tl-m1').value='00';document.getElementById('tl-s1').value='00';
+    }
+  });
+
+  // Search button
   document.getElementById('tshow').addEventListener('click',function(){tlPage=1;search()});
+  // Pagination
   document.getElementById('tl-pp').addEventListener('click',function(){if(tlPage>1){tlPage--;search()}});
   document.getElementById('tl-pn').addEventListener('click',function(){tlPage++;search()});
   document.getElementById('tl-pgo').addEventListener('click',function(){var v=parseInt(document.getElementById('tl-pj').value);if(v>0){tlPage=v;search()}});
   document.getElementById('tl-ps').addEventListener('change',function(){tlLimit=parseInt(this.value);tlPage=1;search()});
-  // Auto-search if pre-filled from PAN list jump
-  setTimeout(function(){if(document.getElementById('tnode')&&document.getElementById('tnode').value.trim()){tlPage=1;search()}},100);
-});
 
-// ===== NODES =====
-// ===== TIMELINE =====
-reg('tl',function(){
-  document.getElementById('mc').style.padding='16px';
-  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
-    +'<div style="display:flex;gap:8px;margin-bottom:8px"><input id="tnode" placeholder="地址或PAN (如 0x0000 或 FEED)" style="width:200px;font-family:monospace">'
-    +'<button class="btn btn-p" id="tshow">查看</button><span id="tstat" style="font-size:11px;color:#64748b"></span></div>'
-    +'<div style="max-height:calc(100vh - 200px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
-    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>状态</th>'
-    +'</tr></thead><tbody id="tltb"></tbody></table></div></div>';
-  function ld(filter){
-    A.get('/api/import/status').then(function(st){
-      if(!st.total){document.getElementById('tstat').textContent='请先导入数据';return}
-      var q=filter||'';var params='limit=500&offset=0';
-      if(q.match(/^[0-9A-Fa-f]+$/)){if(q.length<=4)params+='&pan='+q;else params+='&addr='+q}
-      A.get('/api/packets?'+params).then(function(pkts){
-        document.getElementById('tstat').textContent=pkts.length+' 包';
-        var h='';for(var i=0;i<pkts.length;i++){var p=pkts[i];
-          var ts=new Date(p.ts*1000).toISOString().substr(11,12);
-          var ms=typeof p.mac_src==='number'?'0x'+p.mac_src.toString(16).toUpperCase():'-';
-          var md=typeof p.mac_dst==='number'?'0x'+p.mac_dst.toString(16).toUpperCase():'-';
-          var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
-          var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
-          h+='<tr><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ms+'</td><td>'+md+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.status||'')+'</td></tr>';}
-        document.getElementById('tltb').innerHTML=h||'<tr><td colspan=\"7\">无匹配</td></tr>';
-      });
-    });}
-  document.getElementById('tshow').addEventListener('click',function(){ld(document.getElementById('tnode').value.trim())});
-  ld();
+  // Fetch capture time range for display + set default clock-time dropdowns
+  A.get('/api/import/status').then(function(st){
+    if(st.ts_start){tlCaptureStart=st.ts_start;tlCaptureEnd=st.ts_end;
+      var capStartD=new Date(tlCaptureStart*1000);
+      var capEndD=new Date(tlCaptureEnd*1000);
+      var dur=tlCaptureEnd-tlCaptureStart;
+      var durStr='';if(dur<60)durStr=dur.toFixed(0)+'秒';else if(dur<3600)durStr=(dur/60).toFixed(1)+'分钟';else durStr=(dur/3600).toFixed(1)+'小时';
+      document.getElementById('tl-capture-info').textContent='抓包: '+tlFmtTs(tlCaptureStart)+' ~ '+tlFmtTs(tlCaptureEnd)+' ('+durStr+')';
+      var capH=capStartD.getUTCHours();var capM=capStartD.getUTCMinutes();var capS=capStartD.getUTCSeconds();
+      var endH=capEndD.getUTCHours();var endM=capEndD.getUTCMinutes();var endS=capEndD.getUTCSeconds();
+      // Detect if saved time values are invalid (from old offset semantics):
+      // if saved start clock is more than 1h before capture start or after capture end, reset
+      var savedSec0=parseInt(S.tlTs0H||'0')*3600+parseInt(S.tlTs0M||'0')*60+parseInt(S.tlTs0S||'0');
+      var capSec=capH*3600+capM*60+capS;
+      var endSec=endH*3600+endM*60+endS;
+      var needReset=!S.tlHasSearched||savedSec0<capSec-3600||savedSec0>endSec+3600;
+      if(needReset){
+        // Reset to capture range
+        document.getElementById('tl-h0').value=capH;document.getElementById('tl-m0').value=capM;document.getElementById('tl-s0').value=capS;
+        document.getElementById('tl-h1').value=endH;document.getElementById('tl-m1').value=endM;document.getElementById('tl-s1').value=endS;
+        S.tlTs0H=String(capH);S.tlTs0M=String(capM);S.tlTs0S=String(capS);
+        S.tlTs1H=String(endH);S.tlTs1M=String(endM);S.tlTs1S=String(endS);
+      }
+      // Auto-search after dropdowns are correct
+      if(S.topoPan || S.tlHasSearched){
+        tlPage=1; setTimeout(function(){search()},50);
+      }
+    }
+  });
 });
 
 // ===== NODES =====

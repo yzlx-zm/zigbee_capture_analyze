@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -21,6 +22,23 @@ def get_packets():
 
 def get_nodes():
     return _nodes
+
+
+def _parse_clock_time(time_str: str, base_ts: float) -> float | None:
+    """将 HH:MM:SS 时钟时间解析为绝对 Unix 时间戳 (UTC)。
+    基于抓包第一帧的 UTC 日期，将时钟时间映射到当天 UTC 绝对时间。
+    不做跨午夜修正 — 若早于抓包开始则自然包含所有包（无更早数据）。"""
+    import calendar as _cal
+    parts = time_str.split(":")
+    if len(parts) < 2:
+        return None
+    h, m = int(parts[0]), int(parts[1])
+    s = int(parts[2]) if len(parts) > 2 else 0
+    clock_sec = h * 3600 + m * 60 + s
+    base_dt_utc = datetime.utcfromtimestamp(base_ts)
+    midnight_utc = base_dt_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_ts = _cal.timegm(midnight_utc.timetuple())
+    return midnight_ts + clock_sec
 
 
 
@@ -106,16 +124,12 @@ async def packet_summary(addr: str = "", pan: str = "",
     addr_int = int(addr, 16) if addr else None
     pan_int = int(pan, 16) if pan else None
     ts_start = None; ts_end = None
-    if _packets:
+    if _packets and (time_start or time_end):
         base_ts = _packets[0]["ts"]
         if time_start:
-            parts = time_start.split(":")
-            if len(parts) >= 2:
-                ts_start = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+            ts_start = _parse_clock_time(time_start, base_ts)
         if time_end:
-            parts = time_end.split(":")
-            if len(parts) >= 2:
-                ts_end = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+            ts_end = _parse_clock_time(time_end, base_ts)
     # Collect matching packets
     matched = []
     for p in _packets:
@@ -175,7 +189,10 @@ async def packet_summary(addr: str = "", pan: str = "",
 
 @router.get("/import/status")
 async def import_status():
-    return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type}
+    ts_start = _packets[0]["ts"] if _packets else None
+    ts_end = _packets[-1]["ts"] if _packets else None
+    return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type,
+            "ts_start": ts_start, "ts_end": ts_end}
 
 
 @router.get("/packets")
@@ -185,18 +202,14 @@ async def packet_list(addr: str = "", pan: str = "",
     """查询原始包列表，可按地址/PAN/时间过滤，返回分页+总数"""
     addr_int = int(addr, 16) if addr else None
     pan_int = int(pan, 16) if pan else None
-    # Parse time: HH:MM:SS → seconds from start of capture
+    # Parse time: HH:MM:SS clock time → absolute timestamp
     ts_start = None; ts_end = None
-    if _packets:
+    if _packets and (time_start or time_end):
         base_ts = _packets[0]["ts"]
         if time_start:
-            parts = time_start.split(":")
-            if len(parts) >= 2:
-                ts_start = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+            ts_start = _parse_clock_time(time_start, base_ts)
         if time_end:
-            parts = time_end.split(":")
-            if len(parts) >= 2:
-                ts_end = base_ts + int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+            ts_end = _parse_clock_time(time_end, base_ts)
     # Filter
     matched = []
     for p in _packets:
