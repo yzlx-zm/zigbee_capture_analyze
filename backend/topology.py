@@ -7,22 +7,21 @@ def is_unicast(addr):
     return isinstance(addr, int) and 0x0000 <= addr < 0xFFF0
 
 
-def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
-    # 1. 主PAN + 协调器
+def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = None) -> dict:
+    # 1. PAN + 协调器
     pan_counts = defaultdict(int)
     for p in packets:
         pan = p["pan_src"] or p["pan_dst"]
         if pan: pan_counts[pan] += 1
     main_pan = max(pan_counts, key=pan_counts.get) if pan_counts else None
-    coord = 0 if 0 in nodes else None
-    if coord is None:
-        for aid, n in nodes.items():
-            if n["is_coord"] and n["pan"] == main_pan: coord = aid; break
-    if coord is None and nodes: coord = min(nodes.keys())
+    coord = 0
 
-    # 2. 通信矩阵
+    # 2. 通信矩阵 (只取当前PAN的包)
     traffic = defaultdict(int)
     for p in packets:
+        if filter_pan is not None:
+            ppan = p["pan_src"] or p["pan_dst"]
+            if ppan != filter_pan: continue
         s, d = p["nwk_src"], p["nwk_dst"]
         if is_unicast(s) and is_unicast(d): traffic[(s, d)] += 1
 
@@ -86,9 +85,19 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
         for key in [(parent, child), (child, parent)]:
             if key in links: links[key]["is_parent_child"] = True
 
-    # 6. 输出
+    # 6. 输出 — 只输出有通信活动的节点（在traffic中出现的）
+    active_nodes = set()
+    for (s, d) in traffic:
+        active_nodes.add(s)
+        active_nodes.add(d)
+    if filter_pan is not None:
+        # Also include nodes whose PAN matches
+        for aid, n in nodes.items():
+            if n.get("pan") == filter_pan:
+                active_nodes.add(aid)
     node_list = []
-    for aid, n in sorted(nodes.items()):
+    for aid in sorted(active_nodes):
+        n = nodes.get(aid, {"seen":0,"pan":None,"is_coord":False,"type_list":[]})
         ct = coord_traffic.get(aid, 0)
         node_list.append({
             "aid": aid, "label": f"0x{aid:04X}",
@@ -103,6 +112,7 @@ def build(packets: list[dict], nodes: dict[int, dict]) -> dict:
 
     edge_list = []
     for (s, d), link in sorted(links.items()):
+        if s not in active_nodes or d not in active_nodes: continue
         total = link["count"]
         edge_list.append({
             "src": s, "dst": d,

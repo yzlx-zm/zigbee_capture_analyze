@@ -141,15 +141,7 @@ reg('topo',function(){
     document.getElementById('tinfo').textContent=filtered.length+' 节点显示';
     if(displayPan)document.getElementById('tinfo').textContent+=' | PAN:0x'+displayPan;
 
-    // Also update main stats to reflect filter
-    document.getElementById('tstat').innerHTML='<div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:6px">'
-      +(displayPan?'PAN:0x'+displayPan+' | ':'')+d.total_nodes+' 节点 | '+d.tree_node_count+' 树节点 | <span style="color:#3b82f6">主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?')+'</span></div>'
-      +'<div class="stats"><span>协调器: '+(treeCoord!=null?'0x'+treeCoord.toString(16).toUpperCase():'?')+'</span><span>父子:'+pCount+'</span><span>叶子:'+d.leaf_count+'</span>'
-      +'<span>边:'+d.total_edges+'</span></div>'
-      +'<p style="font-size:11px;margin-top:4px">深度: '+JSON.stringify(d.tree_depths||{})+'</p>';
-
     // Stats sidebar (use filtered data)
-    var filtTreeCount=0;for(var i=0;i<filtered.length;i++){if(filtered[i].depth>=0)filtTreeCount++}
     var pCount=Object.keys(d.parents||{}).length;
     document.getElementById('tstat').innerHTML='<div style="font-size:16px;font-weight:700;color:#1e293b;margin-bottom:6px">'
       +(displayPan?'PAN:0x'+displayPan+' | ':'')+'显示 '+filtered.length+' / '+d.total_nodes+' 节点 | <span style="color:#3b82f6">主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?')+'</span></div>'
@@ -239,7 +231,7 @@ reg('topo',function(){
     }
 
     var root=document.getElementById('tree-root');root.innerHTML='';
-    var treeCoord=d._filterCoord!=null?d._filterCoord:d.coord;
+    var treeCoord=d.coord;
     if(treeCoord!=null&&nmap[treeCoord])renderNode(treeCoord, root);
     // Also render orphan nodes
     var orphans=[];for(var i=0;i<filtered.length;i++){if(filtered[i].parent==null&&filtered[i].aid!==treeCoord)orphans.push(filtered[i])}
@@ -256,22 +248,21 @@ reg('topo',function(){
     var panVal=document.getElementById('tpan').value.trim();
     var addrVal=document.getElementById('taddr').value.trim();
     S.topoPan=panVal||null;S.topoAddr=addrVal||null;
-    var pan=panVal?parseInt(panVal,16):null;
-    var addr=addrVal?parseInt(addrVal):null;
-    renderTree(pan,addr);
+    A.get('/api/topology/graph?pan='+(panVal||'')).then(function(d){S.topo=d;renderTree(null,null)});
   });
-  document.getElementById('trst').addEventListener('click',function(){document.getElementById('tpan').value='';document.getElementById('taddr').value='';S.topoPan=null;S.topoAddr=null;renderTree(null,null)});
+  document.getElementById('trst').addEventListener('click',function(){document.getElementById('tpan').value='';document.getElementById('taddr').value='';S.topoPan=null;S.topoAddr=null;
+    A.get('/api/topology/graph?pan=').then(function(d){S.topo=d;renderTree(null,null)});
+  });
   document.getElementById('texp').addEventListener('click',function(){
     document.querySelectorAll('#tree-root .collapsed').forEach(function(el){el.classList.remove('collapsed');var t=el.querySelector('.toggle');if(t)t.textContent='▼'})});
   document.getElementById('tcol').addEventListener('click',function(){
     document.querySelectorAll('#tree-root li').forEach(function(el){if(el.querySelector('ul')){el.classList.add('collapsed');var t=el.querySelector('.toggle');if(t)t.textContent='▶'}})});
-  // Load data then restore filter state
-  A.get('/api/topology/graph').then(function(d){S.topo=d;
+  // Load data then restore filter state (PAN-scoped API call)
+  var apiPan=S.topoPan||'';
+  A.get('/api/topology/graph?pan='+apiPan).then(function(d){S.topo=d;
   if(S.topoPan)document.getElementById('tpan').value=S.topoPan;
   if(S.topoAddr)document.getElementById('taddr').value=S.topoAddr;
-  var pan=S.topoPan?parseInt(S.topoPan,16):null;
-  var addr=S.topoAddr?parseInt(S.topoAddr):null;
-  renderTree(pan,addr);
+  renderTree(null,null);
   });
 });
 
@@ -311,14 +302,14 @@ reg('nodes',function(){
   document.getElementById('mc').innerHTML='<div class="card"><h3>📋 节点列表</h3><div style="display:flex;gap:8px;margin-bottom:8px">'
     +'<input id="ns" placeholder="搜索地址 (如 0A11)" style="width:160px;font-family:monospace"><button class="btn btn-p" id="ngo">搜索</button></div>'
     +'<div style="max-height:calc(100vh - 200px);overflow:auto"><table class="tbl"><thead><tr><th>地址</th><th>出现次数</th><th>PAN</th><th>协调器</th><th>包类型</th></tr></thead><tbody id="ntb"></tbody></table></div></div>';
-  function load(q){A.get('/api/nodes?search='+(q||'')).then(function(ns){
+  function load(q,pan){A.get('/api/nodes?search='+(q||'')+'&pan='+(pan||'')).then(function(ns){
       var h='';for(var i=0;i<ns.length;i++){var n=ns[i];
         h+='<tr data-aid="'+n.aid+'" style="cursor:pointer"><td>'+n.label+'</td><td>'+n.seen+'</td><td>'+(n.pan!=null?'0x'+n.pan.toString(16).toUpperCase():'-')+'</td><td>'+(n.is_coord?'✅':'')+'</td><td>'+(n.type_list||[]).join(', ')+'</td></tr>';}
       document.getElementById('ntb').innerHTML=h;
       document.querySelectorAll('#ntb tr').forEach(function(tr){tr.addEventListener('click',function(){location.hash='topo';setTimeout(function(){document.getElementById('taddr').value=tr.dataset.aid?parseInt(tr.dataset.aid).toString(16).toUpperCase():'';document.getElementById('tgo').click()},100)})});
     });}
-  document.getElementById('ngo').addEventListener('click',function(){load(document.getElementById('ns').value)});
-  load();
+  document.getElementById('ngo').addEventListener('click',function(){load(document.getElementById('ns').value,S.topoPan)});
+  load('',S.topoPan);
 });
 
 // ===== AI =====

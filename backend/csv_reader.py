@@ -70,7 +70,7 @@ def extract_nodes(packets: list[dict]) -> dict[int, dict]:
             if pan:
                 pan_counts[addr][pan] = pan_counts[addr].get(pan, 0) + 1
             # Coordinator detection (Beacon sender in its own PAN)
-            if "Beacon" in p["pkt_type"] and addr == p["mac_src"]:
+            if addr == 0:
                 nodes[addr]["is_coord"] = True
     # Assign most common PAN to each node
     for aid, pc in pan_counts.items():
