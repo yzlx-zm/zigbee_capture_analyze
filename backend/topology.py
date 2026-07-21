@@ -112,7 +112,7 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
             "is_coord": aid == 0,
             "depth": depths.get(aid, -1),
             "parent": parents.get(aid),
-            "children": children.get(aid, []),
+            "children": sorted(children.get(aid, []), key=lambda c: -coord_traffic.get(c, 0)),
             "coord_traffic": ct,
             "type_list": n["type_list"][:10],
         })
