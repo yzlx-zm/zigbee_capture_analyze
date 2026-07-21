@@ -163,7 +163,7 @@ reg('topo',function(){
     var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
     for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
-    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(){var panVal=parseInt(this.dataset.pan);document.getElementById('tpan').value=panVal.toString(16).toUpperCase();S.topoPan=panVal.toString(16).toUpperCase();renderTree(panVal,highlightAddr||null)})});
+    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(){var panVal=parseInt(this.dataset.pan);var panStr=panVal.toString(16).toUpperCase();document.getElementById('tpan').value=panStr;S.topoPan=panStr;A.get('/api/topology/graph?pan='+panStr).then(function(d){S.topo=d;renderTree(null,null)})})});
 
     // Build node lookup from FILTERED nodes
     var nmap={};for(var i=0;i<filtered.length;i++){nmap[filtered[i].aid]=filtered[i]}
