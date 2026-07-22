@@ -312,9 +312,9 @@ async def packet_list(addr: str = "", pan: str = "",
             ts_start = _parse_clock_time(time_start, base_ts)
         if time_end:
             ts_end = _parse_clock_time(time_end, base_ts)
-    # Filter
-    matched = []
-    for p in _packets:
+    # Filter — 保留原始索引用于后续单帧查询
+    matched: list[tuple[int, dict]] = []
+    for idx, p in enumerate(_packets):
         if addr_int is not None:
             if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
                 continue
@@ -325,16 +325,37 @@ async def packet_list(addr: str = "", pan: str = "",
             continue
         if ts_end is not None and p["ts"] > ts_end:
             continue
-        matched.append(p)
+        matched.append((idx, p))
     total = len(matched)
     page = matched[offset:offset + limit]
     return {
         "packets": [{
+            "id": orig_idx,
             "ts": p["ts"], "ch": p.get("ch", 0), "pkt_type": p.get("pkt_type", ""),
             "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
             "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
             "pan_src": p.get("pan_src"), "pan_dst": p.get("pan_dst"),
             "security": p.get("security", ""), "status": p.get("status", ""),
-        } for p in page],
+            "aps_cluster": p.get("aps_cluster"),
+            "aps_cluster_name": p.get("aps_cluster_name"),
+            "zcl_cmd_name": p.get("zcl_cmd_name"),
+            "decrypted": p.get("decrypted", False),
+        } for orig_idx, p in page],
         "total": total, "limit": limit, "offset": offset,
+    }
+
+
+@router.get("/packets/{pkt_id}")
+async def packet_detail(pkt_id: int):
+    """单帧协议树 — 返回 raw_layers 完整 JSON"""
+    if pkt_id < 0 or pkt_id >= len(_packets):
+        return JSONResponse({"error": f"包 ID {pkt_id} 不存在 (共 {len(_packets)} 帧)"}, 404)
+    p = _packets[pkt_id]
+    return {
+        "id": pkt_id,
+        "ts": p["ts"],
+        "pkt_type": p.get("pkt_type", ""),
+        "decrypted": p.get("decrypted", False),
+        "security": p.get("security", ""),
+        "layers": p.get("raw_layers"),  # 完整 tshark JSON 层树
     }
