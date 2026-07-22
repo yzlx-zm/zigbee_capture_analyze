@@ -117,6 +117,108 @@ async def import_clear():
     return {"ok": True}
 
 
+# ── pcap 导入 (tshark 解析) ──
+
+@router.post("/import/pcap")
+async def import_pcap(files: list[UploadFile] = File(...)):
+    """上传 pcap 文件 (支持多文件), tshark 批量解析 + 合并"""
+    global _packets, _nodes, _file_type
+    from .. import tshark as _tshark
+    import tempfile
+
+    tmp_paths = []
+    try:
+        for f in files:
+            tmp = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            with open(tmp_path, "wb") as out:
+                while data := await f.read(1024 * 1024):
+                    out.write(data)
+            tmp_paths.append(tmp_path)
+
+        if not tmp_paths:
+            return JSONResponse({"error": "未选择文件"}, 400)
+
+        _packets = _tshark.parse_packets(tmp_paths)
+        _nodes = _extract_nodes_from_packets(_packets)
+        _file_type = "pcap"
+
+        return _import_result()
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, 500)
+    finally:
+        for p in tmp_paths:
+            try: os.unlink(p)
+            except OSError: pass
+
+
+@router.post("/import/local-pcap")
+async def import_local_pcap(paths: str = Form(...)):
+    """本地 pcap 路径导入 (逗号分隔多个)"""
+    global _packets, _nodes, _file_type
+    from .. import tshark as _tshark
+
+    path_list = [p.strip() for p in paths.split(",") if p.strip()]
+    if not path_list:
+        return JSONResponse({"error": "未提供路径"}, 400)
+
+    missing = [p for p in path_list if not os.path.exists(p)]
+    if missing:
+        return JSONResponse({"error": f"路径不存在: {', '.join(missing)}"}, 400)
+
+    try:
+        _packets = _tshark.parse_packets(path_list)
+        _nodes = _extract_nodes_from_packets(_packets)
+        _file_type = "pcap"
+        return _import_result()
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, 500)
+
+
+def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
+    """从 pcap 包列表中提取节点 (兼容 csv_reader.extract_nodes 格式)"""
+    nodes: dict[int, dict] = {}
+    pan_counts: dict[int, dict[int, int]] = {}
+    for p in packets:
+        pan = p["pan_src"] or p["pan_dst"]
+        for addr in (p["mac_src"], p["mac_dst"], p["nwk_src"], p["nwk_dst"]):
+            if addr is None or addr < 0x0001 or addr > 0xFFF7:
+                continue
+            if addr not in nodes:
+                nodes[addr] = {"aid": addr, "seen": 0, "pan": None, "is_coord": False, "type_list": []}
+                pan_counts[addr] = {}
+            nodes[addr]["seen"] += 1
+            if p["pkt_type"] and p["pkt_type"] not in nodes[addr]["type_list"]:
+                nodes[addr]["type_list"].append(p["pkt_type"])
+            if pan:
+                pan_counts[addr][pan] = pan_counts[addr].get(pan, 0) + 1
+            if addr == 0:
+                nodes[addr]["is_coord"] = True
+    for aid, pc in pan_counts.items():
+        if pc:
+            nodes[aid]["pan"] = max(pc, key=pc.get)
+    return nodes
+
+
+def _import_result() -> dict:
+    """构建导入结果响应"""
+    from .. import key_store as _ks
+    types = {}
+    for p in _packets:
+        t = p["pkt_type"] or "Unknown"
+        types[t] = types.get(t, 0) + 1
+    decrypt_stats = _ks.get_match_stats(_packets)
+    return {
+        "ok": True,
+        "packets": len(_packets),
+        "nodes": len(_nodes),
+        "file_type": _file_type,
+        "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
+        "decrypt_stats": decrypt_stats,
+    }
+
+
 @router.get("/packets/summary")
 async def packet_summary(addr: str = "", pan: str = "",
                          time_start: str = "", time_end: str = ""):
