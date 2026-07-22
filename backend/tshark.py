@@ -1,183 +1,233 @@
-"""tshark 封装 — 调用 Wireshark tshark.exe, 返回解析后的包列表"""
+"""tshark 调用封装 — 查找/验证/解析 pcap → 内部 dict 格式 (兼容 CSV _packets)"""
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-import tempfile
-from dataclasses import dataclass, field
+import sys
+from typing import Optional
 
-TSHARK = r"D:\work_tool\Wireshark\tshark.exe"
+from . import zcl_defs
 
-# NWK 帧类型
-NWK_DATA = 0
-NWK_CMD = 1
+# ── tshark 路径查找 ──
 
-# NWK 命令
-NWK_CMD_LINK_STATUS = 0x01
-NWK_CMD_ROUTE_REQ = 0x02
-NWK_CMD_ROUTE_REPLY = 0x03
-NWK_CMD_NETWORK_STATUS = 0x04
-NWK_CMD_LEAVE = 0x05
-NWK_CMD_ROUTE_RECORD = 0x06
+_KNOWN_TSHARK_PATHS: list[str] = [
+    r"D:\work_tool\Wireshark\tshark.exe",
+    r"C:\Program Files\Wireshark\tshark.exe",
+    r"C:\Program Files (x86)\Wireshark\tshark.exe",
+]
 
+if getattr(sys, "frozen", False):
+    _MEIPASS = sys._MEIPASS  # type: ignore[attr-defined]
+    _KNOWN_TSHARK_PATHS.insert(0, os.path.join(_MEIPASS, "tshark.exe"))
+    _KNOWN_TSHARK_PATHS.insert(0, os.path.join(os.path.dirname(sys.executable), "tshark.exe"))
 
-@dataclass
-class Packet:
-    """从 tshark JSON 提取的扁平化包数据"""
-    num: int           # frame.number
-    ts: float          # epoch 时间戳
-    proto: str          # frame.protocols (如 "wpan:zbee_nwk:data")
-    # MAC 层
-    mac_src: str = ""   # wpan.src16
-    mac_dst: str = ""   # wpan.dst16
-    mac_pan: str = ""   # wpan.dst_pan
-    # NWK 层
-    nwk_src: str = ""
-    nwk_dst: str = ""
-    nwk_radius: int = 0
-    nwk_seq: int = 0
-    nwk_frame_type: int = -1  # -1=无NWK, 0=Data, 1=Cmd
-    nwk_cmd_id: int = -1      # NWK命令类型 (仅 NWK Cmd)
-    nwk_secure: bool = False
-    # 扩展地址
-    nwk_src64: str = ""
-    nwk_dst64: str = ""
-    # Beacon
-    is_beacon: bool = False
-    beacon_pan: str = ""
-    beacon_ext_pan: str = ""
-    beacon_permit: bool = False
-    beacon_depth: int = -1
-    # 元信息
-    fcs_ok: bool = True
-    summary: str = ""  # tshark info 字段
+_cached_tshark_path: Optional[str] = None
 
 
-def _parse_hex(v: str) -> int:
-    """'0xfeed' -> 0xFEED, '0xfffc' -> 0xFFFC"""
-    if not v:
-        return 0
-    return int(v, 16)
+def find_tshark() -> Optional[str]:
+    """查找 tshark.exe, 返回路径或 None"""
+    global _cached_tshark_path
+    if _cached_tshark_path and os.path.exists(_cached_tshark_path):
+        return _cached_tshark_path
+    for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(path_dir, "tshark.exe")
+        if os.path.exists(candidate):
+            _cached_tshark_path = candidate
+            return candidate
+    for candidate in _KNOWN_TSHARK_PATHS:
+        if os.path.exists(candidate):
+            _cached_tshark_path = candidate
+            return candidate
+    return None
 
 
-def read_pcap(filepath: str, key_hex: str = "") -> list[dict]:
-    """用 tshark 解析 pcap/pcapng, 返回扁平化包列表"""
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+def set_tshark_path(path: str) -> bool:
+    """手动设置 tshark 路径"""
+    global _cached_tshark_path
+    if os.path.exists(path):
+        _cached_tshark_path = path
+        return True
+    return False
 
-    cmd = [TSHARK, "-r", filepath, "-T", "json"]
-    if key_hex:
-        cmd.extend(["-o", f"uat:zigbee_key_table:\"NWK\",\"{key_hex}\"\""])
 
-    # 一次性输出到临时文件 (避免管道阻塞)
-    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8")
-    tmp_path = tmp.name
-    tmp.close()
-
+def check_tshark(path: Optional[str] = None) -> dict:
+    """验证 tshark 是否可用 → {ok, path, version}"""
+    tshark = path or find_tshark()
+    if not tshark:
+        return {"ok": False, "path": None, "error": "tshark.exe 未找到"}
     try:
-        with open(tmp_path, "w", encoding="utf-8") as out:
-            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, timeout=120, check=False)
-        with open(tmp_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as e:
+        result = subprocess.run([tshark, "--version"], capture_output=True, text=True, timeout=10)
+        version_line = result.stdout.strip().split("\n")[0] if result.stdout else ""
+        return {"ok": True, "path": tshark, "version": version_line}
+    except Exception as e:
+        return {"ok": False, "path": tshark, "error": str(e)}
+
+
+# ── pcap 解析 ──
+
+def parse_packets(
+    pcap_paths: list[str],
+    tshark_path: Optional[str] = None,
+    progress_callback=None,
+) -> list[dict]:
+    """解析多个 pcap 文件, 返回合并+按时间戳排序的包列表 (内部 dict 格式)"""
+    tshark = tshark_path or find_tshark()
+    if not tshark:
+        raise RuntimeError("tshark.exe 未找到, 请在设置中配置路径")
+
+    all_packets: list[dict] = []
+    for i, pcap_path in enumerate(pcap_paths):
+        frames = _parse_single(tshark, pcap_path)
+        all_packets.extend(frames)
+        if progress_callback:
+            progress_callback(i + 1, len(pcap_paths), len(frames))
+
+    all_packets.sort(key=lambda p: p["ts"])
+    return all_packets
+
+
+def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
+    """调用 tshark -T json 解析单个 pcap"""
+    cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "json"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+    if result.returncode != 0 and not result.stdout.strip():
+        raise RuntimeError(f"tshark 解析失败: {result.stderr.strip()}")
+
+    if not result.stdout.strip():
         return []
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
 
-    packets = []
-    for item in raw:
-        try:
-            layers = item["_source"]["layers"]
-            frame = layers.get("frame", {})
-            wpan = layers.get("wpan", {})
-            nwk = layers.get("zbee_nwk", {})
-            beacon = layers.get("zbee_beacon", {})
-
-            proto = frame.get("frame.protocols", "")
-            ts_str = frame.get("frame.time_epoch", "0")
-            try:
-                from datetime import datetime
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
-            except (ValueError, OSError):
-                ts = 0.0
-
-            # NWK 字段
-            nwk_src = nwk.get("zbee_nwk.src", "")
-            nwk_dst = nwk.get("zbee_nwk.dst", "")
-            nwk_ft = _parse_hex(nwk.get("zbee_nwk.frame_type", "")) if nwk else -1
-
-            # NWK 命令类型
-            nwk_cmd_id = -1
-            if nwk_ft == NWK_CMD:
-                cmd_raw = nwk.get("zbee_nwk.cmd", "")
-                if cmd_raw:
-                    nwk_cmd_id = _parse_hex(cmd_raw)
-
-            pkt = {
-                "num": int(frame.get("frame.number", 0)),
-                "ts": ts,
-                "proto": proto,
-                "mac_src": wpan.get("wpan.src16", ""),
-                "mac_dst": wpan.get("wpan.dst16", ""),
-                "mac_pan": wpan.get("wpan.dst_pan", ""),
-                "nwk_src": nwk_src,
-                "nwk_dst": nwk_dst,
-                "nwk_radius": int(nwk.get("zbee_nwk.radius", 0) or 0),
-                "nwk_seq": int(nwk.get("zbee_nwk.seqno", 0) or 0),
-                "nwk_frame_type": nwk_ft,
-                "nwk_cmd_id": nwk_cmd_id,
-                "nwk_secure": nwk.get("zbee_nwk.security", "0") == "1",
-                "nwk_src64": nwk.get("zbee_nwk.src64", ""),
-                "nwk_dst64": nwk.get("zbee_nwk.dst64", ""),
-                "is_beacon": "zbee_beacon" in proto,
-                "beacon_pan": wpan.get("wpan.src_pan", ""),
-                "beacon_ext_pan": beacon.get("zbee_beacon.extended_pan_id", ""),
-                "beacon_permit": beacon.get("zbee_beacon.router", "0") == "1",
-                "beacon_depth": int(beacon.get("zbee_beacon.depth", -1) or -1),
-                "fcs_ok": wpan.get("wpan.fcs_ok", "1") == "1",
-                "summary": frame.get("frame.protocols", "")[:200],
-            }
-            packets.append(pkt)
-        except (KeyError, ValueError, TypeError):
-            continue
-
-    return packets
+    raw_frames = json.loads(result.stdout)
+    return [_frame_to_dict(f) for f in raw_frames]
 
 
-def extract_nodes(packets: list[dict]) -> dict[str, dict]:
-    """提取所有节点: {addr: {eui64, seen, is_coord, pan, ...}}"""
-    nodes = {}
-    for p in packets:
-        for addr in (p["nwk_src"], p["nwk_dst"], p["mac_src"], p["mac_dst"]):
-            if not addr or addr in ("0xffff", "0xfffc", "0xfffd", "0xfffe"):
-                continue
-            aid = _parse_hex(addr)
-            if aid < 0x0001 or aid > 0xFFF7:
-                continue
-            addr_str = f"0x{aid:04X}"
-            if addr_str not in nodes:
-                nodes[addr_str] = {"addr": addr_str, "aid": aid, "eui64": "",
-                                   "seen": 0, "is_coord": False, "pan": "",
-                                   "depth": -1, "dev_type": "?"}
-            nodes[addr_str]["seen"] += 1
+# ── tshark JSON → 内部 dict ──
 
-        # EUI64 from extended source
-        if p["nwk_src64"] and p["nwk_src"]:
-            k = p["nwk_src"]
-            if k in nodes:
-                nodes[k]["eui64"] = p["nwk_src64"]
+def _frame_to_dict(tf: dict) -> dict:
+    """tshark 单帧 JSON → 内部 dict (兼容 CSV _packets 格式)"""
+    layers = tf.get("_source", {}).get("layers", {})
 
-        # Beacon data
-        if p["is_beacon"]:
-            src = p["mac_src"]
-            if src in nodes:
-                nodes[src]["pan"] = p["beacon_pan"]
-                nodes[src]["depth"] = p["beacon_depth"]
-                if "zbee_beacon" in p["proto"]:
-                    nodes[src]["is_coord"] = True  # beacon sender is coordinator-capable
+    # 时间戳 — tshark 4.6 返回 ISO 格式, 需要解析
+    frame = layers.get("frame", {})
+    ts_raw = frame.get("frame.time_epoch", "0")
+    try:
+        ts = float(ts_raw)
+    except ValueError:
+        # ISO 格式: "2026-06-18T20:16:53.796795+00:00"
+        from datetime import datetime
+        dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        ts = dt.timestamp()
 
-    return nodes
+    # MAC 层 (wpan)
+    wpan = layers.get("wpan", {})
+    mac_fcf = int(wpan.get("wpan.fcf", "0"), 16)
+    mac_frame_type = mac_fcf & 0x07
+    mac_src = _h(wpan.get("wpan.src16", ""))
+    mac_dst = _h(wpan.get("wpan.dst16", ""))
+    mac_dst_pan = _h(wpan.get("wpan.dst_pan", ""))
+    mac_src_pan = _h(wpan.get("wpan.src_pan", "")) or mac_dst_pan
+    mac_seq = int(wpan.get("wpan.seq_no", "0"), 16) if wpan.get("wpan.seq_no") else None
+    fcs_ok = wpan.get("wpan.fcs_ok", "0") == "1"
+
+    # NWK 层
+    nwk = layers.get("zbee_nwk", {})
+    nwk_fcf = int(nwk.get("zbee_nwk.fcf", "0"), 16) if nwk.get("zbee_nwk.fcf") else 0
+    nwk_secure = (nwk_fcf >> 7) & 0x01
+    nwk_src = _h(nwk.get("zbee_nwk.src", ""))
+    nwk_dst = _h(nwk.get("zbee_nwk.dst", ""))
+    nwk_radius = int(nwk.get("zbee_nwk.radius", "0"), 16) if nwk.get("zbee_nwk.radius") else None
+    nwk_seq = int(nwk.get("zbee_nwk.seqno", ""), 16) if nwk.get("zbee_nwk.seqno") else None
+    nwk_src64 = _hex_colon(nwk.get("zbee_nwk.src64", ""))
+
+    # 安全头
+    sec = nwk.get("ZigBee Security Header", {})
+    sec_level_raw = sec.get("zbee.sec.sec_level", "")
+    sec_level = int(sec_level_raw, 16) if sec_level_raw else None
+    sec_frame_counter = int(sec.get("zbee.sec.counter", "0")) if sec.get("zbee.sec.counter") else None
+    sec_key = _hex_colon(sec.get("zbee.sec.key", ""))
+    sec_key_label = sec.get("zbee.sec.decryption_key", "")
+    sec_mic = _hex_colon(sec.get("zbee.sec.mic", ""))
+
+    # APS 层
+    aps = layers.get("zbee_aps", {})
+    aps_cluster = _h(aps.get("zbee_aps.cluster", ""))
+    aps_profile = _h(aps.get("zbee_aps.profile", ""))
+    aps_counter = int(aps.get("zbee_aps.counter", "0")) if aps.get("zbee_aps.counter") else None
+    aps_src_ep = int(aps.get("zbee_aps.src", ""), 16) if aps.get("zbee_aps.src") else None
+    aps_dst_ep = int(aps.get("zbee_aps.dst", ""), 16) if aps.get("zbee_aps.dst") else None
+
+    # ZCL 层
+    zcl = layers.get("zbee_zcl", {})
+    zcl_cmd_id = _h(zcl.get("zbee_zcl.cmd.id", ""))
+    zcl_seq = int(zcl.get("zbee_zcl.cmd.tsn", ""), 16) if zcl.get("zbee_zcl.cmd.tsn") else None
+    zcl_dir = _zcl_direction(zcl)
+
+    # 解密判断
+    decrypted = aps_cluster is not None
+
+    # 包类型
+    pkt_type = _pkt_type(mac_frame_type, nwk)
+
+    return {
+        "ts": ts, "ch": 0,
+        "pkt_type": pkt_type,
+        "pan_src": mac_src_pan, "pan_dst": mac_dst_pan,
+        "mac_src": mac_src, "mac_dst": mac_dst, "mac_seq": mac_seq,
+        "nwk_src": nwk_src, "nwk_dst": nwk_dst, "nwk_seq": nwk_seq,
+        "security": "Decrypted" if decrypted else "Encrypted",
+        "status": "Decrypted" if decrypted else ("Encrypted" if nwk_secure else ""),
+        "aps_cluster": aps_cluster,
+        "aps_cluster_name": zcl_defs.get_cluster_name(aps_cluster),
+        "aps_profile": aps_profile,
+        "aps_counter": aps_counter,
+        "aps_src_ep": aps_src_ep, "aps_dst_ep": aps_dst_ep,
+        "zcl_cmd_id": zcl_cmd_id,
+        "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id) if zcl_cmd_id is not None else None,
+        "zcl_direction": zcl_dir,
+        "zcl_seq": zcl_seq,
+        "sec_level": sec_level,
+        "sec_key": sec_key,
+        "sec_key_label": sec_key_label,
+        "sec_frame_counter": sec_frame_counter,
+        "sec_mic": sec_mic,
+        "decrypted": decrypted,
+        "nwk_radius": nwk_radius,
+        "nwk_src64": nwk_src64,
+        "nwk_security": bool(nwk_secure),
+        "mac_fcs_ok": fcs_ok,
+        "mac_frame_type": mac_frame_type,
+        "raw_layers": layers,
+    }
+
+
+# ── helpers ──
+
+def _h(val: str) -> int | None:
+    """'0x0019' → 25, '' → None"""
+    val = val.strip()
+    return int(val, 16) if val else None
+
+
+def _hex_colon(val: str) -> str | None:
+    """'b4:e3:f9:ff:...' → 'b4e3f9ff...'"""
+    val = val.strip().replace(":", "")
+    return val if val else None
+
+
+def _zcl_direction(zcl: dict) -> str | None:
+    fcf = zcl.get("Frame Control Field", {})
+    if isinstance(fcf, dict):
+        d = fcf.get("zbee_zcl.dir", "")
+    else:
+        d = zcl.get("zbee_zcl.dir", "")
+    if d == "1":
+        return "Server→Client"
+    elif d == "0":
+        return "Client→Server"
+    return None
+
+
+def _pkt_type(mac_ft: int, nwk: dict) -> str:
+    names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Command"}
+    return names.get(mac_ft, "Unknown")
