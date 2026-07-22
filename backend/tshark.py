@@ -151,7 +151,7 @@ def _frame_to_dict(tf: dict) -> dict:
 
     # APS 层
     aps = layers.get("zbee_aps", {})
-    aps_cluster = _h(aps.get("zbee_aps.cluster", ""))
+    aps_cluster = _h(aps.get("zbee_aps.cluster", "")) or _h(aps.get("zbee_aps.zdp_cluster", ""))
     aps_profile = _h(aps.get("zbee_aps.profile", ""))
     aps_counter = int(aps.get("zbee_aps.counter", "0")) if aps.get("zbee_aps.counter") else None
     aps_src_ep = int(aps.get("zbee_aps.src", ""), 16) if aps.get("zbee_aps.src") else None
@@ -163,8 +163,8 @@ def _frame_to_dict(tf: dict) -> dict:
     zcl_seq = int(zcl.get("zbee_zcl.cmd.tsn", ""), 16) if zcl.get("zbee_zcl.cmd.tsn") else None
     zcl_dir = _zcl_direction(zcl)
 
-    # 解密判断
-    decrypted = aps_cluster is not None
+    # 解密判断 — APS 层存在(有Counter等字段)即表示 NWK payload 已解密
+    decrypted = bool(aps_counter is not None or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster"))
 
     # 包类型
     pkt_type = _pkt_type(mac_frame_type, nwk)
@@ -229,5 +229,19 @@ def _zcl_direction(zcl: dict) -> str | None:
 
 
 def _pkt_type(mac_ft: int, nwk: dict) -> str:
-    names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Command"}
-    return names.get(mac_ft, "Unknown")
+    """识别包类型 — MAC 层分类 + NWK 命令细分"""
+    mac_names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Cmd"}
+    base = mac_names.get(mac_ft, "Unknown")
+    if mac_ft == 1 and nwk:
+        # Check for named NWK command frame in tshark JSON
+        for key in nwk:
+            if key.startswith("Command Frame:"):
+                cmd_name = key.split(":", 1)[1].strip()
+                return cmd_name  # e.g. "Link Status"
+        # Check NWK frame type for generic classification
+        fcf_tree = nwk.get("zbee_nwk.fcf_tree", {})
+        nwk_ft = fcf_tree.get("zbee_nwk.frame_type", "")
+        if nwk_ft == "0x0001":  # NWK Command
+            # If encrypted, can't determine specific command
+            return "NWK Cmd"
+    return base

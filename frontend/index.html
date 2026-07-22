@@ -24,6 +24,7 @@ input,select{padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-siz
 .tbl th{background:#f1f5f9;text-align:left;padding:4px 6px;color:#475569;border-bottom:2px solid #cbd5e1;position:sticky;top:0}
 .tbl td{padding:3px 6px;border-bottom:1px solid #f1f5f9}
 .tbl tr{cursor:pointer}.tbl tr:hover{background:#f0f9ff}
+.tbl tr.hl{background:#dbeafe!important;outline:1px solid #3b82f6}
 .stats{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#64748b}
 .stats span{background:#f1f5f9;padding:2px 6px;border-radius:3px}
 canvas{border:1px solid #e2e8f0;border-radius:4px;cursor:grab}
@@ -79,9 +80,9 @@ reg('import',function(){
       +'<p style="font-size:11px;color:#94a3b8;margin-bottom:8px">Ubiqua File → Export → pcap</p>'
       +'<div class="file-drop" id="pdrop"><p>拖拽 .pcap 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng" multiple style="display:none"></div>'
       +'<button class="btn btn-o" id="plpath" style="font-size:11px">或输入本地路径 (逗号分隔多个)...</button>'
-      +'<div id="pkey-panel" class="card" style="display:none;margin-top:8px;background:#f8fafc">'
-        +'<h4 style="font-size:12px;cursor:pointer" id="pkey-toggle">🔑 密钥管理 ▾</h4>'
-        +'<div id="pkey-body" style="font-size:11px"></div>'
+      +'<div id="pkey-panel" class="card" style="margin-top:8px;background:#f8fafc">'
+        +'<h4 style="font-size:12px;cursor:pointer" id="pkey-toggle">🔑 密钥管理 ▸</h4>'
+        +'<div id="pkey-body" style="display:none;font-size:11px"></div>'
       +'</div>'
     +'</div>'
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
@@ -135,9 +136,10 @@ reg('import',function(){
   // Key panel toggle
   document.getElementById('pkey-toggle').addEventListener('click',function(){
     var body=document.getElementById('pkey-body');
-    body.style.display=body.style.display==='none'?'block':'none';
-    this.textContent=body.style.display==='none'?'🔑 密钥管理 ▸':'🔑 密钥管理 ▾';
-    if(body.style.display!=='none')loadKeyPanel();
+    var show=body.style.display==='none';
+    body.style.display=show?'block':'none';
+    this.textContent=show?'🔑 密钥管理 ▾':'🔑 密钥管理 ▸';
+    if(show)loadKeyPanel();
   });
 
   function loadKeyPanel(){
@@ -413,12 +415,21 @@ reg('tl',function(){
     +'<span id="tl-stat" style="font-size:11px;color:#64748b;margin-left:auto"></span></div>'
     // Summary
     +'<div id="tl-summary" style="display:none;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px"></div>'
-    // Packet table
-    +'<div style="max-height:calc(100vh - 360px);overflow:auto"><table class="tbl" id="tltbl"><thead><tr>'
-    +'<th>时间</th><th>类型</th><th>MAC Src</th><th>MAC Dst</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
-    +'</tr></thead><tbody id="tltb"><tr><td colspan="8" style="color:#94a3b8;text-align:center;padding:40px">请输入过滤条件后点击「查看」</td></tr></tbody></table></div>'
+    // ═══ Left-Right split ═══
+    +'<div style="display:flex;flex:1;overflow:hidden;height:calc(100vh - 320px)">'
+    // LEFT: packet table
+    +'<div style="flex:1;overflow:auto;border-top:1px solid #e2e8f0">'
+    +'<table class="tbl" id="tltbl"><thead><tr>'
+    +'<th>时间</th><th>类型</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
+    +'</tr></thead><tbody id="tltb"><tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:40px">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
+    +'</div>'
+    // RIGHT: protocol detail panel
+    +'<div id="tl-detail" style="width:400px;flex-shrink:0;overflow:auto;border-left:2px solid #e2e8f0;background:#fafbfc;padding:12px;font-size:11px">'
+    +'<p style="color:#94a3b8;text-align:center;padding-top:60px">← 点击左侧包列表中的帧<br>查看协议详情</p>'
+    +'</div>'
+    +'</div>'
     // Pagination
-    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0;margin-top:8px">'
+    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0">'
     +'<button class="btn btn-o" id="tl-pp" style="font-size:10px">上一页</button><span id="tl-pi">-</span><button class="btn btn-o" id="tl-pn" style="font-size:10px">下一页</button>'
     +'<span>跳至</span><input id="tl-pj" style="width:45px;font-size:10px"><span>页</span><button class="btn btn-o" id="tl-pgo" style="font-size:10px">Go</button>'
     +'<span>每页</span><select id="tl-ps" style="font-size:10px"><option value="50">50</option><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div></div>';
@@ -497,14 +508,193 @@ reg('tl',function(){
       document.getElementById('tl-pager').style.display=tlTotal>0?'flex':'none';
       var h='';for(var i=0;i<pkts.length;i++){var p=pkts[i];
         var ts=tlFmtTs(p.ts);
-        var ms=typeof p.mac_src==='number'?'0x'+p.mac_src.toString(16).toUpperCase():'-';
-        var md=typeof p.mac_dst==='number'?'0x'+p.mac_dst.toString(16).toUpperCase():'-';
         var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
         var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
-        h+='<tr><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ms+'</td><td>'+md+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+(p.status||'')+'</td></tr>';}
-      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="8" style="color:#94a3b8;text-align:center;padding:20px">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span style="font-size:10px">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
+        var isNwkCmdRow=(p.pkt_type==='Link Status'||p.pkt_type==='Route Request'||p.pkt_type==='Route Reply'||p.pkt_type==='Route Record'||p.pkt_type==='Network Status'||p.pkt_type==='Leave'||p.pkt_type.startsWith('NWK Cmd'));
+        var decIcon='';
+        if(isNwkCmdRow){
+          decIcon='<span style="color:#0891b2" title="NWK命令">📡</span>';
+        }else if(p.decrypted){
+          decIcon='<span style="color:#16a34a" title="已解密">✅</span>';
+        }else{
+          decIcon='<span style="color:#94a3b8" title="加密">🔒</span>';
+        }
+        var stat=(p.status||'')+' '+decIcon;
+        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
+      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:20px">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span style="font-size:10px">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
+      // Click-to-select handler
+      document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
+        tr.addEventListener('click',function(){
+          document.querySelectorAll('#tltb tr.tl-row').forEach(function(r){r.classList.remove('hl')});
+          this.classList.add('hl');
+          var pid=parseInt(this.dataset.pid);
+          tlShowDetail(pid);
+        });
+      });
       updPgr();
     }).catch(function(e){document.getElementById('tl-stat').textContent='加载失败';});
+  }
+
+  // Detail panel renderer
+  function tlShowDetail(pid){
+    var panel=document.getElementById('tl-detail');
+    panel.innerHTML='<p style="color:#94a3b8;text-align:center;padding-top:20px">加载中...</p>';
+    A.get('/api/packets/'+pid).then(function(d){
+      if(!d||!d.layers){
+        panel.innerHTML='<p style="color:#dc2626;text-align:center;padding-top:20px">无法加载帧详情</p>';
+        return;
+      }
+      var html='<div style="margin-bottom:4px;color:#64748b;font-size:10px">帧 #'+pid+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span style="color:#16a34a">已解密</span>':'<span style="color:#dc2626">加密</span>')+'</div>';
+      var layers=d.layers;
+      // MAC layer (wpan)
+      if(layers.wpan){
+        html+=_tlLayer('MAC', '#d97706', [
+          ['Frame Type', _tlMacType(layers.wpan)],
+          ['Seq#', _tlF(layers.wpan,'wpan.seq_no')],
+          ['Dest PAN', _tlA(layers.wpan,'wpan.dst_pan')],
+          ['Dest Addr', _tlA(layers.wpan,'wpan.dst16')],
+          ['Src Addr', _tlA(layers.wpan,'wpan.src16')],
+          ['FCS OK', layers.wpan['wpan.fcs_ok']==='1'?'Yes':'No'],
+        ]);
+      }
+      // NWK layer
+      if(layers.zbee_nwk){
+        var nwk=layers.zbee_nwk;
+        var nwkFields=[];
+        // Check for named NWK command
+        var cmdName='';
+        for(var ck in nwk){if(ck.startsWith('Command Frame:')){cmdName=ck.split(':')[1].trim();break;}}
+        if(cmdName){nwkFields.push(['Command', cmdName]);}
+        nwkFields.push(['Dest', _tlA2(nwk,'zbee_nwk.dst')]);
+        nwkFields.push(['Src', _tlA2(nwk,'zbee_nwk.src')]);
+        nwkFields.push(['Radius', _tlF(nwk,'zbee_nwk.radius')]);
+        nwkFields.push(['Seq#', _tlF(nwk,'zbee_nwk.seqno')]);
+        var fct=nwk['zbee_nwk.fcf_tree']||{};
+        var secEnabled=fct['zbee_nwk.security']==='1';
+        nwkFields.push(['Security', secEnabled?'Enabled':'Disabled']);
+        html+=_tlLayer('NWK', '#2563eb', nwkFields);
+        // Security header — always show if tshark parsed it
+        var sec=nwk['ZigBee Security Header']||{};
+        if(Object.keys(sec).length>0&&sec['zbee.sec.field']){
+          var klabel=sec['zbee.sec.decryption_key']||(sec['zbee.sec.key']?'Key matched':'');
+          html+=_tlLayer('Security', '#dc2626', [
+            ['Level', _tlSecLevel(sec)],
+            ['Frame Counter', sec['zbee.sec.counter']||'?'],
+            ['Key Seq#', sec['zbee.sec.key_seqno']||'?'],
+            ['MIC', sec['zbee.sec.mic']||'?'],
+            ['Key', klabel||'None'],
+          ]);
+        }
+        // Link Status neighbor list — nested inside Command Frame value
+        if(cmdName==='Link Status'){
+          var cmdVal=null;
+          for(var ck2 in nwk){if(ck2.startsWith('Command Frame:')){cmdVal=nwk[ck2];break;}}
+          if(cmdVal&&typeof cmdVal==='object'){
+            var nb=[];
+            for(var lk in cmdVal){
+              if(lk.startsWith('Link ')&&!lk.includes('count')&&!lk.includes('first')&&!lk.includes('last')){
+                var li=cmdVal[lk];
+                if(li&&li['zbee_nwk.cmd.link.address']){
+                  var addr='0x'+parseInt(li['zbee_nwk.cmd.link.address'],16).toString(16).toUpperCase().padStart(4,'0');
+                  var inc=li['zbee_nwk.cmd.link.incoming_cost']||'?';
+                  var out=li['zbee_nwk.cmd.link.outgoing_cost']||'?';
+                  nb.push([addr, 'in:'+inc+' out:'+out]);
+                }
+              }
+            }
+            if(nb.length>0){
+              html+=_tlLayer('Neighbors ('+nb.length+')', '#0891b2', nb);
+            }
+          }
+        }
+      }
+      // NWK Command detection
+      var isNwkCmd=false;
+      for(var ck in nwk){if(ck.startsWith('Command Frame:')){isNwkCmd=true;break;}}
+      // For Data frames, check NWK frame type
+      if(!isNwkCmd){
+        var fct=nwk['zbee_nwk.fcf_tree']||{};
+        isNwkCmd=(fct['zbee_nwk.frame_type']==='0x0001');
+      }
+
+      // APS/ZCL — only for Data frames that have these layers
+      if(!isNwkCmd){
+        if(layers.zbee_aps){
+          var aps=layers.zbee_aps;
+          html+=_tlLayer('APS', '#16a34a', [
+            ['Cluster', _tlCluster(aps)],
+            ['Profile', _tlA(aps,'zbee_aps.profile')],
+            ['Src EP', aps['zbee_aps.src']||'?'],
+            ['Dest EP', aps['zbee_aps.dst']||'?'],
+            ['Counter', aps['zbee_aps.counter']||'?'],
+          ]);
+        }else if(!d.decrypted&&!isNwkCmd){
+          html+=_tlLayer('APS', '#16a34a', [['Status','🔒 Encrypted']]);
+        }
+        if(layers.zbee_zcl){
+          var zcl=layers.zbee_zcl;
+          var fcf=zcl['Frame Control Field']||{};
+          var dir='?';
+          if(typeof fcf==='object'&&fcf['zbee_zcl.dir']==='1')dir='Server→Client';
+          else if(typeof fcf==='object'&&fcf['zbee_zcl.dir']==='0')dir='Client→Server';
+          html+=_tlLayer('ZCL', '#7c3aed', [
+            ['Command', _tlZclCmd(zcl)],
+            ['Direction', dir],
+            ['Seq#', zcl['zbee_zcl.cmd.tsn']||'?'],
+          ]);
+        }else if(!d.decrypted&&!isNwkCmd){
+          var isZdp=aps&&_tlIsZdp(aps);
+          if(!isZdp){
+            html+=_tlLayer('ZCL', '#7c3aed', [['Status','🔒 Encrypted (需要 Network Key)']]);
+          }
+        }
+      }
+      panel.innerHTML=html;
+    }).catch(function(e){
+      panel.innerHTML='<p style="color:#dc2626;text-align:center;padding-top:20px">加载失败: '+e.message+'</p>';
+    });
+  }
+  function _tlLayer(title, color, fields){
+    var h='<div style="margin-bottom:8px;border-left:3px solid '+color+';padding-left:8px">';
+    h+='<div style="font-weight:600;color:'+color+';margin-bottom:2px">'+title+'</div>';
+    for(var i=0;i<fields.length;i++){
+      h+='<div style="display:flex;font-size:10px;margin:1px 0"><span style="color:#64748b;width:80px;flex-shrink:0">'+fields[i][0]+'</span><span style="font-family:monospace">'+fields[i][1]+'</span></div>';
+    }
+    h+='</div>';
+    return h;
+  }
+  function _tlF(obj,key){var v=obj[key];return v?v:'-';}
+  function _tlA(obj,key){var v=obj[key];return v?'0x'+parseInt(v,16).toString(16).toUpperCase():'-';}
+  function _tlA2(obj,key){var v=obj[key];return v?'0x'+parseInt(v,16).toString(16).toUpperCase().padStart(4,'0'):'-';}
+  function _tlMacType(wpan){
+    var fcf=parseInt(wpan['wpan.fcf']||'0',16);
+    var types={0:'Beacon',1:'Data',2:'ACK',3:'MAC Cmd'};
+    return (types[fcf&0x07]||'?')+' (0x'+(fcf&0x07).toString(16)+')';
+  }
+  function _tlSecLevel(sec){
+    var lv=sec['zbee.sec.sec_level']||'?';
+    return 'Level '+lv;
+  }
+  function _tlCluster(aps){
+    var cid=aps['zbee_aps.cluster']||aps['zbee_aps.zdp_cluster'];
+    if(!cid)return '-';
+    var profile=aps['zbee_aps.profile']||'';
+    var num=parseInt(cid,16);
+    // ZDP commands (profile 0x0000)
+    if(profile==='0x0000'){
+      var zdp={0x0000:'NWK Address Req',0x0001:'IEEE Address Req',0x0002:'Node Desc Req',0x0003:'Power Desc Req',0x0004:'Simple Desc Req',0x0005:'Active EP Req',0x0006:'Match Desc Req',0x0010:'End Device Announce',0x0013:'Device Announce',0x0031:'Mgmt LQI Req',0x0032:'Mgmt Routing Req',0x8002:'Node Desc Resp',0x8005:'Active EP Resp'};
+      return (zdp[num]||'ZDP Cmd')+' (0x'+num.toString(16).toUpperCase()+')';
+    }
+    var names={0x0000:'Basic',0x0001:'Power',0x0003:'Identify',0x0004:'Groups',0x0005:'Scenes',0x0006:'On/Off',0x0008:'Level',0x0019:'OTA Upgrade',0x0101:'Door Lock',0x0102:'Window Covering',0x0300:'Color',0x0402:'Temperature',0x0405:'Humidity',0x0500:'IAS Zone',0xFCFA:'Private'};
+    return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
+  }
+  function _tlIsZdp(aps){return (aps['zbee_aps.profile']||'')==='0x0000';}
+  function _tlZclCmd(zcl){
+    var cid=zcl['zbee_zcl.cmd.id'];
+    if(!cid)return '-';
+    var names={0x00:'Read Attributes',0x01:'Read Attributes Resp',0x02:'Write Attributes',0x04:'Write Attributes Resp',0x06:'Config Report',0x07:'Config Report Resp',0x0A:'Report Attributes',0x0B:'Default Resp',0x00:'OTA: Image Notify',0x01:'OTA: Query Next Image',0x02:'OTA: Query Next Image Resp',0x03:'OTA: Image Block Req',0x05:'OTA: Image Block Resp',0x06:'OTA: Upgrade End Req',0x07:'OTA: Upgrade End Resp'};
+    var num=parseInt(cid,16);
+    return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
   }
 
   // On Enter key in inputs, trigger search
