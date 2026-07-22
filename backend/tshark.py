@@ -166,12 +166,12 @@ def _frame_to_dict(tf: dict) -> dict:
     # 解密判断 — APS 层存在(有Counter等字段)即表示 NWK payload 已解密
     decrypted = bool(aps_counter is not None or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster"))
 
-    # 包类型
-    pkt_type = _pkt_type(mac_frame_type, nwk)
+    # 包类型 — 检查 ZDP/NWK/MAC 逐层确定
+    pkt_type = _pkt_type(mac_frame_type, nwk, aps, decrypted)
 
     return {
         "ts": ts, "ch": 0,
-        "pkt_type": pkt_type,
+        "pkt_type": _pkt_type(mac_frame_type, nwk, aps, decrypted),
         "pan_src": mac_src_pan, "pan_dst": mac_dst_pan,
         "mac_src": mac_src, "mac_dst": mac_dst, "mac_seq": mac_seq,
         "nwk_src": nwk_src, "nwk_dst": nwk_dst, "nwk_seq": nwk_seq,
@@ -228,20 +228,33 @@ def _zcl_direction(zcl: dict) -> str | None:
     return None
 
 
-def _pkt_type(mac_ft: int, nwk: dict) -> str:
-    """识别包类型 — MAC 层分类 + NWK 命令细分"""
+def _pkt_type(mac_ft: int, nwk: dict, aps: dict | None = None, decrypted: bool = False) -> str:
+    """识别包类型 — MAC 层分类 + NWK 命令 + ZDP 命令细分"""
     mac_names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Cmd"}
     base = mac_names.get(mac_ft, "Unknown")
-    if mac_ft == 1 and nwk:
-        # Check for named NWK command frame in tshark JSON
-        for key in nwk:
-            if key.startswith("Command Frame:"):
-                cmd_name = key.split(":", 1)[1].strip()
-                return cmd_name  # e.g. "Link Status"
-        # Check NWK frame type for generic classification
-        fcf_tree = nwk.get("zbee_nwk.fcf_tree", {})
-        nwk_ft = fcf_tree.get("zbee_nwk.frame_type", "")
-        if nwk_ft == "0x0001":  # NWK Command
-            # If encrypted, can't determine specific command
-            return "NWK Cmd"
+    if mac_ft == 1:
+        # Check for ZDP first (profile 0x0000)
+        if aps and aps.get("zbee_aps.profile") == "0x0000":
+            zdp_cluster = aps.get("zbee_aps.zdp_cluster", "")
+            zdp_names = {
+                "0x0000": "ZDP: NWK Addr Req", "0x0001": "ZDP: IEEE Addr Req",
+                "0x0002": "ZDP: Node Desc Req", "0x0003": "ZDP: Power Desc Req",
+                "0x0004": "ZDP: Simple Desc Req", "0x0005": "ZDP: Active EP Req",
+                "0x0006": "ZDP: Match Desc Req", "0x0010": "ZDP: End Dev Announce",
+                "0x0013": "ZDP: Device Announce", "0x0031": "ZDP: Mgmt LQI Req",
+                "0x0032": "ZDP: Mgmt Routing Req",
+                "0x8002": "ZDP: Node Desc Resp", "0x8005": "ZDP: Active EP Resp",
+            }
+            return zdp_names.get(zdp_cluster, "ZDP Cmd") if zdp_cluster else "ZDP"
+        if nwk:
+            # Check for named NWK command frame in tshark JSON
+            for key in nwk:
+                if key.startswith("Command Frame:"):
+                    return key.split(":", 1)[1].strip()
+            fcf_tree = nwk.get("zbee_nwk.fcf_tree", {})
+            if fcf_tree.get("zbee_nwk.frame_type") == "0x0001":
+                return "NWK Cmd"
+        if decrypted and aps:
+            # Decrypted Data frame — allow Data if no specific type matches
+            return "Data"
     return base

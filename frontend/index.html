@@ -424,7 +424,7 @@ reg('tl',function(){
     +'</tr></thead><tbody id="tltb"><tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:40px">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
     +'</div>'
     // RIGHT: protocol detail panel
-    +'<div id="tl-detail" style="width:400px;flex-shrink:0;overflow:auto;border-left:2px solid #e2e8f0;background:#fafbfc;padding:12px;font-size:11px">'
+    +'<div id="tl-detail" style="width:400px;flex-shrink:0;overflow:auto;border-left:2px solid #e2e8f0;background:#fafbfc;padding:12px;font-size:12px;line-height:1.5">'
     +'<p style="color:#94a3b8;text-align:center;padding-top:60px">← 点击左侧包列表中的帧<br>查看协议详情</p>'
     +'</div>'
     +'</div>'
@@ -608,16 +608,15 @@ reg('tl',function(){
           }
         }
       }
-      // NWK Command detection
+      // Detect NWK Command type first
       var isNwkCmd=false;
       for(var ck in nwk){if(ck.startsWith('Command Frame:')){isNwkCmd=true;break;}}
-      // For Data frames, check NWK frame type
       if(!isNwkCmd){
-        var fct=nwk['zbee_nwk.fcf_tree']||{};
-        isNwkCmd=(fct['zbee_nwk.frame_type']==='0x0001');
+        var fct2=nwk['zbee_nwk.fcf_tree']||{};
+        isNwkCmd=(fct2['zbee_nwk.frame_type']==='0x0001');
       }
 
-      // APS/ZCL — only for Data frames that have these layers
+      // APS — only for Data frames
       if(!isNwkCmd){
         if(layers.zbee_aps){
           var aps=layers.zbee_aps;
@@ -628,9 +627,48 @@ reg('tl',function(){
             ['Dest EP', aps['zbee_aps.dst']||'?'],
             ['Counter', aps['zbee_aps.counter']||'?'],
           ]);
-        }else if(!d.decrypted&&!isNwkCmd){
+        }else if(!d.decrypted){
           html+=_tlLayer('APS', '#16a34a', [['Status','🔒 Encrypted']]);
         }
+      }
+
+      // ZDP layer (profile 0x0000) — always check, independent of NWK type
+      if(layers.zbee_zdp){
+        var zdp=layers.zbee_zdp;
+        var zdpLabels={nwk_addr:'NWK Addr',seqno:'Seq#',status:'Status',manufacturer:'Mfr Code',max_buffer:'Max Buf',max_incoming_transfer:'Max In',max_outgoing_transfer:'Max Out',type:'Node Type',complex:'Complex Desc',user:'User Desc',frag_support:'Frag Support','freq.868mhz':'868 MHz','freq.900mhz':'900 MHz','freq.2400mhz':'2.4 GHz','freq.eu_sub_ghz':'EU Sub-GHz',server:'Server Mask',dcf:'Desc Capability',cinfo:'Complex Info',aps_flags:'APS Flags'};
+        function _zdpVal(k,v){
+          if(k==='status'){var m={'0x00':'Success','0x80':'InvRequestType','0x81':'DeviceNotFound','0x82':'InvalidEP','0x83':'NotActive','0x84':'NotSupported','0x85':'Timeout','0x89':'NoDescriptor'};return (m[v]||v)+' ('+v+')';}
+          if(k==='type'||k==='Node Type'){var mt={'0':'Coordinator','1':'Router','2':'End Device'};return (mt[v]||v);}
+          if(k==='complex'||k==='Complex Desc'||k==='user'||k==='User Desc'){return v==='1'?'Yes (0x1)':'No (0x0)';}
+          if(k==='frag_support'||k==='Frag Support'){return v==='1'?'Supported':'No';}
+          return v;
+        }
+        var zdpFields=[];
+        for(var zk in zdp){
+          if(zk.indexOf('_tree')>=0)continue;
+          var v=zdp[zk];
+          if(typeof v==='object')continue;
+          if(zk.startsWith('zbee_zdp.')){
+            var raw=zk.replace('zbee_zdp.','');
+            zdpFields.push([zdpLabels[raw]||raw, _zdpVal(raw, v)]);
+          }else if(zk==='Node Descriptor'&&typeof zdp[zk]==='object'){
+            var nd=zdp[zk];
+            for(var ndk in nd){
+              if(ndk.indexOf('_tree')>=0)continue;
+              var nv=nd[ndk];
+              if(typeof nv==='object')continue;
+              var rawNd=ndk.replace('zbee_zdp.node.','');
+              zdpFields.push([zdpLabels[rawNd]||rawNd, _zdpVal(rawNd, nv)]);
+            }
+          }
+        }
+        if(zdpFields.length>0){
+          html+=_tlLayer('ZDP', '#059669', zdpFields);
+        }
+      }
+
+      // ZCL — only for non-NWK-command Data frames
+      if(!isNwkCmd){
         if(layers.zbee_zcl){
           var zcl=layers.zbee_zcl;
           var fcf=zcl['Frame Control Field']||{};
@@ -658,7 +696,7 @@ reg('tl',function(){
     var h='<div style="margin-bottom:8px;border-left:3px solid '+color+';padding-left:8px">';
     h+='<div style="font-weight:600;color:'+color+';margin-bottom:2px">'+title+'</div>';
     for(var i=0;i<fields.length;i++){
-      h+='<div style="display:flex;font-size:10px;margin:1px 0"><span style="color:#64748b;width:80px;flex-shrink:0">'+fields[i][0]+'</span><span style="font-family:monospace">'+fields[i][1]+'</span></div>';
+      h+='<div style="display:flex;font-size:11px;margin:1px 0"><span style="color:#64748b;width:105px;flex-shrink:0">'+fields[i][0]+'</span><span style="font-family:monospace;word-break:break-all">'+fields[i][1]+'</span></div>';
     }
     h+='</div>';
     return h;
@@ -669,7 +707,7 @@ reg('tl',function(){
   function _tlMacType(wpan){
     var fcf=parseInt(wpan['wpan.fcf']||'0',16);
     var types={0:'Beacon',1:'Data',2:'ACK',3:'MAC Cmd'};
-    return (types[fcf&0x07]||'?')+' (0x'+(fcf&0x07).toString(16)+')';
+    return (types[fcf&0x07]||'?')+' [0x'+fcf.toString(16).toUpperCase()+']';
   }
   function _tlSecLevel(sec){
     var lv=sec['zbee.sec.sec_level']||'?';
