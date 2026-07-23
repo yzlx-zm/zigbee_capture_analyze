@@ -381,7 +381,9 @@ reg('topo',function(){
     document.getElementById('tasym').innerHTML=ah;
   }
 
-  // ═══ Cytoscape 力导向图 (精简模式: 数据流边 + Route Record 路径) ═══
+  // ═══ Cytoscape 力导向图 (路径着色 + 流量背景) ═══
+  var PATH_COLORS=['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
+
   function renderGraph(d){
     if(!d) return;
     var nbt=d.neighbor_tables||{};
@@ -389,30 +391,30 @@ reg('topo',function(){
     var es=d.edges||[];
     var rps=d.route_paths||[];
 
-    // ── 确定活跃节点 (在数据流或 Route Record 中出现) ──
-    var activeSet={};
-    for(var i=0;i<es.length;i++){
-      activeSet[es[i].src]=true; activeSet[es[i].dst]=true;
-    }
+    // ── 路径节点集合 ──
+    var pathNodes={};
     for(var i=0;i<rps.length;i++){
-      var rp=rps[i]; activeSet[rp.src]=true; activeSet[rp.dst]=true;
-      for(var j=0;j<(rp.relays||[]).length;j++) activeSet[rp.relays[j]]=true;
+      var rp=rps[i];
+      var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
+      for(var j=0;j<full.length;j++){
+        if(!pathNodes[full[j]]) pathNodes[full[j]]=[];
+        pathNodes[full[j]].push(i);
+      }
     }
-    var activeCount=Object.keys(activeSet).length;
 
     // ── 节点 ──
     var cyNodes=[];
     for(var i=0;i<ns.length;i++){
       var n=ns[i]; var aid=n.aid;
       var dt=n.device_type||'unknown';
-      var isActive=!!activeSet[aid];
+      var onPath=!!pathNodes[aid];
       cyNodes.push({
-        data:{id:''+aid, label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0'), aid:aid, device_type:dt, seen:n.seen, depth:n.depth, is_active:isActive},
-        classes:(isActive?dt:'inactive')
+        data:{id:''+aid, label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0'), aid:aid, device_type:dt, seen:n.seen, on_path:onPath},
+        classes:(onPath?dt+' onpath':'offpath')
       });
     }
 
-    // ── 边: 数据流量 (d.edges) ──
+    // ── 边: 数据流量 → 灰色细线背景 ──
     var cyEdges=[];
     var trafficSeen={};
     for(var i=0;i<es.length;i++){
@@ -420,27 +422,26 @@ reg('topo',function(){
       var ek=Math.min(e.src,e.dst)+'-'+Math.max(e.src,e.dst);
       if(trafficSeen[ek]) continue;
       trafficSeen[ek]=true;
-      var count=e.count||0;
-      var sr=e.success_rate||0;
-      var sc=sr>0.8?'good':sr>0.5?'mid':'poor';
       cyEdges.push({
-        data:{id:'t-'+ek, source:''+e.src, target:''+e.dst, count:count, success_rate:sr, edge_type:'traffic'},
-        classes:'traffic traffic-'+sc
+        data:{id:'t-'+ek, source:''+e.src, target:''+e.dst, count:e.count||0, edge_type:'traffic'},
+        classes:'traffic-bg'
       });
     }
 
-    // ── 边: Route Record 路径 (拆成逐跳边, 独立于流量边) ──
+    // ── 边: Route Record 路径 → 有向箭头 + class着色 ──
     var routeSeen={};
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
-      var fullPath=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
-      for(var j=0;j<fullPath.length-1;j++){
-        var rk=Math.min(fullPath[j],fullPath[j+1])+'-'+Math.max(fullPath[j],fullPath[j+1]);
+      var ci=i % PATH_COLORS.length;
+      var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
+      for(var j=0;j<full.length-1;j++){
+        var sid=''+full[j]; var tid=''+full[j+1];
+        var rk=sid+'>'+tid;
         if(routeSeen[rk]) continue;
         routeSeen[rk]=true;
         cyEdges.push({
-          data:{id:'r-'+rk, source:''+fullPath[j], target:''+fullPath[j+1], count:0, edge_type:'route'},
-          classes:'route'
+          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, edge_type:'route'},
+          classes:'route-path path-c'+ci
         });
       }
     }
@@ -451,26 +452,33 @@ reg('topo',function(){
       container: document.getElementById('cy-graph'),
       elements: cyNodes.concat(cyEdges),
       style: [
-        // 活跃节点
-        {selector:'node', style:{'background-color':'#94a3b8','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','width':28,'height':28,'transition-property':'background-color,width,height','transition-duration':'0.2s'}},
+        // 节点基础
+        {selector:'node', style:{'background-color':'#3b82f6','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','width':28,'height':28}},
         {selector:'node.coordinator', style:{'background-color':'#f59e0b','border-color':'#d97706','border-width':2,'font-weight':'bold','width':50,'height':50,'text-margin-y':6}},
         {selector:'node.router', style:{'background-color':'#3b82f6'}},
         {selector:'node.end_device', style:{'background-color':'#16a34a','shape':'triangle','width':18,'height':18}},
-        // 非活跃节点 (仅LinkStatus出现, 无数据流)
-        {selector:'node.inactive', style:{'background-color':'#e2e8f0','border-color':'#cbd5e1','opacity':0.35,'width':10,'height':10,'font-size':'7px','color':'#94a3b8','text-opacity':0}},
+        // 路径节点: 紫框
+        {selector:'node.onpath', style:{'border-width':3,'border-color':'#7c3aed'}},
+        // 路径外节点: 半透明缩小
+        {selector:'node.offpath', style:{'background-color':'#e2e8f0','opacity':0.3,'width':10,'height':10,'font-size':'7px','color':'#94a3b8','text-opacity':0}},
         // 高亮/淡出
         {selector:'node.highlight', style:{'border-color':'#ef4444','border-width':3,'shadow-color':'#ef4444','shadow-blur':8,'shadow-opacity':0.5}},
         {selector:'node.faded', style:{'opacity':0.12}},
-        // 边基础样式
-        {selector:'edge', style:{'width':1,'line-color':'#cbd5e1','target-arrow-color':'#cbd5e1','target-arrow-shape':'triangle','arrow-scale':0.6,'curve-style':'bezier','opacity':0.5}},
-        // 数据流边
-        {selector:'edge.traffic-good', style:{'line-color':'#16a34a','target-arrow-color':'#16a34a','width':2.5,'opacity':0.7}},
-        {selector:'edge.traffic-mid', style:{'line-color':'#d97706','target-arrow-color':'#d97706','width':1.8,'opacity':0.6}},
-        {selector:'edge.traffic-poor', style:{'line-color':'#dc2626','target-arrow-color':'#dc2626','width':1.2,'opacity':0.5,'line-style':'dashed'}},
-        // Route Record 路径边
-        {selector:'edge.route', style:{'line-color':'#7c3aed','target-arrow-color':'#7c3aed','width':2,'opacity':0.8,'line-style':'dashed','arrow-scale':0.9}},
+        // 边默认 → 灰色背景
+        {selector:'edge', style:{'width':0.8,'line-color':'#d1d5db','target-arrow-color':'#d1d5db','target-arrow-shape':'triangle','arrow-scale':0.5,'curve-style':'bezier','opacity':0.25}},
+        // 路径边: 粗箭头
+        {selector:'edge.route-path', style:{'width':3.5,'target-arrow-shape':'triangle','arrow-scale':1.3,'curve-style':'bezier','opacity':0.9}},
+        // 路径颜色 class (8色)
+        {selector:'edge.path-c0', style:{'line-color':'#e74c3c','target-arrow-color':'#e74c3c'}},
+        {selector:'edge.path-c1', style:{'line-color':'#3498db','target-arrow-color':'#3498db'}},
+        {selector:'edge.path-c2', style:{'line-color':'#2ecc71','target-arrow-color':'#2ecc71'}},
+        {selector:'edge.path-c3', style:{'line-color':'#e67e22','target-arrow-color':'#e67e22'}},
+        {selector:'edge.path-c4', style:{'line-color':'#9b59b6','target-arrow-color':'#9b59b6'}},
+        {selector:'edge.path-c5', style:{'line-color':'#1abc9c','target-arrow-color':'#1abc9c'}},
+        {selector:'edge.path-c6', style:{'line-color':'#f39c12','target-arrow-color':'#f39c12'}},
+        {selector:'edge.path-c7', style:{'line-color':'#e91e63','target-arrow-color':'#e91e63'}},
         // 高亮/淡出
-        {selector:'edge.highlight', style:{'opacity':1,'width':4}},
+        {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
       ],
       layout:{name:'cose', animate:true, animationDuration:800, nodeRepulsion:function(n){return n.degree()>3?12000:6000}, idealEdgeLength:function(e){return 80}, gravity:20, numIter:2000, initialTemp:100, coolingFactor:0.95},
@@ -481,9 +489,9 @@ reg('topo',function(){
     var tooltip=document.createElement('div');tooltip.id='cy-tt';tooltip.style.cssText='position:absolute;display:none;background:#1e293b;color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:999;max-width:280px;white-space:pre-line';
     document.getElementById('cy-graph').appendChild(tooltip);
 
-    cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;var act=d.is_active?'✅ 活跃':'⬜ 静默(仅LS)';tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+act+'\n活动包:'+d.seen+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();var et=d.edge_type;if(et==='traffic'){tooltip.innerHTML='<b>0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'</b>\n数据流: '+d.count+' 包\n成功率: '+(d.success_rate*100).toFixed(0)+'%';}else{tooltip.innerHTML='<b>Route Record 路径段</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase();}tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
