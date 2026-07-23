@@ -140,6 +140,45 @@ def _frame_to_dict(tf: dict) -> dict:
     nwk_seq = int(nwk.get("zbee_nwk.seqno", ""), 16) if nwk.get("zbee_nwk.seqno") else None
     nwk_src64 = _hex_colon(nwk.get("zbee_nwk.src64", ""))
 
+    # ── NWK 命令数据提取 (Link Status 邻居表 / Route Record 中继路径) ──
+    link_status_neighbors = None
+    route_record_relays = None
+    cmd_name = None
+    cmd_data = None
+    for key in nwk:
+        if key.startswith("Command Frame:"):
+            cmd_name = key.split(":", 1)[1].strip()
+            cmd_data = nwk[key]
+            break
+
+    if cmd_name == "Link Status" and isinstance(cmd_data, dict):
+        neighbors = []
+        for lk, lv in cmd_data.items():
+            if lk.startswith("Link ") and not any(x in lk.lower() for x in ("count", "first", "last")):
+                if isinstance(lv, dict):
+                    nb_addr = _h(lv.get("zbee_nwk.cmd.link.address", ""))
+                    if nb_addr is not None:
+                        neighbors.append({
+                            "addr": nb_addr,
+                            "in_cost": int(lv.get("zbee_nwk.cmd.link.incoming_cost", "0")),
+                            "out_cost": int(lv.get("zbee_nwk.cmd.link.outgoing_cost", "0")),
+                        })
+        link_status_neighbors = neighbors if neighbors else None
+
+    if cmd_name == "Route Record" and isinstance(cmd_data, dict):
+        relay_count = int(cmd_data.get("zbee_nwk.cmd.relay_count", "0"))
+        relays = []
+        if relay_count > 0:
+            for rk, rv in cmd_data.items():
+                if "relay_device" in rk and "_tree" not in rk:
+                    if isinstance(rv, dict):
+                        relay_addr = _h(rv.get("zbee_nwk.cmd.relay_device", ""))
+                    else:
+                        relay_addr = _h(str(rv))
+                    if relay_addr is not None:
+                        relays.append(relay_addr)
+        route_record_relays = {"count": relay_count, "relays": relays}
+
     # 安全头
     sec = nwk.get("ZigBee Security Header", {})
     sec_level_raw = sec.get("zbee.sec.sec_level", "")
@@ -199,6 +238,8 @@ def _frame_to_dict(tf: dict) -> dict:
         "nwk_security": bool(nwk_secure),
         "mac_fcs_ok": fcs_ok,
         "mac_frame_type": mac_frame_type,
+        "link_status_neighbors": link_status_neighbors,
+        "route_record_relays": route_record_relays,
         "raw_layers": layers,
     }
 

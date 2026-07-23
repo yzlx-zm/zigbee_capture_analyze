@@ -1,4 +1,4 @@
-"""拓扑分析 v2: 通信模式推断父子关系 + 中继树"""
+"""拓扑分析 v3: 协议数据驱动 (Link Status + Route Record) + 不对称链路检测"""
 from __future__ import annotations
 from collections import defaultdict
 
@@ -6,6 +6,153 @@ from collections import defaultdict
 def is_unicast(addr):
     return isinstance(addr, int) and 0x0000 <= addr < 0xFFF0
 
+
+# ── 子模块: Link Status 邻居表累积 ──
+
+def _build_neighbor_tables(packets: list[dict]) -> dict[int, dict[int, dict]]:
+    """扫描所有 Link Status 帧, 累积每个设备的完整邻居表.
+
+    返回: {device_addr: {nb_addr: {in_cost, out_cost, last_seen_ts, count}}}
+
+    - in_cost/out_cost 取最新值 (抓包中最后一次出现的 Link Status)
+    - last_seen_ts: 最后一次看到此邻居关系的 Unix 时间戳
+    - count: 此邻居关系在抓包中出现的次数
+    """
+    neighbor_tables: dict[int, dict[int, dict]] = defaultdict(dict)
+
+    for p in packets:
+        if p.get("pkt_type") != "Link Status":
+            continue
+        neighbors = p.get("link_status_neighbors")
+        if not neighbors:
+            continue
+        src = p.get("nwk_src")
+        if src is None:
+            continue
+        ts = p.get("ts", 0)
+        for nb in neighbors:
+            addr = nb.get("addr")
+            if addr is None:
+                continue
+            existing = neighbor_tables[src].get(addr)
+            if existing:
+                existing["in_cost"] = nb["in_cost"]
+                existing["out_cost"] = nb["out_cost"]
+                existing["last_seen_ts"] = max(existing["last_seen_ts"], ts)
+                existing["count"] += 1
+            else:
+                neighbor_tables[src][addr] = {
+                    "in_cost": nb["in_cost"],
+                    "out_cost": nb["out_cost"],
+                    "last_seen_ts": ts,
+                    "count": 1,
+                }
+
+    return dict(neighbor_tables)
+
+
+# ── 子模块: Route Record 路径提取 ──
+
+def _build_route_paths(packets: list[dict]) -> list[dict]:
+    """扫描所有 Route Record 帧, 提取完整的多跳中继路径.
+
+    返回: [{src, dst, relays: [addr, ...], ts, path_str, hop_count}]
+
+    - relays: 中继节点短地址列表 (按跳序)
+    - path_str: 可视化路径字符串 "0x0000→0x2880→0x44D5"
+    - 相同路径去重 (src+relays+dst 一致则只保留一条)
+    """
+    seen = set()
+    paths = []
+
+    for p in packets:
+        if p.get("pkt_type") != "Route Record":
+            continue
+        rr = p.get("route_record_relays")
+        if not rr or not rr.get("relays"):
+            continue
+        src = p.get("nwk_src")
+        dst = p.get("nwk_dst")
+        if src is None or dst is None:
+            continue
+
+        relays = rr["relays"]
+        # 构建去重 key
+        dedup_key = (src, tuple(relays), dst)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        # 构建完整路径: src → relay1 → relay2 → ... → dst
+        full_path = [src] + relays + [dst]
+        path_str = " → ".join(f"0x{a:04X}" for a in full_path)
+
+        paths.append({
+            "src": src,
+            "dst": dst,
+            "relays": relays,
+            "hop_count": len(relays) + 1,
+            "ts": p.get("ts", 0),
+            "path_str": path_str,
+        })
+
+    paths.sort(key=lambda x: x["ts"])
+    return paths
+
+
+# ── 子模块: 不对称链路检测 ──
+
+def _detect_asymmetric(neighbor_tables: dict[int, dict[int, dict]]) -> list[dict]:
+    """交叉比对邻居表中的双向 cost, 检测不对称链路.
+
+    对每对 (A,B), 比较 A→B 的 out_cost 与 B→A 的 in_cost:
+    - diff <= 1: "OK" (对称)
+    - diff <= 3: "WEAK" (弱不对称)
+    - diff > 3:  "ASYMM" (严重不对称)
+
+    返回: [{a, b, a_to_b_cost, b_to_a_cost, diff, level}]
+    """
+    results = []
+    seen_pairs = set()
+
+    for a, nb_a in neighbor_tables.items():
+        for b, info_ab in nb_a.items():
+            pair = tuple(sorted([a, b]))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+
+            # A 看 B 的 out_cost
+            a_to_b_out = info_ab.get("out_cost", 0)
+            # B 看 A 的 in_cost (站在 B 角度, A 是 B 的邻居, B→A 的 out_cost 就是 A 看 B 的 in_cost)
+            info_ba = neighbor_tables.get(b, {}).get(a)
+            if info_ba is None:
+                continue  # 只有单向数据, 无法比较
+
+            b_to_a_out = info_ba.get("out_cost", 0)
+            # 使用 out_cost 比较: A→B 链路质量 vs B→A 链路质量
+            diff = abs(a_to_b_out - b_to_a_out)
+
+            if diff <= 1:
+                level = "OK"
+            elif diff <= 3:
+                level = "WEAK"
+            else:
+                level = "ASYMM"
+
+            results.append({
+                "a": a, "b": b,
+                "a_to_b_cost": a_to_b_out,
+                "b_to_a_cost": b_to_a_out,
+                "diff": diff,
+                "level": level,
+            })
+
+    results.sort(key=lambda x: -x["diff"])
+    return results
+
+
+# ── 主函数 ──
 
 def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = None) -> dict:
     # 1. PAN + 协调器
@@ -115,6 +262,7 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
             "children": sorted(children.get(aid, []), key=lambda c: -coord_traffic.get(c, 0)),
             "coord_traffic": ct,
             "type_list": n["type_list"][:10],
+            "device_type": n.get("device_type", "unknown"),
         })
 
     edge_list = []
@@ -134,6 +282,12 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
     leaf_count = sum(1 for aid in children if not children[aid])
 
     pan_list = [{"pan": p, "count": c, "label": f"0x{p:04X}"} for p, c in sorted(pan_counts.items(), key=lambda x: -x[1])[:50]]
+
+    # ── 新增: 协议数据驱动的拓扑 ──
+    neighbor_tables = _build_neighbor_tables(packets)
+    route_paths = _build_route_paths(packets)
+    asymmetric_links = _detect_asymmetric(neighbor_tables)
+
     return {
         "pan_list": pan_list,
         "nodes": node_list, "edges": edge_list,
@@ -144,4 +298,8 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
         "leaf_count": leaf_count,
         "total_nodes": len(nodes), "total_edges": len(edge_list),
         "parents": {str(k): v for k, v in parents.items()},
+        # 新增协议数据
+        "neighbor_tables": neighbor_tables,
+        "route_paths": route_paths,
+        "asymmetric_links": asymmetric_links,
     }

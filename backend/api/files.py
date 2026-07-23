@@ -199,10 +199,15 @@ def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
     """从 pcap 包列表中提取节点 (兼容 csv_reader.extract_nodes 格式)"""
     nodes: dict[int, dict] = {}
     pan_counts: dict[int, dict[int, int]] = {}
+    # 跟踪设备类型信号
+    has_link_status: set[int] = set()
+    has_route: set[int] = set()
+    has_device_announce: set[int] = set()
+
     for p in packets:
         pan = p["pan_src"] or p["pan_dst"]
         for addr in (p["mac_src"], p["mac_dst"], p["nwk_src"], p["nwk_dst"]):
-            if addr is None or addr < 0x0001 or addr > 0xFFF7:
+            if addr is None or addr > 0xFFF7:
                 continue
             if addr not in nodes:
                 nodes[addr] = {"aid": addr, "seen": 0, "pan": None, "is_coord": False, "type_list": []}
@@ -214,9 +219,33 @@ def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
                 pan_counts[addr][pan] = pan_counts[addr].get(pan, 0) + 1
             if addr == 0:
                 nodes[addr]["is_coord"] = True
+
+        # 设备类型信号收集
+        pkt_type = p.get("pkt_type", "")
+        nwk_src = p.get("nwk_src")
+        if "Link Status" in pkt_type and nwk_src is not None:
+            has_link_status.add(nwk_src)
+        if any(x in pkt_type for x in ("Route Request", "Route Reply", "Route Record")) and nwk_src is not None:
+            has_route.add(nwk_src)
+        if "Device Announce" in pkt_type and nwk_src is not None:
+            has_device_announce.add(nwk_src)
+
     for aid, pc in pan_counts.items():
         if pc:
             nodes[aid]["pan"] = max(pc, key=pc.get)
+
+    # 设备类型推断
+    for aid in nodes:
+        if aid == 0:
+            nodes[aid]["device_type"] = "coordinator"
+        elif aid in has_link_status or aid in has_route:
+            nodes[aid]["device_type"] = "router"
+        elif aid in has_device_announce:
+            nodes[aid]["device_type"] = "router"  # Device Announce 通常是 Router
+        else:
+            # 只有 Data 帧, 从未发过 Link Status → 可能是 End Device
+            nodes[aid]["device_type"] = "end_device"
+
     return nodes
 
 

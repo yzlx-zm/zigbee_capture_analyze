@@ -42,5 +42,6 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
             "seen": nd_seen, "pan": n["pan"] if not pan_int else pan_int,
             "is_coord": aid == 0,
             "type_list": n["type_list"][:8],
+            "device_type": n.get("device_type", "unknown"),
         })
     return result
