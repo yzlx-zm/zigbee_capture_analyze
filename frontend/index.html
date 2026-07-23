@@ -300,7 +300,7 @@ reg('topo',function(){
     +'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#3b82f6"></span><span style="font-size:10px">Router</span>'
     +'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#16a34a"></span><span style="font-size:10px">EndDev</span>'
     +'<span style="display:inline-block;width:12px;height:12px;background:#94a3b8"></span><span style="font-size:10px">Unknown</span>'
-    +'<span style="margin-left:4px;font-size:10px">边:绿≤1 黄≤3 红&gt;3 | 虚线=不对称</span>'
+    +'<span style="margin-left:4px;font-size:10px">边:绿&gt;80% 黄&gt;50% 红 | 紫色虚线=路由路径 | 灰色点=静默节点</span>'
     +'</div>'
     // Cytoscape 图
     +'<div id="cy-graph" style="flex:1;min-height:360px;background:#fafbfc;position:relative"></div>'
@@ -328,8 +328,11 @@ reg('topo',function(){
     var url='/api/topology/graph'+(panVal?'?pan='+panVal:'');
     A.get(url).then(function(d){
       topoData=d; S.topo=d;
-      if(callback) callback(d);
-      renderSidebar(d);
+      try{ if(callback) callback(d); }catch(e){ console.error('renderGraph error:',e); }
+      try{ renderSidebar(d); }catch(e){ console.error('renderSidebar error:',e); }
+    }).catch(function(e){
+      console.error('loadData error:',e);
+      document.getElementById('tinfo').textContent='数据加载失败';
     });
   }
 
@@ -359,7 +362,7 @@ reg('topo',function(){
     var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
     for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→TL</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
-    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,renderGraph)})});
+    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){renderGraph(d);renderRoutePaths(d);})})});
     document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();location.hash='tl'})});
     // Asymmetric links
     var al=d.asymmetric_links||[];
