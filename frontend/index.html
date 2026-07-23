@@ -414,31 +414,32 @@ reg('topo',function(){
 
     // ── 边: 数据流量 (d.edges) ──
     var cyEdges=[];
-    var edgeSeen={};
+    var trafficSeen={};
     for(var i=0;i<es.length;i++){
       var e=es[i];
       var ek=Math.min(e.src,e.dst)+'-'+Math.max(e.src,e.dst);
-      if(edgeSeen[ek]) continue;
-      edgeSeen[ek]=true;
+      if(trafficSeen[ek]) continue;
+      trafficSeen[ek]=true;
       var count=e.count||0;
       var sr=e.success_rate||0;
       var sc=sr>0.8?'good':sr>0.5?'mid':'poor';
       cyEdges.push({
-        data:{id:ek, source:''+e.src, target:''+e.dst, count:count, success_rate:sr, edge_type:'traffic'},
+        data:{id:'t-'+ek, source:''+e.src, target:''+e.dst, count:count, success_rate:sr, edge_type:'traffic'},
         classes:'traffic traffic-'+sc
       });
     }
 
-    // ── 边: Route Record 路径 (拆成逐跳边) ──
+    // ── 边: Route Record 路径 (拆成逐跳边, 独立于流量边) ──
+    var routeSeen={};
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
       var fullPath=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<fullPath.length-1;j++){
         var rk=Math.min(fullPath[j],fullPath[j+1])+'-'+Math.max(fullPath[j],fullPath[j+1]);
-        if(edgeSeen[rk]) continue;
-        edgeSeen[rk]=true;
+        if(routeSeen[rk]) continue;
+        routeSeen[rk]=true;
         cyEdges.push({
-          data:{id:rk, source:''+fullPath[j], target:''+fullPath[j+1], count:0, edge_type:'route'},
+          data:{id:'r-'+rk, source:''+fullPath[j], target:''+fullPath[j+1], count:0, edge_type:'route'},
           classes:'route'
         });
       }
