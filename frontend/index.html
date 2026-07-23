@@ -428,17 +428,13 @@ reg('topo',function(){
       });
     }
 
-    // ── 边: Route Record 路径 → 有向箭头 + class着色 ──
-    var routeSeen={};
+    // ── 边: Route Record 路径 → 有向箭头 + class着色 (不去重, 每条路径独立) ──
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
       var ci=i % PATH_COLORS.length;
       var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
-        var rk=sid+'>'+tid;
-        if(routeSeen[rk]) continue;
-        routeSeen[rk]=true;
         cyEdges.push({
           data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, edge_type:'route'},
           classes:'route-path path-c'+ci
