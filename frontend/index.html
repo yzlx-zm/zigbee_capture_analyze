@@ -684,6 +684,7 @@ reg('tl',function(){
       if(layers.zbee_zdp){
         var zdp=layers.zbee_zdp;
         var zdpLabels={nwk_addr:'NWK Addr',seqno:'Seq#',status:'Status',manufacturer:'Mfr Code',max_buffer:'Max Buf',max_incoming_transfer:'Max In',max_outgoing_transfer:'Max Out',type:'Node Type',complex:'Complex Desc',user:'User Desc',frag_support:'Frag Support','freq.868mhz':'868 MHz','freq.900mhz':'900 MHz','freq.2400mhz':'2.4 GHz','freq.eu_sub_ghz':'EU Sub-GHz',server:'Server Mask',dcf:'Desc Capability',cinfo:'Complex Info',aps_flags:'APS Flags'};
+        var zdpDesc={nwk_addr:'本节点16位网络地址',seqno:'ZDP事务序列号',status:'0x00=成功 其他=失败',manufacturer:'制造商ID 0x1141=SiliconLabs','Max Buf':'最大ASDU缓冲(bytes)','Max In':'最大接收传输大小(bytes)','Max Out':'最大发送传输大小(bytes)',type:'0=协调器 1=路由器 2=终端',complex:'是否有复杂描述符',user:'是否有用户描述符',frag_support:'是否支持APS分段传输','868 MHz':'868MHz频段(欧洲)','900 MHz':'900MHz频段(美洲)','2.4 GHz':'2.4GHz频段(全球常用)','EU Sub-GHz':'欧洲Sub-GHz频段','Server Mask':'系统服务能力(Trust/Bind/Discovery等)','Desc Capability':'扩展描述符能力标志',cinfo:'MAC能力(FFD/主电源/空闲接收/安全)',aps_flags:'APS层标志位'};
         function _zdpVal(k,v){
           if(k==='status'){var m={'0x00':'Success','0x80':'InvRequestType','0x81':'DeviceNotFound','0x82':'InvalidEP','0x83':'NotActive','0x84':'NotSupported','0x85':'Timeout','0x89':'NoDescriptor'};return (m[v]||v)+' ('+v+')';}
           if(k==='type'||k==='Node Type'){var mt={'0':'Coordinator','1':'Router','2':'End Device'};return (mt[v]||v);}
@@ -694,20 +695,23 @@ reg('tl',function(){
         var zdpFields=[];
         for(var zk in zdp){
           if(zk.indexOf('_tree')>=0)continue;
-          var v=zdp[zk];
-          if(typeof v==='object')continue;
-          if(zk.startsWith('zbee_zdp.')){
-            var raw=zk.replace('zbee_zdp.','');
-            zdpFields.push([zdpLabels[raw]||raw, _zdpVal(raw, v)]);
-          }else if(zk==='Node Descriptor'&&typeof zdp[zk]==='object'){
+          // Node Descriptor sub-object FIRST (before typeof check)
+          if(zk==='Node Descriptor'&&typeof zdp[zk]==='object'){
             var nd=zdp[zk];
             for(var ndk in nd){
               if(ndk.indexOf('_tree')>=0)continue;
               var nv=nd[ndk];
               if(typeof nv==='object')continue;
-              var rawNd=ndk.replace('zbee_zdp.node.','');
-              zdpFields.push([zdpLabels[rawNd]||rawNd, _zdpVal(rawNd, nv)]);
+              var rawNd=ndk.replace('zbee_zdp.','').replace('node.','');
+              zdpFields.push([zdpLabels[rawNd]||rawNd, _zdpVal(rawNd, nv), zdpDesc[rawNd]||'']);
             }
+            continue;
+          }
+          var v=zdp[zk];
+          if(typeof v==='object')continue;
+          if(zk.startsWith('zbee_zdp.')){
+            var raw=zk.replace('zbee_zdp.','');
+            zdpFields.push([zdpLabels[raw]||raw, _zdpVal(raw, v), zdpDesc[raw]||'']);
           }
         }
         if(zdpFields.length>0){
@@ -744,7 +748,8 @@ reg('tl',function(){
     var h='<div style="margin-bottom:8px;border-left:3px solid '+color+';padding-left:8px">';
     h+='<div style="font-weight:600;color:'+color+';margin-bottom:2px">'+title+'</div>';
     for(var i=0;i<fields.length;i++){
-      h+='<div style="display:flex;font-size:11px;margin:1px 0"><span style="color:#64748b;width:105px;flex-shrink:0">'+fields[i][0]+'</span><span style="font-family:monospace;word-break:break-all">'+fields[i][1]+'</span></div>';
+      var desc=fields[i][2]||'';
+      h+='<div style="display:flex;font-size:11px;margin:1px 0"><span style="color:#64748b;width:105px;flex-shrink:0" title="'+desc+'">'+fields[i][0]+'</span><span style="font-family:monospace;word-break:break-all">'+fields[i][1]+'</span></div>';
     }
     h+='</div>';
     return h;
