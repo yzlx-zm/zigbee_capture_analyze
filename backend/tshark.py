@@ -88,7 +88,8 @@ def parse_packets(
 
 
 def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
-    """调用 tshark -T json 解析单个 pcap"""
+    """调用 tshark -T json 解析单个 pcap, 并补充 -T fields 获取完整 relay list"""
+    # ── 主解析: JSON ──
     cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "json"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
@@ -99,12 +100,37 @@ def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
         return []
 
     raw_frames = json.loads(result.stdout)
-    return [_frame_to_dict(f) for f in raw_frames]
+
+    # ── 补充: -T fields 提取完整 relay_device 列表 (JSON 多实例只保留最后一个) ──
+    relay_map: dict[int, list[int]] = {}  # frame_number → [addr, ...]
+    try:
+        relay_cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk.cmd.id == 0x05",
+                     "-T", "fields", "-e", "frame.number", "-e", "zbee_nwk.cmd.relay_device"]
+        relay_result = subprocess.run(relay_cmd, capture_output=True, text=True, timeout=60)
+        if relay_result.returncode == 0 and relay_result.stdout.strip():
+            for line in relay_result.stdout.strip().split("\n"):
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[1]:
+                    fn = int(parts[0])
+                    # tshark -T fields 多实例字段用逗号连接: "0x5b5d,0x934f"
+                    addrs = []
+                    for a in parts[1].split(","):
+                        a = a.strip()
+                        if a:
+                            addr = _h(a)
+                            if addr is not None:
+                                addrs.append(addr)
+                    if addrs:
+                        relay_map[fn] = addrs
+    except Exception:
+        pass  # fields 提取失败不影响主流程, relay 数据可能不完整
+
+    return [_frame_to_dict(f, relay_map) for f in raw_frames]
 
 
 # ── tshark JSON → 内部 dict ──
 
-def _frame_to_dict(tf: dict) -> dict:
+def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> dict:
     """tshark 单帧 JSON → 内部 dict (兼容 CSV _packets 格式)"""
     layers = tf.get("_source", {}).get("layers", {})
 
@@ -167,17 +193,23 @@ def _frame_to_dict(tf: dict) -> dict:
 
     if cmd_name == "Route Record" and isinstance(cmd_data, dict):
         relay_count = int(cmd_data.get("zbee_nwk.cmd.relay_count", "0"))
-        relays = []
-        if relay_count > 0:
-            for rk, rv in cmd_data.items():
-                if "relay_device" in rk and "_tree" not in rk:
-                    if isinstance(rv, dict):
-                        relay_addr = _h(rv.get("zbee_nwk.cmd.relay_device", ""))
-                    else:
-                        relay_addr = _h(str(rv))
-                    if relay_addr is not None:
-                        relays.append(relay_addr)
-        route_record_relays = {"count": relay_count, "relays": relays}
+        # 优先使用 -T fields 提取的完整 relay 列表 (JSON 多实例字段只保留最后一个)
+        frame_num_raw = frame.get("frame.number", "")
+        frame_num = int(frame_num_raw) if frame_num_raw else None
+        if frame_num is not None and relay_map and frame_num in relay_map:
+            relays = relay_map[frame_num]
+        else:
+            relays = []
+            if relay_count > 0:
+                for rk, rv in cmd_data.items():
+                    if "relay_device" in rk and "_tree" not in rk:
+                        if isinstance(rv, dict):
+                            relay_addr = _h(rv.get("zbee_nwk.cmd.relay_device", ""))
+                        else:
+                            relay_addr = _h(str(rv))
+                        if relay_addr is not None:
+                            relays.append(relay_addr)
+        route_record_relays = {"count": len(relays), "relays": relays}
 
     # 安全头
     sec = nwk.get("ZigBee Security Header", {})
