@@ -333,6 +333,7 @@ async def import_status():
 @router.get("/packets")
 async def packet_list(addr: str = "", pan: str = "",
                       time_start: str = "", time_end: str = "",
+                      pkt_type: str = "",
                       limit: int = 500, offset: int = 0):
     """查询原始包列表，可按地址/PAN/时间过滤，返回分页+总数"""
     addr_int = int(addr, 16) if addr else None
@@ -357,6 +358,8 @@ async def packet_list(addr: str = "", pan: str = "",
         if ts_start is not None and p["ts"] < ts_start:
             continue
         if ts_end is not None and p["ts"] > ts_end:
+            continue
+        if pkt_type and p.get("pkt_type", "") != pkt_type:
             continue
         matched.append((idx, p))
     total = len(matched)

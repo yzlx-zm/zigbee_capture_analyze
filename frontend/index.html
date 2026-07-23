@@ -433,6 +433,7 @@ reg('tl',function(){
   if(!S.tlTs0H) S.tlTs0H=''; if(!S.tlTs0M) S.tlTs0M=''; if(!S.tlTs0S) S.tlTs0S='';
   if(!S.tlTs1H) S.tlTs1H=''; if(!S.tlTs1M) S.tlTs1M=''; if(!S.tlTs1S) S.tlTs1S='';
   if(!S.tlHasSearched) S.tlHasSearched=false;
+  if(!S.tlType) S.tlType='';
   // Override PAN if jumped from topology
   if(S.topoPan){S.tlPan=S.topoPan; S.tlHasSearched=true;}
 
@@ -458,6 +459,7 @@ reg('tl',function(){
     +'</div>'
     // Row 3: View button + status
     +'<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+    +'<select id="tl-type" style="font-size:10px;font-family:monospace"><option value="">全部类型</option></select>'
     +'<button class="btn btn-p" id="tshow" style="font-size:11px">🔍 查看</button>'
     +'<span id="tl-capture-info" style="font-size:10px;color:#94a3b8"></span>'
     +'<span id="tl-stat" style="font-size:11px;color:#64748b;margin-left:auto"></span></div>'
@@ -503,6 +505,7 @@ reg('tl',function(){
     S.tlNode=document.getElementById('tl-node').value.trim();
     S.tlTs0H=document.getElementById('tl-h0').value; S.tlTs0M=document.getElementById('tl-m0').value; S.tlTs0S=document.getElementById('tl-s0').value;
     S.tlTs1H=document.getElementById('tl-h1').value; S.tlTs1M=document.getElementById('tl-m1').value; S.tlTs1S=document.getElementById('tl-s1').value;
+    S.tlType=document.getElementById('tl-type').value;
     S.tlHasSearched=true;
   }
 
@@ -522,11 +525,13 @@ reg('tl',function(){
     var tf=tlGetTimeFilter();
     tlSaveFilter();
     // Build params
+    var typeVal=document.getElementById('tl-type').value;
     var params='limit='+tlLimit+'&offset='+((tlPage-1)*tlLimit);
     if(panVal)params+='&pan='+panVal;
     if(nodeVal)params+='&addr='+nodeVal;
     if(tf.ts0)params+='&time_start='+encodeURIComponent(tf.ts0);
     if(tf.ts1)params+='&time_end='+encodeURIComponent(tf.ts1);
+    if(typeVal)params+='&pkt_type='+encodeURIComponent(typeVal);
     // Show what we're querying
     document.getElementById('tl-stat').textContent='查询中... '+[panVal?'PAN='+panVal:'',nodeVal?'节点='+nodeVal:'',tf.ts0?'时间:'+tf.ts0+'~'+tf.ts1:''].filter(Boolean).join(' | ')||'全部包';
     // Summary params
@@ -548,6 +553,20 @@ reg('tl',function(){
           +Object.entries(s.type_counts||{}).map(function(e){return e[0]+'×'+e[1]}).join(' + ');
       }
     }).catch(function(){});
+    // Update type dropdown from data stats (only on first load / no type filter)
+    if(!typeVal){
+      A.get('/api/import/status').then(function(s){
+        if(!s.total)return;
+        // Populate from known types
+        var types=['Data','Link Status','Route Request','Route Reply','Route Record','Network Status','Leave','APS Ack','ZDP: Node Desc Req','ZDP: Node Desc Resp','ZDP: NWK Addr Req','ZDP: Match Desc Req','NWK Cmd'];
+        var sel=document.getElementById('tl-type');
+        if(sel.options.length<=1){
+          for(var ti=0;ti<types.length;ti++){
+            sel.innerHTML+='<option value=\"'+types[ti]+'\"'+(S.tlType===types[ti]?' selected':'')+'>'+types[ti]+'</option>';
+          }
+        }
+      });
+    }
     // Fetch packets
     A.get('/api/packets?'+params).then(function(d){
       var pkts=d.packets||[];tlTotal=d.total||pkts.length;
@@ -633,11 +652,12 @@ reg('tl',function(){
             ['Key', klabel||'None'],
           ]);
         }
-        // Link Status neighbor list — nested inside Command Frame value
-        if(cmdName==='Link Status'){
-          var cmdVal=null;
-          for(var ck2 in nwk){if(ck2.startsWith('Command Frame:')){cmdVal=nwk[ck2];break;}}
-          if(cmdVal&&typeof cmdVal==='object'){
+        // NWK command-specific details
+        var cmdVal=null;
+        for(var ck2 in nwk){if(ck2.startsWith('Command Frame:')){cmdVal=nwk[ck2];break;}}
+        if(cmdVal&&typeof cmdVal==='object'){
+          // Link Status: neighbor list
+          if(cmdName==='Link Status'){
             var nb=[];
             for(var lk in cmdVal){
               if(lk.startsWith('Link ')&&!lk.includes('count')&&!lk.includes('first')&&!lk.includes('last')){
@@ -646,13 +666,73 @@ reg('tl',function(){
                   var addr='0x'+parseInt(li['zbee_nwk.cmd.link.address'],16).toString(16).toUpperCase().padStart(4,'0');
                   var inc=li['zbee_nwk.cmd.link.incoming_cost']||'?';
                   var out=li['zbee_nwk.cmd.link.outgoing_cost']||'?';
-                  nb.push([addr, 'in:'+inc+' out:'+out]);
+                  var incColor=parseInt(inc)<=1?'#16a34a':parseInt(inc)<=3?'#d97706':'#dc2626';
+                  var outColor=parseInt(out)<=1?'#16a34a':parseInt(out)<=3?'#d97706':'#dc2626';
+                  nb.push([addr, '<span style=\"color:'+incColor+'\">in:'+inc+'</span> <span style=\"color:'+outColor+'\">out:'+out+'</span>']);
                 }
               }
             }
             if(nb.length>0){
               html+=_tlLayer('Neighbors ('+nb.length+')', '#0891b2', nb);
             }
+          }
+          // Route Request
+          if(cmdName==='Route Request'){
+            var originator=nwk['zbee_nwk.src'];  // NWK src = route originator
+            var dest=cmdVal['zbee_nwk.cmd.route.dest'];
+            var origStr=originator?'0x'+parseInt(originator,16).toString(16).toUpperCase().padStart(4,'0'):'-';
+            var destStr=dest?'0x'+parseInt(dest,16).toString(16).toUpperCase().padStart(4,'0'):'-';
+            var rq=[
+              ['Originator', origStr],
+              ['Target Dest', destStr],
+              ['Path Cost', cmdVal['zbee_nwk.cmd.route.cost']||'0'],
+              ['Route ID', cmdVal['zbee_nwk.cmd.route.id']||'?'],
+              ['Options', _tlROpts(cmdVal['zbee_nwk.cmd.route.opts'])],
+            ];
+            html+=_tlLayer('Route Request', '#7c3aed', rq);
+            if(originator&&dest){
+              html+=_tlPath('Route', originator, dest);
+            }
+          }
+          // Route Reply
+          if(cmdName==='Route Reply'){
+            var orig=cmdVal['zbee_nwk.cmd.route.orig']||'?';
+            var resp=cmdVal['zbee_nwk.cmd.route.resp']||'?';
+            var rp=[
+              ['Originator', _tlA2(cmdVal,'zbee_nwk.cmd.route.orig')],
+              ['Responder', _tlA2(cmdVal,'zbee_nwk.cmd.route.resp')],
+              ['Path Cost', cmdVal['zbee_nwk.cmd.route.cost']||'0'],
+              ['Route ID', cmdVal['zbee_nwk.cmd.route.id']||'?'],
+            ];
+            html+=_tlLayer('Route Reply', '#7c3aed', rp);
+            if(orig!=='?'&&resp!=='?'){
+              html+=_tlPath('Route', orig, resp);
+            }
+          }
+          // Route Record
+          if(cmdName==='Route Record'){
+            var relayCount=parseInt(cmdVal['zbee_nwk.cmd.relay_count']||'0');
+            html+=_tlLayer('Route Record', '#7c3aed', [
+              ['Relay Count', String(relayCount)],
+            ]);
+          }
+          // Network Status
+          if(cmdName==='Network Status'){
+            var stCode=cmdVal['zbee_nwk.cmd.status']||'?';
+            var stNames={'0x00':'No Route Available','0x01':'Tree Link Failure','0x02':'Non-Tree Link Failure','0x03':'Low Battery','0x04':'No Routing Capacity','0x05':'No Indirect Capacity','0x06':'Indirect Transaction Expiry','0x07':'Target Unavailable','0x08':'Target Address Unallocated','0x09':'Parent Link Failure','0x0a':'Validate Route','0x0b':'Source Route Failure','0x0c':'Many-to-One Route Failure','0x0d':'Address Conflict','0x0e':'Verify Addresses','0x0f':'PAN ID Update','0x10':'Network Address Update','0x11':'Bad Frame Counter','0x12':'Bad Key Sequence Number','0x13':'Unknown Command'};
+            html+=_tlLayer('Network Status', '#dc2626', [
+              ['Status', (stNames[stCode]||stCode)+' ('+stCode+')'],
+              ['Dest', _tlA2(cmdVal,'zbee_nwk.cmd.route.dest')],
+            ]);
+          }
+          // Leave
+          if(cmdName==='Leave'){
+            var rejoin=cmdVal['zbee_nwk.cmd.leave.rejoin']||'0';
+            var rmChildren=cmdVal['zbee_nwk.cmd.leave.remove_children']||'0';
+            html+=_tlLayer('Leave', '#dc2626', [
+              ['Rejoin', rejoin==='1'?'Yes (设备将重新入网)':'No (永久离开)'],
+              ['Remove Children', rmChildren==='1'?'Yes (子节点也被移除)':'No'],
+            ]);
           }
         }
       }
@@ -786,6 +866,28 @@ reg('tl',function(){
     var names={0x00:'Read Attributes',0x01:'Read Attributes Resp',0x02:'Write Attributes',0x04:'Write Attributes Resp',0x06:'Config Report',0x07:'Config Report Resp',0x0A:'Report Attributes',0x0B:'Default Resp',0x00:'OTA: Image Notify',0x01:'OTA: Query Next Image',0x02:'OTA: Query Next Image Resp',0x03:'OTA: Image Block Req',0x05:'OTA: Image Block Resp',0x06:'OTA: Upgrade End Req',0x07:'OTA: Upgrade End Resp'};
     var num=parseInt(cid,16);
     return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
+  }
+  function _tlROpts(opts){
+    if(!opts)return '?';
+    var n=parseInt(opts,16);
+    var parts=[];
+    if(n&0x01)parts.push('Multicast');
+    if(n&0x08)parts.push('Many-to-One');
+    if(n&0x10)parts.push('DestExt');
+    if(n&0x20)parts.push('OrigExt');
+    if(n&0x40)parts.push('RespExt');
+    return parts.length>0?parts.join(', ') : '0x'+opts;
+  }
+  function _tlPath(title, from, to){
+    var fromStr=(typeof from==='string'&&from)?'0x'+parseInt(from,16).toString(16).toUpperCase().padStart(4,'0'):from;
+    var toStr=(typeof to==='string'&&to)?'0x'+parseInt(to,16).toString(16).toUpperCase().padStart(4,'0'):to;
+    if(!fromStr||!toStr||fromStr==='0x0000'&&toStr==='0x0000')return'';
+    var h='<div style=\"margin-bottom:8px;border-left:3px solid #7c3aed;padding-left:8px\">';
+    h+='<div style=\"font-weight:600;color:#7c3aed;margin-bottom:4px\">'+title+' Path</div>';
+    h+='<div style=\"font-family:monospace;font-size:12px;background:#f1f5f9;padding:4px 8px;border-radius:4px\">';
+    h+=fromStr+' <span style=\"color:#7c3aed\">→</span> '+toStr;
+    h+='</div></div>';
+    return h;
   }
 
   // On Enter key in inputs, trigger search
