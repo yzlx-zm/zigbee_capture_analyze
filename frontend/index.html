@@ -308,9 +308,11 @@ reg('topo',function(){
     +'<div style="border-top:2px solid #e2e8f0;background:#fff;max-height:220px;overflow-y:auto" id="bottom-panels">'
     +'<div style="display:flex;border-bottom:1px solid #e2e8f0">'
     +'<button class="btn bp-tab on" style="border-radius:0;border:none;border-bottom:2px solid #3b82f6;font-size:11px;padding:6px 14px" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
+    +'<button class="btn bp-tab" style="border-radius:0;border:none;border-bottom:2px solid transparent;font-size:11px;padding:6px 14px" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
     +'<button class="btn bp-tab" style="border-radius:0;border:none;border-bottom:2px solid transparent;font-size:11px;padding:6px 14px" onclick="togBpTab(\'tree\',this)">🌳 层级树</button>'
     +'</div>'
     +'<div id="bp-routes" style="padding:8px"></div>'
+    +'<div id="bp-neighbors" style="padding:8px;display:none"></div>'
     +'<div id="bp-tree" style="padding:8px;display:none"><ul class="tree" id="tree-root"></ul></div>'
     +'</div>'
     +'</div></div>';
@@ -334,17 +336,23 @@ reg('topo',function(){
   // ═══ 侧边栏渲染 ═══
   function renderSidebar(d){
     if(!d) return;
-    var ns=d.nodes||[];
+    var ns=d.nodes||[], es=d.edges||[], rps=d.route_paths||[];
     document.getElementById('tinfo').textContent=ns.length+' 节点 | 主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?');
     var nbt=d.neighbor_tables||{};
     var nbDevCount=Object.keys(nbt).length;
     var nbTotal=0; for(var k in nbt){nbTotal+=Object.keys(nbt[k]).length;}
+    // 活跃节点统计
+    var activeSet={};
+    for(var i=0;i<es.length;i++){activeSet[es[i].src]=true; activeSet[es[i].dst]=true;}
+    for(var i=0;i<rps.length;i++){
+      var rp=rps[i]; activeSet[rp.src]=true; activeSet[rp.dst]=true;
+      for(var j=0;j<(rp.relays||[]).length;j++) activeSet[rp.relays[j]]=true;
+    }
+    var activeCount=Object.keys(activeSet).length;
     document.getElementById('tstat').innerHTML='<div class="stats">'
-      +'<span>节点:'+ns.length+'</span><span>协调器:0x0000</span>'
-      +'<span>邻居关系:'+nbTotal+'</span><span>设备有LS:'+nbDevCount+'</span>'
-      +'<span>路由路径:'+(d.route_paths||[]).length+'</span>'
-      +'<span>不对称:'+(d.asymmetric_links||[]).length+'</span>'
-      +'<span>链路评分:'+(d.edges||[]).length+'</span>'
+      +'<span>图节点: <b style="color:#16a34a">'+activeCount+'</b>活跃</span><span style="color:#94a3b8">'+(ns.length-activeCount)+'静默</span>'
+      +'<span>图边: <b>'+es.length+'</b>数据流</span><span style="color:#7c3aed">'+rps.length+'路径</span>'
+      +'<span>📡 LS邻居:<b>'+nbTotal+'</b></span><span>LS设备:'+nbDevCount+'</span>'
       +'</div>';
     // PAN list
     var pl=d.pan_list||[];
@@ -370,98 +378,108 @@ reg('topo',function(){
     document.getElementById('tasym').innerHTML=ah;
   }
 
-  // ═══ Cytoscape 力导向图 ═══
+  // ═══ Cytoscape 力导向图 (精简模式: 数据流边 + Route Record 路径) ═══
   function renderGraph(d){
     if(!d) return;
     var nbt=d.neighbor_tables||{};
     var ns=d.nodes||[];
+    var es=d.edges||[];
+    var rps=d.route_paths||[];
 
-    // 构建 node ID set
-    var nodeIds={};for(var i=0;i<ns.length;i++){nodeIds[ns[i].aid]=true;}
+    // ── 确定活跃节点 (在数据流或 Route Record 中出现) ──
+    var activeSet={};
+    for(var i=0;i<es.length;i++){
+      activeSet[es[i].src]=true; activeSet[es[i].dst]=true;
+    }
+    for(var i=0;i<rps.length;i++){
+      var rp=rps[i]; activeSet[rp.src]=true; activeSet[rp.dst]=true;
+      for(var j=0;j<(rp.relays||[]).length;j++) activeSet[rp.relays[j]]=true;
+    }
+    var activeCount=Object.keys(activeSet).length;
 
-    // 节点 → Cytoscape elements
+    // ── 节点 ──
     var cyNodes=[];
     for(var i=0;i<ns.length;i++){
-      var n=ns[i];
+      var n=ns[i]; var aid=n.aid;
       var dt=n.device_type||'unknown';
-      var color=dt==='coordinator'?'#f59e0b':dt==='router'?'#3b82f6':dt==='end_device'?'#16a34a':'#94a3b8';
-      var shape=dt==='coordinator'?'round-rectangle':dt==='end_device'?'triangle':'ellipse';
-      var size=dt==='coordinator'?50:dt==='router'?Math.max(25,Math.min(45,Math.sqrt(n.seen||1)*1.5)):dt==='end_device'?18:20;
-      var nbCount=0; if(nbt[n.aid]) nbCount=Object.keys(nbt[n.aid]).length;
+      var isActive=!!activeSet[aid];
       cyNodes.push({
-        data:{id:''+n.aid, label:'0x'+n.aid.toString(16).toUpperCase().padStart(4,'0'), aid:n.aid, device_type:dt, seen:n.seen, nb_count:nbCount, depth:n.depth},
-        classes:dt
+        data:{id:''+aid, label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0'), aid:aid, device_type:dt, seen:n.seen, depth:n.depth, is_active:isActive},
+        classes:(isActive?dt:'inactive')
       });
     }
 
-    // 边 → 从 neighbor_tables 构建
+    // ── 边: 数据流量 (d.edges) ──
     var cyEdges=[];
     var edgeSeen={};
-    for(var devStr in nbt){
-      var dev=parseInt(devStr);
-      var nbMap=nbt[dev];
-      for(var nbStr in nbMap){
-        var nb=parseInt(nbStr);
-        var ek=Math.min(dev,nb)+'-'+Math.max(dev,nb);
-        if(edgeSeen[ek]) continue;
-        edgeSeen[ek]=true;
-        if(!nodeIds[dev]||!nodeIds[nb]) continue;
-        var info=nbMap[nb];
-        // Check reverse
-        var revInfo=nbt[nb]?nbt[nb][dev]:null;
-        var outCost=info.out_cost||0;
-        var inCost=revInfo?revInfo.out_cost||0:0;
-        var symmetric=revInfo&&Math.abs(outCost-inCost)<=1;
-        var maxCost=Math.max(outCost,inCost);
-        var eColor=maxCost<=1?'#16a34a':maxCost<=3?'#d97706':'#dc2626';
+    for(var i=0;i<es.length;i++){
+      var e=es[i];
+      var ek=Math.min(e.src,e.dst)+'-'+Math.max(e.src,e.dst);
+      if(edgeSeen[ek]) continue;
+      edgeSeen[ek]=true;
+      var count=e.count||0;
+      var sr=e.success_rate||0;
+      var sc=sr>0.8?'good':sr>0.5?'mid':'poor';
+      cyEdges.push({
+        data:{id:ek, source:''+e.src, target:''+e.dst, count:count, success_rate:sr, edge_type:'traffic'},
+        classes:'traffic traffic-'+sc
+      });
+    }
+
+    // ── 边: Route Record 路径 (拆成逐跳边) ──
+    for(var i=0;i<rps.length;i++){
+      var rp=rps[i];
+      var fullPath=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
+      for(var j=0;j<fullPath.length-1;j++){
+        var rk=Math.min(fullPath[j],fullPath[j+1])+'-'+Math.max(fullPath[j],fullPath[j+1]);
+        if(edgeSeen[rk]) continue;
+        edgeSeen[rk]=true;
         cyEdges.push({
-          data:{id:ek, source:''+dev, target:''+nb, out_cost:outCost, in_cost:inCost, symmetric:symmetric, max_cost:maxCost},
-          classes:symmetric?'sym':'asym'
+          data:{id:rk, source:''+fullPath[j], target:''+fullPath[j+1], count:0, edge_type:'route'},
+          classes:'route'
         });
       }
     }
 
-    // 初始化或更新 Cytoscape
+    // ── 初始化 Cytoscape ──
     if(cy){cy.destroy();}
     cy=cytoscape({
       container: document.getElementById('cy-graph'),
       elements: cyNodes.concat(cyEdges),
       style: [
-        {selector:'node', style:{'background-color':'#94a3b8','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','transition-property':'background-color,width,height','transition-duration':'0.2s'}},
-        {selector:'node.coordinator', style:{'background-color':'#f59e0b','border-color':'#d97706','border-width':2,'font-weight':'bold','text-margin-y':6}},
+        // 活跃节点
+        {selector:'node', style:{'background-color':'#94a3b8','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','width':28,'height':28,'transition-property':'background-color,width,height','transition-duration':'0.2s'}},
+        {selector:'node.coordinator', style:{'background-color':'#f59e0b','border-color':'#d97706','border-width':2,'font-weight':'bold','width':50,'height':50,'text-margin-y':6}},
         {selector:'node.router', style:{'background-color':'#3b82f6'}},
         {selector:'node.end_device', style:{'background-color':'#16a34a','shape':'triangle','width':18,'height':18}},
+        // 非活跃节点 (仅LinkStatus出现, 无数据流)
+        {selector:'node.inactive', style:{'background-color':'#e2e8f0','border-color':'#cbd5e1','opacity':0.35,'width':10,'height':10,'font-size':'7px','color':'#94a3b8','text-opacity':0}},
+        // 高亮/淡出
         {selector:'node.highlight', style:{'border-color':'#ef4444','border-width':3,'shadow-color':'#ef4444','shadow-blur':8,'shadow-opacity':0.5}},
-        {selector:'node.faded', style:{'opacity':0.15,'background-color':'#cbd5e1'}},
-        {selector:'edge', style:{'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8','target-arrow-shape':'triangle','arrow-scale':0.8,'curve-style':'bezier','opacity':0.6}},
-        {selector:'edge.sym', style:{'line-style':'solid'}},
-        {selector:'edge.asym', style:{'line-style':'dashed'}},
-        {selector:'edge.cost-1', style:{'line-color':'#16a34a','target-arrow-color':'#16a34a','width':3}},
-        {selector:'edge.cost-3', style:{'line-color':'#d97706','target-arrow-color':'#d97706','width':2}},
-        {selector:'edge.cost-7', style:{'line-color':'#dc2626','target-arrow-color':'#dc2626','width':1}},
+        {selector:'node.faded', style:{'opacity':0.12}},
+        // 边基础样式
+        {selector:'edge', style:{'width':1,'line-color':'#cbd5e1','target-arrow-color':'#cbd5e1','target-arrow-shape':'triangle','arrow-scale':0.6,'curve-style':'bezier','opacity':0.5}},
+        // 数据流边
+        {selector:'edge.traffic-good', style:{'line-color':'#16a34a','target-arrow-color':'#16a34a','width':2.5,'opacity':0.7}},
+        {selector:'edge.traffic-mid', style:{'line-color':'#d97706','target-arrow-color':'#d97706','width':1.8,'opacity':0.6}},
+        {selector:'edge.traffic-poor', style:{'line-color':'#dc2626','target-arrow-color':'#dc2626','width':1.2,'opacity':0.5,'line-style':'dashed'}},
+        // Route Record 路径边
+        {selector:'edge.route', style:{'line-color':'#7c3aed','target-arrow-color':'#7c3aed','width':2,'opacity':0.8,'line-style':'dashed','arrow-scale':0.9}},
+        // 高亮/淡出
         {selector:'edge.highlight', style:{'opacity':1,'width':4}},
-        {selector:'edge.faded', style:{'opacity':0.05}},
+        {selector:'edge.faded', style:{'opacity':0.04}},
       ],
       layout:{name:'cose', animate:true, animationDuration:800, nodeRepulsion:function(n){return n.degree()>3?12000:6000}, idealEdgeLength:function(e){return 80}, gravity:20, numIter:2000, initialTemp:100, coolingFactor:0.95},
       wheelSensitivity:0.3,
     });
 
-    // 边 cost 类别着色
-    cy.edges().forEach(function(e){
-      var mc=e.data('max_cost');
-      if(mc<=1) e.addClass('cost-1');
-      else if(mc<=3) e.addClass('cost-3');
-      else e.addClass('cost-7');
-    });
-
     // ── 交互事件 ──
-    // Hover tooltip
     var tooltip=document.createElement('div');tooltip.id='cy-tt';tooltip.style.cssText='position:absolute;display:none;background:#1e293b;color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:999;max-width:280px;white-space:pre-line';
     document.getElementById('cy-graph').appendChild(tooltip);
 
-    cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n活动包:'+d.seen+'\n邻居数:'+nbCount+'\n深度:'+(d.depth>=0?d.depth:'?');tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;var act=d.is_active?'✅ 活跃':'⬜ 静默(仅LS)';tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+act+'\n活动包:'+d.seen+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();tooltip.innerHTML='<b>0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'</b>\nout_cost A→B:'+d.out_cost+'\nout_cost B→A:'+d.in_cost+'\n'+(d.symmetric?'✅ 对称链路':'⚠️ 不对称链路 (差'+Math.abs(d.out_cost-d.in_cost)+')');tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();var et=d.edge_type;if(et==='traffic'){tooltip.innerHTML='<b>0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'</b>\n数据流: '+d.count+' 包\n成功率: '+(d.success_rate*100).toFixed(0)+'%';}else{tooltip.innerHTML='<b>Route Record 路径段</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase();}tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
@@ -469,10 +487,9 @@ reg('topo',function(){
     // Click → 跳转时间线
     cy.on('tap','node',function(e){var n=e.target;var aid=n.data('aid');S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');location.hash='tl';});
 
-    // 双击 → 展开/折叠 (高亮该节点+1-hop邻居, 其余淡出)
+    // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    // 完成布局后适应
     cy.ready(function(){setTimeout(function(){cy.fit(undefined,30);},1000);});
   }
 
@@ -581,9 +598,57 @@ reg('topo',function(){
     document.querySelectorAll('.bp-tab').forEach(function(b){b.classList.remove('on');b.style.borderBottomColor='transparent'});
     if(btn){btn.classList.add('on');btn.style.borderBottomColor='#3b82f6';}
     document.getElementById('bp-routes').style.display=bp==='routes'?'block':'none';
+    document.getElementById('bp-neighbors').style.display=bp==='neighbors'?'block':'none';
     document.getElementById('bp-tree').style.display=bp==='tree'?'block':'none';
+    if(bp==='neighbors') renderNeighborPanel();
     if(bp==='tree') renderTree();
   };
+
+  // ═══ 邻居关系面板 ═══
+  function renderNeighborPanel(){
+    var panel=document.getElementById('bp-neighbors');
+    var d=S.topo; if(!d){panel.innerHTML='<p style="color:#94a3b8">无拓扑数据</p>';return;}
+    var nbt=d.neighbor_tables||{};
+    if(Object.keys(nbt).length===0){panel.innerHTML='<p style="color:#94a3b8;text-align:center;padding:12px">无 Link Status 数据</p>';return;}
+    // Build device dropdown sorted by neighbor count
+    var devList=[]; for(var devStr in nbt){devList.push({aid:parseInt(devStr), count:Object.keys(nbt[devStr]).length});}
+    devList.sort(function(a,b){return b.count-a.count;});
+    var h='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+      +'<span style="font-size:11px;font-weight:600">设备:</span>'
+      +'<select id="nb-dev-sel" style="font-family:monospace;font-size:11px;max-width:180px" onchange="showNbTable()">'
+      +'<option value="">-- 选择设备 ('+devList.length+' 个有LS) --</option>';
+    for(var i=0;i<devList.length;i++){
+      h+='<option value="'+devList[i].aid+'">0x'+devList[i].aid.toString(16).toUpperCase().padStart(4,'0')+' ('+devList[i].count+' 邻居)</option>';
+    }
+    h+='</select><span style="font-size:10px;color:#64748b">共 '+devList.length+' 设备有Link Status数据</span></div>';
+    h+='<div id="nb-detail" style="font-size:11px;max-height:140px;overflow-y:auto"></div>';
+    panel.innerHTML=h;
+    // Global function to show neighbor detail
+    window.showNbTable=function(){
+      var aid=parseInt(document.getElementById('nb-dev-sel').value);
+      var detail=document.getElementById('nb-detail');
+      if(!aid||!nbt[aid]){detail.innerHTML='';return;}
+      var nbs=nbt[aid]; var nbKeys=Object.keys(nbs);
+      if(nbKeys.length===0){detail.innerHTML='<p style="color:#94a3b8">该设备无邻居记录</p>';return;}
+      var th='<table class="tbl"><tr><th>邻居</th><th>In Cost</th><th>Out Cost</th><th>最后更新</th><th>次数</th></tr>';
+      nbKeys.sort(function(a,b){return (nbs[b].out_cost||0)-(nbs[a].out_cost||0);});
+      for(var i=0;i<nbKeys.length;i++){
+        var nb=nbs[nbKeys[i]]; var addr=parseInt(nbKeys[i]);
+        var ic=nb.in_cost||0; var oc=nb.out_cost||0;
+        var icColor=ic<=1?'#16a34a':ic<=3?'#d97706':'#dc2626';
+        var ocColor=oc<=1?'#16a34a':oc<=3?'#d97706':'#dc2626';
+        var ts=new Date((nb.last_seen_ts||0)*1000).toISOString().substr(11,8);
+        th+='<tr style="cursor:pointer" onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';location.hash=\'tl\'">'
+          +'<td>0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'</td>'
+          +'<td style="color:'+icColor+';font-weight:600">'+ic+'</td>'
+          +'<td style="color:'+ocColor+';font-weight:600">'+oc+'</td>'
+          +'<td style="font-size:10px;color:#94a3b8">'+ts+'</td>'
+          +'<td style="font-size:10px">'+nb.count+'</td></tr>';
+      }
+      th+='</table>';
+      detail.innerHTML=th;
+    };
+  }
 
   // ═══ 侧边栏折叠 ═══
   document.getElementById('tside-tog').addEventListener('click',function(){
@@ -595,12 +660,12 @@ reg('topo',function(){
   // ═══ 按钮事件 ═══
   document.getElementById('tgo').addEventListener('click',function(){
     var pv=document.getElementById('tpan').value.trim();S.topoPan=pv||null;
-    loadData(pv,renderGraph);
+    loadData(pv,function(d){renderGraph(d);renderRoutePaths(d);});
   });
   document.getElementById('trst').addEventListener('click',function(){
     document.getElementById('tpan').value='';document.getElementById('taddr').value='';
     S.topoPan=null;S.topoAddr=null;hlNode=null;
-    loadData('',function(d){renderGraph(d);clearHighlight();});
+    loadData('',function(d){renderGraph(d);renderRoutePaths(d);clearHighlight();});
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
