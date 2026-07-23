@@ -3,6 +3,11 @@
 > 核心用途：工程师通过抓包定位 Zigbee 网络问题。
 > 每类问题按 **现象→证据链→诊断步骤→根因→解决** 结构化。
 > 预留 `##extend` 标记，后续 AI Agent 可通过自然语言扩展。
+>
+> 📚 **关联文档**: [network_analysis_kb.md](network_analysis_kb.md) — 关键帧类型详解，证据链中引用的帧类型定义在 kb 中有完整说明。
+>
+> **`##extend` 标记规范**: 每个 `##extend: {场景ID}` 为 AI Agent 预留的扩展锚点。Agent 可通过场景 ID
+> (如 `P1-1`, `P3-2`, `appendix`) 定位到具体诊断场景，在其后追加新分支或细化步骤，无需修改已有内容。
 
 ---
 
@@ -121,24 +126,46 @@
 
 **现象:**
 - 通过绑定表或组播发送命令, 部分目标设备未收到
-- APS Ack 机制在组播中不适用 (组播不确认)
+- APS Ack 机制在组播中不适用 (组播不确认, 无法通过 Ack 直接判断丢失)
+- 同一组内部分设备执行、部分未执行
 
-**证据链:**
+**证据链 (抓包中要看的帧):**
 
-| 序号 | 帧类型 | 要看什么 |
-|------|--------|---------|
-| 1 | **Data** (组播帧) | NWK Dst 是否为组地址 (0xFFxx) |
-| 2 | **Link Status** | 组内所有设备的邻居链路 |
-| 3 | **Route Request** | 组播路由请求 |
+| 序号 | 帧类型 | 要看什么 | 正常 | 异常 |
+|------|--------|---------|------|------|
+| 1 | **Data** (组播/绑定帧) | NWK Dst 是否为组地址 (0xFFxx) 或单播地址 (绑定) | Dst 匹配目标组或绑定地址 | Dst 为广播 (0xFFFF) 但实际应为组地址 |
+| 2 | **Multicast Route Request** | 组播路由是否建立 | 有对应的 Multicast Route Reply, Member/Non-Member 模式正确 | 无 Reply, 或 Non-Member 模式但无中继节点 |
+| 3 | **Link Status** | 组内所有目标设备的邻居链路 | 组内设备 in/out cost ≤3 | cost ≥5 或设备不在邻居表中 |
+| 4 | **ZDO: Match Desc / Bind Req** | 发送前绑定表是否已建立 | 有 Bind Request/Response 且 Status=0x00 | 无绑定记录或绑定失败 |
+| 5 | **Group Membership (ZCL)** | 设备是否已加入组 | Add Group Response Status=0x00 | Get Group Membership 返回空或缺少目标组 |
+
+**组播模式说明:**
+
+| 模式 | 工作机制 | 适用场景 | 抓包特征 |
+|------|---------|---------|---------|
+| **Member Mode** (成员模式) | 设备使用组地址为目标, NWK 层广播到所有组成员 | 小型网络, 设备密集 | NWK Dst = 组地址 (0xFFxx), MAC Dst = 广播 |
+| **Non-Member Mode** (非成员模式) | 命令先单播到组播中继 (Multicast Relay), 中继再广播 | 大型网络, 设备分散 | 有 Multicast Route Request/Reply, 中继节点作为代理 |
 
 **诊断步骤:**
-1. 确认组播帧 MAC Dst = 广播 (0xFFFF) 或组地址
-2. 检查组内每个设备是否在同一路由域
-3. 查看 Link Status 确认设备间直接可达
+1. 在时间线过滤 `Data` 帧 → 找到组播/绑定命令 → 确认 NWK Dst 格式
+2. 如果是组播 → 检查是否有 `Multicast Route Request` 及对应 Reply → 确认组播模式
+3. 如果是绑定 → 过滤 `Bind Request/Response` (ZDO) → 确认绑定表条目状态
+4. 过滤 `Link Status` → 检查组内每个目标设备的邻居表中是否包含发送方, cost 是否正常
+5. 过滤 `Get Group Membership` / `Add Group Response` → 确认目标设备的组表中是否存在目标组 ID
 
-**根因:**
-- 组播帧未被中继 → 超出直接通信范围
-- 某些设备不在组内 → 绑定表/组表配置错误
+**根因定位:**
+- 无 Multicast Route Reply + Non-Member 模式 → **组播中继不可用** — 无设备作为组播中继或中继路由失败
+- 有 Multicast Route Reply 但部分设备没收到 → **中继覆盖不足** — 部分设备在中继广播范围外
+- 绑定模式无 Bind Response → **绑定表未建立** — 发送端绑定配置失败或目标设备不支持绑定
+- 组内设备 Link Status 中无发送方 → **设备不在同一路由域** — 组播帧无法到达
+- 设备 Group Table 中无目标组 → **设备未加入组** — Add Group 未执行或组 ID 被清除
+
+**解决方案:**
+- 组播中继不可用: 在组内指定一台稳定路由器作为 Multicast Relay, 确保其在所有组成员的 1-hop 范围内
+- 中继覆盖不足: 增加组播中继数量, 或改用 Member Mode (仅适用于小规模网络)
+- 绑定表未建立: 重新执行绑定流程 → 检查 ZDO Bind Response 的 Status
+- 设备未入组: 重新发送 Add Group 命令 → 确认 Group Membership Response 包含目标组
+- 混合使用绑定和组播时: 确认发送端侧的逻辑正确切换 (绑定的设备用单播, 组播的设备用组地址)
 
 ##extend: P1-4
 
@@ -176,19 +203,36 @@
 - 命令发送到设备执行间隔过长 (>500ms)
 - 用户体验差 (按键后灯有明显延迟)
 
+**延迟分级标准:**
+
+| 级别 | 延迟范围 | 含义 | 对策 |
+|------|---------|------|------|
+| 🟢 正常 | `< 100ms` | 单跳或多跳快速路由 | 无需处理 |
+| 🟡 偏慢 | `100 ~ 500ms` | 稍慢, 用户几乎无感 | 可优化拓扑 |
+| 🟠 慢 | `500ms ~ 1.6s` | 用户明显感到延迟 | 需排查 (见诊断步骤) |
+| 🔴 异常 | `1.6s ~ 10s` | 超过 APS 重传超时 (~1.6s), 可能存在路由发现阻塞 | **必须排查** |
+| ⚫ 严重 | `> 10s` | 超过 `nwkRouteDiscoveryTime` (NWK 路由发现超时, 默认 10s) | 路由已失效, 通信实际上已中断 |
+
+> 基准: `nwkRouteDiscoveryTime` (默认 10000ms, NWK 层路由发现超时) 为协议层面异常判定标准。
+> 超过此阈值意味着路由发现已经超时, 设备在等待路由重建而非正常通信延迟。
+
 **证据链:**
 
 | 序号 | 帧类型 | 要看什么 |
 |------|--------|---------|
-| 1 | Timestamp 差值 | 命令帧 TS → 执行完成 TS |
-| 2 | **Route Record** | 经过的跳数 |
-| 3 | **Route Request** | 路由发现耗时 |
+| 1 | Timestamp 差值 | 命令帧 TS → 执行完成 TS (精确到 ms) |
+| 2 | **Route Record** | 经过的跳数 + Relay List 路径 |
+| 3 | **Route Request** | 路由发现耗时 (首 Req → 对应 Reply 的间隔) |
+| 4 | **NWK FCF** | 是否包含 Discover Route 标志 (路由发现中) |
+| 5 | **Link Status** | 路径上各跳的 in/out cost |
 
 **诊断步骤:**
-1. 计算命令帧 → 响应帧的时间戳差值
-2. 如果 >500ms: 查看路由路径跳数 (Route Record Relay Count)
-3. 如果跳数 >5: 路径过长, 需优化拓扑
-4. 如果跳数少但延迟高: 检查中间节点处理延迟 (可能是低功耗设备唤醒)
+1. 计算命令帧 → 响应帧的时间戳差值, 按分级标准判定严重程度
+2. 如果延迟在 500ms~1.6s: 查看 Route Record 的 Relay Count → 跳数>5 则路径过长需优化拓扑
+3. 如果延迟在 1.6s~10s: 检查是否有并发 Route Request → 发送时路由表缺失, 路由发现拖慢了首帧
+4. 如果延迟 >10s: 检查 NWK FCF Discover Route 标志 → 路由已超时 → 回退到 P3-1 (路由黑洞)
+5. 如果跳数少但延迟高: 检查 Link Status → 中间节点是否为低功耗设备 (Sleepy End Device 唤醒延迟)
+6. 如果路径中某跳 cost ≥5: 该链路为瓶颈 → 非对称或干扰 → 参考 P3-3
 
 ##extend: P1-6
 
@@ -510,19 +554,75 @@
 
 ---
 
-### P5-2: 密钥不同步
+### P5-2: 密钥不同步 / 安全层异常
+
+**三层密钥架构速查 (Zigbee 3.0):**
+
+| 密钥层 | 名称 | 作用 | 分发方式 | 生命周期 |
+|--------|------|------|---------|---------|
+| **NWK Key** | Network Key | 保护所有 NWK 层 payload (APS+ZCL 数据) | Transport Key (TC → 设备) | Key Rotation 时更新, 全网统一 |
+| **TC Link Key** | Trust Center Link Key | 保护入网时 NWK Key 分发, 建立安全信任 | 预配置 (Pre-configured) 或 默认 (ZigBeeAlliance09) | 设备入网后可能被 APS Link Key 替换 |
+| **APS Link Key** | Application Link Key | 保护两个设备间的 APS 层应用数据 (端到端) | TC 分发 (Request Key) 或 预配置 | 设备间绑定/配对时建立 |
 
 **现象:**
 - 部分帧无法解密 (NWK Key 不匹配)
 - 设备被 TC 拒绝
+- 已入网设备突然通信中断 (Key Rotation 后)
+- Network Status 报告 `Bad Frame Counter (0x11)` 或 `Bad Key Sequence Number (0x12)`
 
 **证据链:**
 
-| 序号 | 帧类型 | 要看什么 |
-|------|--------|---------|
-| 1 | **Network Status** | Bad Frame Counter (0x11) |
-| 2 | **Security Header** | Key Seq# 是否变化 |
-| 3 | **Transport Key** | 是否有 Key Rotation |
+| 序号 | 帧类型 | 要看什么 | 正常 | 异常 |
+|------|--------|---------|------|------|
+| 1 | **Security Header** (每帧) | Key Seq# + Frame Counter | Seq# 全网一致, Counter 单调递增 | Seq# 不一致, Counter 回跳或重复 |
+| 2 | **Network Status** | Bad Frame Counter (0x11) / Bad Key Seq# (0x12) | 无此类错误 | 频繁出现 → 安全不同步 |
+| 3 | **Transport Key** | NWK Key 分发 / Key Rotation | Key Seq# 递增, 全网广播 | Key 分发后仍有老 Key 的帧 |
+| 4 | **Leave** (紧随 Device Announce 之后) | TC 拒绝 (Rejoin=0) | - | Device Announce → 立即 Leave → TC Link Key 不匹配 |
+| 5 | **Data** (加密帧) | APS 层是否能解密 | 用网络当前 NWK Key 可解 | 用老 Key 加密的帧持续出现 (设备仍用旧 Key) |
+
+**诊断步骤:**
+1. 过滤 `Transport Key` → 检查是否有 Key Rotation 事件 (Key Seq# 从 0→1→2...)
+2. 过滤 `Network Status` → 统计 `Bad Frame Counter (0x11)` 的次数和源设备
+3. 如果有 Key Rotation → 查看 Rotation 前后各设备的帧: 是否所有设备同步切换到新 Key
+4. 如果某设备持续用老 Key → 该设备未收到 Transport Key (路由黑洞/离线期间 Key Rotation)
+5. 过滤 `Leave` → 检查 Device Announce 后立即 Leave 的设备 (TC Link Key 不匹配)
+6. 检查 Security Header 的 Key Seq# → 同一网络中不同设备是否使用相同的 Key Seq#
+
+**Frame Counter 异常场景:**
+
+| 场景 | 特征 | 根因 | 解决 |
+|------|------|------|------|
+| **Counter 回跳** | 同一设备 Frame Counter 从大值 (如 50000) 跳到小值 (如 10) | 设备 NV/Flash 清空或复位, Counter 归零 | 设备重新入网获取新 Key |
+| **Counter 重复** | 两个设备使用相同的 Frame Counter 序列 | 设备克隆或固件 bug | 检查固件 Counter 存储逻辑 |
+| **Counter 溢出** | Counter 接近 0xFFFFFFFF (32-bit 上限) | 设备长期运行, 未触发 Key Rotation | 主动触发 Key Rotation 重置 Counter |
+| **Bad Counter 增多** | 多个邻居报告同一设备的 Bad Frame Counter | 该设备安全状态异常 (被攻击/固件错误) | 检查设备, 必要时清空 NV 重新入网 |
+
+**Key Rotation 时序分析:**
+
+```
+正常 Key Rotation 流程:
+1. TC 生成新 NWK Key → broadcast Transport Key (Key Seq# N+1)
+2. 全网路由器接收新 Key → 更新本地 NWK Key 表
+3. TC 开始用新 Key 加密 → 旧 Key Seq# N 的帧逐渐消失
+4. 全部设备切换到新 Key → 完成
+
+异常场景:
+- 设备离线期间发生 Key Rotation → 设备回来后用老 Key 发帧 → 被丢弃
+- Key Rotation 过快 (间隔<1min) → 部分设备跟不上 → Security Header Seq# 不一致
+- Transport Key 广播未被中继 → 远跳设备收不到新 Key → 出现两种 Key Seq# 并存
+```
+
+**根因定位:**
+- Device Announce 后立即 Leave (Rejoin=0) → **TC Link Key 不匹配** — 参考 P2-3
+- Key Rotation 后部分设备通信中断 → **Key 同步失败** — 设备未收到或未处理 Transport Key
+- 频繁 Bad Frame Counter → **Counter 不同步** — 设备 NV 异常或 Frame Counter 归零
+- 同一网络出现两种 Key Seq# → **Key Rotation 不完整** — 存在网络盲区或广播未覆盖到
+
+**解决方案:**
+- TC Link Key 不匹配: 清空设备 NV → 协调器侧确认 `zgPreConfigKeys = FALSE` → 重新入网
+- Key Rotation 同步失败: 增加 Key Rotation 前的广播确认; 对未同步设备单独发送 Transport Key (单播)
+- Frame Counter 异常: 检查设备 NV 存储可靠性; 触发 Key Rotation 重置全局 Counter
+- 混合 Key Seq#: 手动触发全网 Key Rotation 强制统一; 排查 Transport Key 广播未到达的设备
 
 ##extend: P5-2
 
