@@ -364,21 +364,38 @@ reg('topo',function(){
     document.getElementById('pan-list').innerHTML=ph+'</table>';
     document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){renderGraph(d);renderRoutePaths(d);})})});
     document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();location.hash='tl'})});
-    // Asymmetric links
+    // Asymmetric links — 只显示WEAK和ASYMM级别, 点击可高亮图中节点
     var al=d.asymmetric_links||[];
+    var alFiltered=[]; for(var i=0;i<al.length;i++){if(al[i].level!=='OK') alFiltered.push(al[i]);}
     var ah='';
-    if(al.length===0){ah='<p style="font-size:10px;color:#94a3b8">无不对称链路</p>';}
+    var alTitle='📋 不对称链路 ('+alFiltered.length+'条, 不含OK)';
+    document.querySelector('#tasym').parentElement.querySelector('h3').textContent=alTitle;
+    if(alFiltered.length===0){ah='<p style="font-size:10px;color:#16a34a">✅ 未发现不对称链路</p>';}
     else{
       ah='<table class="tbl"><tr><th>A</th><th>B</th><th>A→B</th><th>B→A</th><th>差</th></tr>';
-      for(var i=0;i<Math.min(al.length,12);i++){
-        var a=al[i];var lc=a.level==='OK'?'#16a34a':a.level==='WEAK'?'#d97706':'#dc2626';
-        ah+='<tr><td>0x'+a.a.toString(16).toUpperCase().padStart(4,'0')+'</td><td>0x'+a.b.toString(16).toUpperCase().padStart(4,'0')+'</td>'
+      var maxShow=Math.min(alFiltered.length,15);
+      for(var i=0;i<maxShow;i++){
+        var a=alFiltered[i];var lc=a.level==='WEAK'?'#d97706':'#dc2626';
+        ah+='<tr class="asym-row" data-a="'+a.a+'" data-b="'+a.b+'" style="cursor:pointer">'
+          +'<td>0x'+a.a.toString(16).toUpperCase().padStart(4,'0')+'</td><td>0x'+a.b.toString(16).toUpperCase().padStart(4,'0')+'</td>'
           +'<td>'+a.a_to_b_cost+'</td><td>'+a.b_to_a_cost+'</td><td style="color:'+lc+';font-weight:600">'+a.diff+'</td></tr>';
       }
-      if(al.length>12) ah+='<tr><td colspan="5" style="color:#94a3b8;text-align:center">...还有'+(al.length-12)+'条</td></tr>';
+      if(alFiltered.length>maxShow) ah+='<tr><td colspan="5" style="color:#94a3b8;text-align:center">...还有'+(alFiltered.length-maxShow)+'条</td></tr>';
       ah+='</table>';
     }
     document.getElementById('tasym').innerHTML=ah;
+    // 点击不对称链路行 → 图中高亮双节点
+    document.querySelectorAll('.asym-row').forEach(function(r){
+      r.addEventListener('click',function(){
+        var a=parseInt(this.dataset.a); var b=parseInt(this.dataset.b);
+        if(!cy) return;
+        clearHighlight();
+        var na=cy.getElementById(''+a); var nb=cy.getElementById(''+b);
+        if(na){na.addClass('highlight'); na.connectedEdges().forEach(function(e){e.addClass('highlight');});}
+        if(nb){nb.addClass('highlight'); nb.connectedEdges().forEach(function(e){e.addClass('highlight');});}
+        hlNode=null; // 不使用单节点高亮
+      });
+    });
   }
 
   // ═══ Cytoscape 力导向图 (路径着色 + 流量背景) ═══
