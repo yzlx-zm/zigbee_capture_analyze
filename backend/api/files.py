@@ -14,6 +14,8 @@ router = APIRouter()
 _packets: list[dict] = []
 _nodes: dict[int, dict] = {}
 _file_type: str = ""
+_verify_report: dict | None = None  # 校验报告
+_pcap_paths: list[str] = []         # 最近一次导入的 pcap 路径
 
 
 def get_packets():
@@ -112,8 +114,8 @@ async def import_local(path: str = Form(...)):
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type
-    _packets = []; _nodes = {}; _file_type = ""
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths
+    _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
     return {"ok": True}
 
 
@@ -143,6 +145,14 @@ async def import_pcap(files: list[UploadFile] = File(...)):
         _packets = _tshark.parse_packets(tmp_paths)
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
+        _pcap_paths = [os.path.abspath(p) for p in tmp_paths]
+
+        # 运行校验
+        try:
+            from .. import verify as _verify
+            _verify_report = _verify.run_verification(_pcap_paths, _packets)
+        except Exception:
+            _verify_report = {"passed": False, "error": "校验执行异常"}
 
         return _import_result()
     except RuntimeError as e:
@@ -156,7 +166,7 @@ async def import_pcap(files: list[UploadFile] = File(...)):
 @router.post("/import/local-pcap")
 async def import_local_pcap(paths: str = Form(...)):
     """本地 pcap 路径导入 (逗号分隔多个)"""
-    global _packets, _nodes, _file_type
+    global _packets, _nodes, _file_type, _pcap_paths, _verify_report
     from .. import tshark as _tshark
 
     path_list = [p.strip() for p in paths.split(",") if p.strip()]
@@ -171,6 +181,15 @@ async def import_local_pcap(paths: str = Form(...)):
         _packets = _tshark.parse_packets(path_list)
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
+        _pcap_paths = path_list
+
+        # 运行校验
+        try:
+            from .. import verify as _verify
+            _verify_report = _verify.run_verification(_pcap_paths, _packets)
+        except Exception:
+            _verify_report = {"passed": False, "error": "校验执行异常"}
+
         return _import_result()
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, 500)
@@ -209,6 +228,7 @@ def _import_result() -> dict:
         t = p["pkt_type"] or "Unknown"
         types[t] = types.get(t, 0) + 1
     decrypt_stats = _ks.get_match_stats(_packets)
+    global _verify_report
     return {
         "ok": True,
         "packets": len(_packets),
@@ -216,7 +236,17 @@ def _import_result() -> dict:
         "file_type": _file_type,
         "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
         "decrypt_stats": decrypt_stats,
+        "verify": _verify_report,  # 校验报告
     }
+
+
+@router.get("/import/verify")
+async def import_verify():
+    """获取最近的校验报告"""
+    global _verify_report
+    if _verify_report is None:
+        return {"passed": None, "message": "尚未执行校验"}
+    return _verify_report
 
 
 @router.get("/packets/summary")
@@ -293,8 +323,11 @@ async def packet_summary(addr: str = "", pan: str = "",
 async def import_status():
     ts_start = _packets[0]["ts"] if _packets else None
     ts_end = _packets[-1]["ts"] if _packets else None
+    report = None
+    if _verify_report:
+        report = {"passed": _verify_report.get("passed")}
     return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type,
-            "ts_start": ts_start, "ts_end": ts_end}
+            "ts_start": ts_start, "ts_end": ts_end, "verify_ok": report}
 
 
 @router.get("/packets")

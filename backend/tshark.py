@@ -151,7 +151,9 @@ def _frame_to_dict(tf: dict) -> dict:
 
     # APS 层
     aps = layers.get("zbee_aps", {})
-    aps_cluster = _h(aps.get("zbee_aps.cluster", "")) or _h(aps.get("zbee_aps.zdp_cluster", ""))
+    aps_cluster_zcl = _h(aps.get("zbee_aps.cluster", ""))
+    aps_cluster_zdp = _h(aps.get("zbee_aps.zdp_cluster", ""))
+    aps_cluster = aps_cluster_zcl if aps_cluster_zcl is not None else aps_cluster_zdp
     aps_profile = _h(aps.get("zbee_aps.profile", ""))
     aps_counter = int(aps.get("zbee_aps.counter", "0")) if aps.get("zbee_aps.counter") else None
     aps_src_ep = int(aps.get("zbee_aps.src", ""), 16) if aps.get("zbee_aps.src") else None
@@ -233,8 +235,10 @@ def _pkt_type(mac_ft: int, nwk: dict, aps: dict | None = None, decrypted: bool =
     mac_names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Cmd"}
     base = mac_names.get(mac_ft, "Unknown")
     if mac_ft == 1:
-        # Check for ZDP first (profile 0x0000)
-        if aps and aps.get("zbee_aps.profile") == "0x0000":
+        # Check for ZDP first (profile 0x0000) — only Data frames, not ACK
+        aps_fcf = aps.get("Frame Control Field", "") if aps else ""
+        is_aps_ack = isinstance(aps_fcf, str) and "Ack" in aps_fcf
+        if aps and aps.get("zbee_aps.profile") == "0x0000" and not is_aps_ack:
             zdp_cluster = aps.get("zbee_aps.zdp_cluster", "")
             zdp_names = {
                 "0x0000": "ZDP: NWK Addr Req", "0x0001": "ZDP: IEEE Addr Req",

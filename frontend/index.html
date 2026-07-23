@@ -59,6 +59,16 @@ var S={pkts:0,nodes:0,topo:null,topoPan:null,topoAddr:null};
 var R={};function reg(n,h){R[n]=h}
 function rt(){var h=location.hash.slice(1)||'import';
 document.querySelectorAll('.nt a').forEach(function(t){t.classList.toggle('on',t.dataset.r===h)});
+// Mark disabled tabs if verification failed
+if(S.verifyPassed===false){
+  document.querySelectorAll('.nt a[data-r=\"topo\"],.nt a[data-r=\"tl\"],.nt a[data-r=\"nodes\"]').forEach(function(t){t.style.opacity='0.4';t.title='数据校验未通过'});
+}else{
+  document.querySelectorAll('.nt a').forEach(function(t){t.style.opacity='';t.title=''});
+}
+if((h==='topo'||h==='tl'||h==='nodes')&&S.verifyPassed===false){
+  document.getElementById('mc').innerHTML='<div class="card" style="margin:16px"><h3>🚫 数据校验未通过</h3><p style="color:#dc2626;margin-top:8px">导入数据与 pcap 文件不匹配，拓扑和时间线页已锁定。</p><p style="margin-top:4px">请回到<a href=\"#import\" style=\"color:#3b82f6\">导入页</a>检查校验报告并重新导入。</p></div>';
+  return;
+}
 document.getElementById('mc').innerHTML='';if(R[h])R[h]()}
 window.addEventListener('hashchange',rt);
 function sb(m){document.getElementById('sb').textContent=m||'就绪'}
@@ -185,14 +195,34 @@ reg('import',function(){
 
   document.getElementById('gotopo').addEventListener('click',function(){location.hash='topo'});
   document.getElementById('clr').addEventListener('click',function(){
-    if(!confirm('确认清除所有数据？'))return;
+    var btn=this;
+    if(btn.dataset.confirming!=='1'){
+      btn.dataset.confirming='1';
+      btn.textContent='再次点击确认清除';
+      btn.style.background='#dc2626';btn.style.color='#fff';
+      setTimeout(function(){btn.dataset.confirming='';btn.textContent='清除数据';btn.style.background='';btn.style.color='';},3000);
+      return;
+    }
+    btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
       S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');document.getElementById('sout').style.display='none';
+      btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
   // Check if already loaded
-  A.get('/api/import/status').then(function(s){if(s.total){sr({packets:s.total,nodes:s.nodes,by_type:{}})}});
-  // If on pcap tab, load key panel
+  A.get('/api/import/status').then(function(s){if(s.total){sr({packets:s.total,nodes:s.nodes,by_type:{},file_type:s.type,verify_ok:s.verify_ok})}});
+  // Restore full verify report
+  A.get('/api/import/verify').then(function(v){S.verifyPassed=v.passed;
+    if(v.passed!==null&&document.getElementById('sout')){
+      // Show verify report if data exists
+      var vc=v.passed===true?'#16a34a':'#dc2626';
+      var vh='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(v.passed?'#f0fdf4':'#fef2f2')+';border:1px solid '+vc+';font-size:11px">';
+      vh+='<b style="color:'+vc+'">'+(v.passed?'✅ 数据校验通过':'❌ 数据校验失败')+'</b>';
+      if(v.checks){for(var ck in v.checks){var c=v.checks[ck];vh+='<br>'+ (c.passed?'✅':'❌')+' '+c.label;}}
+      vh+='</div>';
+      document.getElementById('sdiv').innerHTML+=vh;
+    }
+  });
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });
 
@@ -214,6 +244,24 @@ function sr(d){document.getElementById('sout').style.display='block';
   if(d.file_type)h+='<span>类型:'+d.file_type+'</span>';
   h+='</div><p style="font-size:11px;margin-top:4px">'+JSON.stringify(d.by_type||{}).substr(0,300)+'</p>';
   if(d.decrypt_stats){h+='<p style="font-size:11px;margin-top:2px;color:#16a34a">解密: '+d.decrypt_stats.decrypted+'/'+d.decrypt_stats.total_data_frames+' 帧 ('+(d.decrypt_stats.decrypt_rate*100).toFixed(0)+'%) | Clusters: '+JSON.stringify(d.decrypt_stats.by_cluster)+'</p>';}
+  // Verification report
+  if(d.verify){
+    var v=d.verify;
+    var vc=v.passed===true?'#16a34a':(v.passed===false?'#dc2626':'#94a3b8');
+    h+='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(v.passed===true?'#f0fdf4':v.passed===false?'#fef2f2':'#f8fafc')+';border:1px solid '+vc+'">';
+    h+='<div style="font-weight:600;color:'+vc+';margin-bottom:4px">'+(v.passed===true?'✅ 数据校验通过':v.passed===false?'❌ 数据校验失败 (拓扑/时间线已锁定)':'⏳ 校验中...')+'</div>';
+    if(v.checks){
+      for(var ck in v.checks){
+        var c=v.checks[ck];var icon=c.passed?'✅':'❌';
+        h+='<div style="font-size:10px;margin:2px 0;color:'+(c.passed?'#16a34a':'#dc2626')+'">'+icon+' '+c.label+': 预期='+c.expected+' 实际='+c.actual+'</div>';
+      }
+    }
+    if(v.detail&&Object.keys(v.detail).length>0){
+      h+='<div style="font-size:10px;color:#dc2626;margin-top:4px">差异: '+JSON.stringify(v.detail).substr(0,300)+'</div>';
+    }
+    h+='</div>';
+    S.verifyPassed=v.passed;
+  }
   document.getElementById('sdiv').innerHTML=h;
   S.pkts=d.packets||0;S.nodes=d.nodes||0;sb(S.pkts+'包 | '+S.nodes+'节点');
   A.get('/api/topology/graph').then(function(td){S.topo=td});}
