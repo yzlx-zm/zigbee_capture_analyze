@@ -678,13 +678,19 @@ reg('tl',function(){
           }
           // Route Request
           if(cmdName==='Route Request'){
-            var originator=nwk['zbee_nwk.src'];  // NWK src = route originator
+            var originator=nwk['zbee_nwk.src'];
             var dest=cmdVal['zbee_nwk.cmd.route.dest'];
+            var nwkDst2=nwk['zbee_nwk.dst'];
             var origStr=originator?'0x'+parseInt(originator,16).toString(16).toUpperCase().padStart(4,'0'):'-';
             var destStr=dest?'0x'+parseInt(dest,16).toString(16).toUpperCase().padStart(4,'0'):'-';
+            var relayStr2='-';
+            if(originator&&nwkDst2){
+              relayStr2='0x'+parseInt(originator,16).toString(16).toUpperCase().padStart(4,'0')+' → 0x'+parseInt(nwkDst2,16).toString(16).toUpperCase().padStart(4,'0');
+            }
             var rq=[
-              ['Originator', origStr],
-              ['Target Dest', destStr],
+              ['Originator', origStr, '发起路由请求的设备'],
+              ['Target Dest', destStr, '路由目标地址'],
+              ['Relay Hop', relayStr2, '当前转发此Request的路由器跳(NWK层)'],
               ['Path Cost', cmdVal['zbee_nwk.cmd.route.cost']||'0'],
               ['Route ID', cmdVal['zbee_nwk.cmd.route.id']||'?'],
               ['Options', _tlROpts(cmdVal['zbee_nwk.cmd.route.opts'])],
@@ -698,9 +704,15 @@ reg('tl',function(){
           if(cmdName==='Route Reply'){
             var orig=cmdVal['zbee_nwk.cmd.route.orig']||'?';
             var resp=cmdVal['zbee_nwk.cmd.route.resp']||'?';
+            var nwkSrc=nwk['zbee_nwk.src']; var nwkDst=nwk['zbee_nwk.dst'];
+            var relayStr='-';
+            if(nwkSrc&&nwkDst){
+              relayStr='0x'+parseInt(nwkSrc,16).toString(16).toUpperCase().padStart(4,'0')+' → 0x'+parseInt(nwkDst,16).toString(16).toUpperCase().padStart(4,'0');
+            }
             var rp=[
-              ['Originator', _tlA2(cmdVal,'zbee_nwk.cmd.route.orig')],
-              ['Responder', _tlA2(cmdVal,'zbee_nwk.cmd.route.resp')],
+              ['Originator', _tlA2(cmdVal,'zbee_nwk.cmd.route.orig'), '发起路由请求的设备'],
+              ['Responder', _tlA2(cmdVal,'zbee_nwk.cmd.route.resp'), '应答路由的目标设备'],
+              ['Relay Hop', relayStr, '当前转发此Reply的路由器跳'],
               ['Path Cost', cmdVal['zbee_nwk.cmd.route.cost']||'0'],
               ['Route ID', cmdVal['zbee_nwk.cmd.route.id']||'?'],
             ];
@@ -712,17 +724,63 @@ reg('tl',function(){
           // Route Record
           if(cmdName==='Route Record'){
             var relayCount=parseInt(cmdVal['zbee_nwk.cmd.relay_count']||'0');
-            html+=_tlLayer('Route Record', '#7c3aed', [
-              ['Relay Count', String(relayCount)],
-            ]);
+            var rrFields=[['Relay Count', String(relayCount), relayCount===0?'直连通信(单跳)':'经过'+relayCount+'个中继节点']];
+            // Collect relay devices from tshark
+            var relays=[];
+            for(var rk in cmdVal){
+              if(rk.indexOf('relay_device')>=0&&rk.indexOf('_tree')<0){
+                var rv=cmdVal[rk];
+                if(rv&&typeof rv!=='object'){
+                  var rAddr='0x'+parseInt(rv,16).toString(16).toUpperCase().padStart(4,'0');
+                  relays.push(rAddr);
+                }
+              }
+            }
+            if(relays.length>0){
+              for(var ri=0;ri<relays.length;ri++){
+                rrFields.push(['Relay '+(ri+1), relays[ri]]);
+              }
+            }
+            if(relayCount>0&&relays.length===0){
+              rrFields.push(['Relay List', '未解析 (tshark限制)']);
+            }
+            html+=_tlLayer('Route Record', '#7c3aed', rrFields);
+            // Show path: NWK Src → [Relays] → NWK Dst
+            if(relayCount>0){
+              var nwkSrc2=nwk['zbee_nwk.src']; var nwkDst3=nwk['zbee_nwk.dst'];
+              var pathNodes=[nwkSrc2].concat(relays).concat([nwkDst3]);
+              var pathStr='';
+              for(var pi=0;pi<pathNodes.length;pi++){
+                if(pi>0)pathStr+=' <span style=\"color:#7c3aed\">→</span> ';
+                var pn=pathNodes[pi];
+                if(typeof pn==='string'&&pn.startsWith('0x'))pathStr+=pn;
+                else if(pn)pathStr+='0x'+parseInt(pn,16).toString(16).toUpperCase().padStart(4,'0');
+              }
+              if(pathStr){
+                var ph='<div style=\"margin-bottom:8px;border-left:3px solid #7c3aed;padding-left:8px\">';
+                ph+='<div style=\"font-weight:600;color:#7c3aed;margin-bottom:4px\">Record Path</div>';
+                ph+='<div style=\"font-family:monospace;font-size:12px;background:#f1f5f9;padding:4px 8px;border-radius:4px\">'+pathStr+'</div></div>';
+                html+=ph;
+              }
+            }
           }
           // Network Status
           if(cmdName==='Network Status'){
             var stCode=cmdVal['zbee_nwk.cmd.status']||'?';
             var stNames={'0x00':'No Route Available','0x01':'Tree Link Failure','0x02':'Non-Tree Link Failure','0x03':'Low Battery','0x04':'No Routing Capacity','0x05':'No Indirect Capacity','0x06':'Indirect Transaction Expiry','0x07':'Target Unavailable','0x08':'Target Address Unallocated','0x09':'Parent Link Failure','0x0a':'Validate Route','0x0b':'Source Route Failure','0x0c':'Many-to-One Route Failure','0x0d':'Address Conflict','0x0e':'Verify Addresses','0x0f':'PAN ID Update','0x10':'Network Address Update','0x11':'Bad Frame Counter','0x12':'Bad Key Sequence Number','0x13':'Unknown Command'};
+            var stExplain={'0x00':'无到目标的路由条目','0x01':'树状路由链路断开','0x02':'Mesh路由链路断开','0x03':'终端设备电量不足','0x04':'路由表已满,无法新增','0x07':'目标设备无响应','0x0b':'源路由路径中某跳不可达','0x0c':'集中器(协调器)Many-to-One下行路由失败','0x0d':'短地址冲突','0x11':'帧计数器异常(安全攻击或密钥不同步)'};
+            var stName=stNames[stCode]||stCode;
+            var stExp=stExplain[stCode]||'';
+            var stDisplay=stName+' ('+stCode+')'+(stExp?' — '+stExp:'');
+            var nwkSrc3=nwk['zbee_nwk.src']; var nwkDst4=nwk['zbee_nwk.dst'];
+            var ctxStr='';
+            if(nwkSrc3&&nwkDst4){
+              ctxStr='0x'+parseInt(nwkSrc3,16).toString(16).toUpperCase().padStart(4,'0')+' → 0x'+parseInt(nwkDst4,16).toString(16).toUpperCase().padStart(4,'0');
+            }
             html+=_tlLayer('Network Status', '#dc2626', [
-              ['Status', (stNames[stCode]||stCode)+' ('+stCode+')'],
-              ['Dest', _tlA2(cmdVal,'zbee_nwk.cmd.route.dest')],
+              ['Status', stDisplay],
+              ['Error Dest', _tlA2(cmdVal,'zbee_nwk.cmd.route.dest'), '路由失败的目标地址'],
+              ['Reported By', ctxStr, '报告此错误的设备→接收方'],
             ]);
           }
           // Leave
