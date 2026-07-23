@@ -235,10 +235,12 @@ def _pkt_type(mac_ft: int, nwk: dict, aps: dict | None = None, decrypted: bool =
     mac_names = {0: "Beacon", 1: "Data", 2: "Acknowledgement", 3: "MAC Cmd"}
     base = mac_names.get(mac_ft, "Unknown")
     if mac_ft == 1:
-        # Check for ZDP first (profile 0x0000) — only Data frames, not ACK
-        aps_fcf = aps.get("Frame Control Field", "") if aps else ""
-        is_aps_ack = isinstance(aps_fcf, str) and "Ack" in aps_fcf
-        if aps and aps.get("zbee_aps.profile") == "0x0000" and not is_aps_ack:
+        # Check for ZDP first (profile 0x0000 + Data FCF, not ACK)
+        aps_fcf = list(aps.keys())[0] if aps else ""
+        is_aps_ack = "Ack" in aps_fcf
+        if is_aps_ack:
+            return "APS Ack"
+        if aps and aps.get("zbee_aps.profile") == "0x0000":
             zdp_cluster = aps.get("zbee_aps.zdp_cluster", "")
             zdp_names = {
                 "0x0000": "ZDP: NWK Addr Req", "0x0001": "ZDP: IEEE Addr Req",
