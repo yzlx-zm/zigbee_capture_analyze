@@ -506,9 +506,38 @@ reg('topo',function(){
     var target=cy.getElementById(''+aid);
     if(!target) return;
     target.addClass('highlight');
-    var neighbors=target.neighborhood().add(target);
-    cy.nodes().forEach(function(n){if(!neighbors.has(n)) n.addClass('faded');});
-    cy.edges().forEach(function(e){if(!neighbors.has(e)) e.addClass('faded');else e.addClass('highlight');});
+    // 找到该节点所在的所有路径, 高亮这些路径上的全部边
+    var pathEdges=cy.edges('[edge_type="route"]').filter(function(e){
+      var d=e.data();
+      // 该节点的邻域边 (1-hop), 或同一条路径上所有的边
+      return d.source===''+aid || d.target===''+aid;
+    });
+    var pathEdgeIds={};
+    pathEdges.forEach(function(e){pathEdgeIds[e.id()]=true;});
+    // 如果该节点有路径边, 把同路径的其他跳也加入
+    cy.edges('[edge_type="route"]').forEach(function(e){
+      if(pathEdgeIds[e.id()]) return;
+      var d=e.data();
+      // 检查该边是否和已高亮的路径边共享同一path_idx
+      for(var pid in pathEdgeIds){
+        var pe=cy.getElementById(pid);
+        if(pe&&pe.data('path_idx')===d.path_idx){
+          pathEdgeIds[e.id()]=true;
+          break;
+        }
+      }
+    });
+    // 收集涉及的节点
+    var keepNodes={}; keepNodes[''+aid]=true;
+    for(var eid in pathEdgeIds){
+      var pe=cy.getElementById(eid);
+      if(pe){ keepNodes[pe.data('source')]=true; keepNodes[pe.data('target')]=true; }
+    }
+    // 应用
+    var keepEdges={};
+    for(var eid in pathEdgeIds) keepEdges[eid]=true;
+    cy.nodes().forEach(function(n){if(!keepNodes[n.id()]) n.addClass('faded');else n.addClass('highlight');});
+    cy.edges().forEach(function(e){if(!keepEdges[e.id()]) e.addClass('faded');else e.addClass('highlight');});
   }
 
   function clearHighlight(){
