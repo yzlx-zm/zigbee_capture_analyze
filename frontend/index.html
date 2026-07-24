@@ -561,6 +561,7 @@ reg('topo',function(){
         nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);n.position({x:colX,y:y});});
         colX+=200;
       });
+      cy.layout({name:'preset'}).run();
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
