@@ -545,20 +545,37 @@ reg('topo',function(){
   // ═══ 布局引擎 ═══
   function runLayout(){
     if(!cy) return;
+    // 从路径边计算真实深度 (离coordinator的跳数)
+    var nodeDepth={};nodeDepth[0]=0; // coordinator = depth 0
+    cy.edges('[edge_type=\"route\"]').forEach(function(e){
+      var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
+      // 路径边是从src→dst(coordinator), 所以target离coordinator更近
+      if(nodeDepth[t]!=null){if(nodeDepth[s]==null||nodeDepth[t]+1<nodeDepth[s])nodeDepth[s]=nodeDepth[t]+1;}
+      if(nodeDepth[s]!=null){if(nodeDepth[t]==null||nodeDepth[s]+1<nodeDepth[t])nodeDepth[t]=nodeDepth[s]+1;}
+    });
+    // BFS传播确保连通
+    var changed=true;while(changed){changed=false;cy.edges('[edge_type=\"route\"]').forEach(function(e){
+      var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
+      if(nodeDepth[s]!=null&&(nodeDepth[t]==null||nodeDepth[s]+1<nodeDepth[t])){nodeDepth[t]=nodeDepth[s]+1;changed=true;}
+      if(nodeDepth[t]!=null&&(nodeDepth[s]==null||nodeDepth[t]+1<nodeDepth[s])){nodeDepth[s]=nodeDepth[t]+1;changed=true;}
+    });}
+    // 不在路径上的节点用大深度
+    cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
+    var maxD=0; for(var k in nodeDepth){var d=nodeDepth[k];if(d<99&&d>maxD)maxD=d;}
+    var rStep=Math.min(150,Math.max(70,Math.min(cy.width(),cy.height())/(maxD+2)/2));
+
     if(curLayout===0){  // concentric — 按深度同心圆
-      var depths={}; cy.nodes().forEach(function(n){var d=n.data('depth');if(d>=0){if(!depths[d])depths[d]=[];depths[d].push(n);}});
-      var maxD=0; for(var d in depths){d=parseInt(d);if(d>maxD)maxD=d;}
-      var radiusStep=Math.min(180,Math.max(80,cy.width()/(maxD+1)/2));
-      Object.keys(depths).forEach(function(d){d=parseInt(d);var nodes=depths[d];var r=(d+1)*radiusStep;var nCount=nodes.length;
+      var rings={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')]||99;if(!rings[d])rings[d]=[];rings[d].push(n);});
+      Object.keys(rings).sort(function(a,b){return a-b;}).forEach(function(d){d=parseInt(d);var nodes=rings[d];var r=(d===99?maxD+2:d+1)*rStep;var nCount=nodes.length;
         nodes.forEach(function(n,i){var angle=(2*Math.PI*i)/nCount-Math.PI/2;n.position({x:r*Math.cos(angle),y:r*Math.sin(angle)});});
       });
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='◎ 同心圆';
-    }else if(curLayout===1){  // column — 深度分列
-      var depths={}; cy.nodes().forEach(function(n){var d=n.data('depth');if(d<0)d=99;if(!depths[d])depths[d]=[];depths[d].push(n);});
-      var colX=0,colW=200;
-      Object.keys(depths).sort(function(a,b){return a-b;}).forEach(function(d){
-        var nodes=depths[d];var nCount=nodes.length;var colH=Math.max(400,nCount*55);
+    }else if(curLayout===1){  // column
+      var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')]||99;if(!cols[d])cols[d]=[];cols[d].push(n);});
+      var colX=0,colW=180;
+      Object.keys(cols).sort(function(a,b){return a-b;}).forEach(function(d){
+        var nodes=cols[d];var nCount=nodes.length;var colH=Math.max(350,nCount*50);
         nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);n.position({x:colX,y:y});});
         colX+=colW;
       });
@@ -567,7 +584,7 @@ reg('topo',function(){
     }else if(curLayout===2){  // breadthfirst
       cy.layout({name:'breadthfirst',directed:true,spacingFactor:0.75,animate:true,roots:'#0'}).run();
       document.getElementById('tlay').textContent='└ 层次';
-    }else{  // cose force-directed
+    }else{
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
