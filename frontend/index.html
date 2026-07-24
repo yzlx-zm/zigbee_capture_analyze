@@ -538,8 +538,20 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    // 初始布局延后执行 (确保edges已注册)
-    setTimeout(function(){try{runLayout();}catch(e){console.error(e);}},500);
+    // 默认固定列布局 — BFS计算深度
+    var nd={};nd[0]=0;
+    var routeEdges=[];cy.edges().forEach(function(e){if(e.data('edge_type')==='route')routeEdges.push(e);});
+    var chg=true,iter=0;while(chg&&iter++<20){chg=false;routeEdges.forEach(function(e){var s=parseInt(e.data('source')),t=parseInt(e.data('target'));if(nd[s]!=null&&(nd[t]==null||nd[s]+1<nd[t])){nd[t]=nd[s]+1;chg=true;}if(nd[t]!=null&&(nd[s]==null||nd[t]+1<nd[s])){nd[s]=nd[t]+1;chg=true;}});}
+    cy.nodes().forEach(function(n){var a=n.data('aid');if(nd[a]==null)nd[a]=99;});
+    var cols={}; cy.nodes().forEach(function(n){var d=nd[n.data('aid')]||99;if(!cols[d])cols[d]=[];cols[d].push(n);});
+    var posMap={}; var colX=0;
+    Object.keys(cols).sort(function(a,b){return a-b;}).forEach(function(d){
+      var nodes=cols[d];var nCount=nodes.length;var colH=Math.max(300,nCount*48);
+      nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);posMap[n.id()]={x:colX,y:y};});
+      colX+=200;
+    });
+    cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
+    document.getElementById('tlay').textContent='▦ 固定列';
   }
 
   // ═══ 布局引擎 ═══
