@@ -574,7 +574,8 @@ reg('topo',function(){
         var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
         posMap[cols['0'][0].id()]={x:-60,y:c0y}; // 协调器在depth1左侧
       }
-      cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
+      cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
+      cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
