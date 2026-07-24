@@ -517,7 +517,7 @@ reg('topo',function(){
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
       ],
-      layout:{name:'preset', positions:{}},  // 手动算位置后 run
+      layout:{name:'preset'},  // 初始化占位，cy.ready后再runLayout
       wheelSensitivity:0.3,
     });
 
@@ -538,7 +538,8 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    cy.ready(function(){setTimeout(function(){runLayout();},400);});
+    // 初始布局延后执行 (确保edges已注册)
+    setTimeout(function(){try{runLayout();}catch(e){console.error(e);}},500);
   }
 
   // ═══ 布局引擎 ═══
