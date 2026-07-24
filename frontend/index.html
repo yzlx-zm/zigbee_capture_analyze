@@ -544,12 +544,20 @@ reg('topo',function(){
   // ═══ 布局引擎 ═══
   function runLayout(){
     if(!cy) return;
-    // 从路径边BFS计算深度 (离coordinator跳数)
-    var nodeDepth={};nodeDepth[0]=0;
-    var changed=true;while(changed){changed=false;cy.edges('[edge_type=\"route\"]').forEach(function(e){
+    // 从路径边BFS计算深度
+    var nodeDepth={}; nodeDepth[0]=0;
+    var routeEdges=[]; cy.edges().forEach(function(e){if(e.data('edge_type')==='route')routeEdges.push(e);});
+    var changed=true;var iter=0;
+    while(changed&&iter++<20){changed=false;routeEdges.forEach(function(e){
       var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
-      if(nodeDepth[s]!=null&&(nodeDepth[t]==null||nodeDepth[s]+1<nodeDepth[t])){nodeDepth[t]=nodeDepth[s]+1;changed=true;}
-      if(nodeDepth[t]!=null&&(nodeDepth[s]==null||nodeDepth[t]+1<nodeDepth[s])){nodeDepth[s]=nodeDepth[t]+1;changed=true;}
+      if(nodeDepth[s]!=null){
+        var nd=nodeDepth[s]+1;
+        if(nodeDepth[t]==null||nd<nodeDepth[t]){nodeDepth[t]=nd;changed=true;}
+      }
+      if(nodeDepth[t]!=null){
+        var nd=nodeDepth[t]+1;
+        if(nodeDepth[s]==null||nd<nodeDepth[s]){nodeDepth[s]=nd;changed=true;}
+      }
     });}
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
