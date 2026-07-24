@@ -537,8 +537,10 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    // 默认固定列
-    runLayout();
+    // 硬编码网格测试 — 验证positions()是否生效
+    cy.nodes().forEach(function(n,i){n.position({x:(i%15)*120,y:Math.floor(i/15)*100});});
+    cy.fit(undefined,40);
+    document.getElementById('tlay').textContent='▦ 固定列';
   }
 
   // ═══ 布局引擎 ═══
