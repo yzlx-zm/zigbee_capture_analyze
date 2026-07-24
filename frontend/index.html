@@ -296,7 +296,8 @@ reg('topo',function(){
     +'<input id="taddr" placeholder="地址" style="width:90px;font-family:monospace;font-size:11px">'
     +'<button class="btn btn-p" id="tgo" style="font-size:10px">🔍 筛选</button><button class="btn btn-o" id="trst" style="font-size:10px">重置</button>'
     +'<span style="color:#cbd5e1">|</span>'
-    +'<button class="btn btn-o" id="tfit" style="font-size:10px">⊞ 适应窗口</button>'
+    +'<button class="btn btn-o" id="tfit" style="font-size:10px">⊞ 适应</button>'
+    +'<button class="btn btn-o" id="tlay" style="font-size:10px" title="切换布局">📐 层次</button>'
     +'<button class="btn btn-o" id="thl-clear" style="font-size:10px" title="清除高亮">🔆 清除高亮</button>'
     +'<span style="color:#cbd5e1">|</span>'
     +'<span style="font-size:10px">图例:</span>'
@@ -515,7 +516,7 @@ reg('topo',function(){
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
       ],
-      layout:{name:'cose', animate:true, animationDuration:800, nodeRepulsion:function(n){return n.degree()>3?12000:6000}, idealEdgeLength:function(e){return 80}, gravity:20, numIter:2000, initialTemp:100, coolingFactor:0.95},
+      layout:{name:'breadthfirst', directed:true, spacingFactor:1.2, animate:true, animationDuration:600, roots:'[id=\"0\"]'},
       wheelSensitivity:0.3,
     });
 
@@ -762,6 +763,18 @@ reg('topo',function(){
     loadData('',function(d){renderGraph(d);renderRoutePaths(d);clearHighlight();});
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
+  document.getElementById('tlay').addEventListener('click',function(){
+    if(!cy) return;
+    var cur=cy.layout().name();
+    var btn=document.getElementById('tlay');
+    if(cur==='breadthfirst'){
+      cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
+      btn.textContent='📐 层次';btn.title='切换为层次布局';
+    }else{
+      cy.layout({name:'breadthfirst',directed:true,spacingFactor:1.2,animate:true,animationDuration:600,roots:'[id=\"0\"]'}).run();
+      btn.textContent='🔄 力导';btn.title='切换为力导向布局';
+    }
+  });
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
 
   // ═══ 时间滑块 (单滑块 = 窗口中心) ═══
