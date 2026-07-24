@@ -54,16 +54,16 @@ def _build_neighbor_tables(packets: list[dict]) -> dict[int, dict[int, dict]]:
 # ── 子模块: Route Record 路径提取 ──
 
 def _build_route_paths(packets: list[dict]) -> list[dict]:
-    """扫描所有 Route Record 帧, 提取完整的多跳中继路径.
+    """扫描所有 Route Record 帧, 提取完整的多跳中继路径 (保留历史变更).
 
-    返回: [{src, dst, relays: [addr, ...], ts, path_str, hop_count}]
+    返回: [{src, dst, relays, hop_count, path_str, first_ts, last_ts, frame_count, is_current}]
 
-    - relays: 中继节点短地址列表 (按跳序)
-    - path_str: 可视化路径字符串 "0x0000→0x2880→0x44D5"
-    - 相同路径去重 (src+relays+dst 一致则只保留一条)
+    - 同一 (src+relays+dst) 的多次出现聚合为一条路径, 记录时间范围和帧数
+    - 同一 src 的多条不同路径全部保留 (反映路由变更)
+    - is_current: 该 src 的最后一条路径 (最新路由)
     """
-    seen = set()
-    paths = []
+    # 聚合: dedup_key → {first_ts, last_ts, frame_count}
+    path_meta: dict[tuple, dict] = {}
 
     for p in packets:
         if p.get("pkt_type") != "Route Record":
@@ -77,13 +77,25 @@ def _build_route_paths(packets: list[dict]) -> list[dict]:
             continue
 
         relays = rr["relays"]
-        # 构建去重 key
         dedup_key = (src, tuple(relays), dst)
-        if dedup_key in seen:
-            continue
-        seen.add(dedup_key)
+        ts = p.get("ts", 0)
 
-        # 构建完整路径: src → relay1 → relay2 → ... → dst
+        if dedup_key in path_meta:
+            meta = path_meta[dedup_key]
+            meta["first_ts"] = min(meta["first_ts"], ts)
+            meta["last_ts"] = max(meta["last_ts"], ts)
+            meta["frame_count"] += 1
+        else:
+            path_meta[dedup_key] = {
+                "first_ts": ts,
+                "last_ts": ts,
+                "frame_count": 1,
+            }
+
+    # 构建路径列表
+    paths = []
+    for (src, relays_tuple, dst), meta in path_meta.items():
+        relays = list(relays_tuple)
         full_path = [src] + relays + [dst]
         path_str = " → ".join(f"0x{a:04X}" for a in full_path)
 
@@ -92,11 +104,24 @@ def _build_route_paths(packets: list[dict]) -> list[dict]:
             "dst": dst,
             "relays": relays,
             "hop_count": len(relays) + 1,
-            "ts": p.get("ts", 0),
             "path_str": path_str,
+            "first_ts": meta["first_ts"],
+            "last_ts": meta["last_ts"],
+            "frame_count": meta["frame_count"],
         })
 
-    paths.sort(key=lambda x: x["ts"])
+    # 按首次出现时间排序
+    paths.sort(key=lambda x: x["first_ts"])
+
+    # 标记每条 src 的最新路径 (is_current)
+    src_latest: dict[int, float] = {}
+    for p in paths:
+        s = p["src"]
+        if s not in src_latest or p["first_ts"] > src_latest[s]:
+            src_latest[s] = p["first_ts"]
+    for p in paths:
+        p["is_current"] = (p["first_ts"] == src_latest.get(p["src"]))
+
     return paths
 
 

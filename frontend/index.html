@@ -453,8 +453,8 @@ reg('topo',function(){
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
         cyEdges.push({
-          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, edge_type:'route'},
-          classes:'route-path path-c'+ci
+          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, edge_type:'route'},
+          classes:'route-path path-c'+ci+(rp.is_current?'':' historical')
         });
       }
     }
@@ -479,8 +479,10 @@ reg('topo',function(){
         {selector:'node.faded', style:{'opacity':0.12}},
         // 边默认 → 灰色背景
         {selector:'edge', style:{'width':0.8,'line-color':'#d1d5db','target-arrow-color':'#d1d5db','target-arrow-shape':'triangle','arrow-scale':0.5,'curve-style':'bezier','opacity':0.25}},
-        // 路径边: 粗箭头
+        // 路径边: 粗箭头 (当前路由)
         {selector:'edge.route-path', style:{'width':3.5,'target-arrow-shape':'triangle','arrow-scale':1.3,'curve-style':'bezier','opacity':0.9}},
+        // 历史路径: 虚线 + 半透明
+        {selector:'edge.route-path.historical', style:{'line-style':'dashed','opacity':0.4,'width':2}},
         // 路径颜色 class (8色)
         {selector:'edge.path-c0', style:{'line-color':'#e74c3c','target-arrow-color':'#e74c3c'}},
         {selector:'edge.path-c1', style:{'line-color':'#3498db','target-arrow-color':'#3498db'}},
@@ -504,7 +506,7 @@ reg('topo',function(){
 
     cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var status=d.is_current?'● 当前路由':'◌ 历史路由';tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+status+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
@@ -566,18 +568,34 @@ reg('topo',function(){
   function renderRoutePaths(d){
     var panel=document.getElementById('bp-routes');
     var paths=d.route_paths||[];
-    if(paths.length===0){panel.innerHTML='<p style="color:#94a3b8;font-size:11px;text-align:center;padding:12px">未发现 Route Record 路径 (抓包中无源路由帧)</p>';return;}
-    var h='<div style="font-size:11px;color:#64748b;margin-bottom:6px">共 '+paths.length+' 条路径 (从 Route Record 帧提取)</div>';
-    var maxShow=Math.min(paths.length,15);
+    if(paths.length===0){panel.innerHTML='<p style=\"color:#94a3b8;font-size:11px;text-align:center;padding:12px\">未发现 Route Record 路径 (抓包中无源路由帧)</p>';return;}
+    // 统计路由变更
+    var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}
+    var changed=0; for(var k in srcPaths){if(srcPaths[k].length>1)changed++;}
+    var h='<div style=\"font-size:11px;color:#64748b;margin-bottom:4px\">'
+      +'共 '+paths.length+' 条路径 | '+Object.keys(srcPaths).length+' 个设备'
+      +(changed>0?' | <b style=\"color:#d97706\">'+changed+' 个设备发生过路由变更</b>':'')
+      +'</div>'
+      +'<div style=\"font-size:10px;color:#94a3b8;margin-bottom:6px\">●实线=当前路由  ◌虚线=历史路由</div>';
+    var maxShow=Math.min(paths.length,20);
     for(var i=0;i<maxShow;i++){
       var p=paths[i];
-      h+='<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px">'
-        +'<span style="color:#64748b;font-size:10px;min-width:28px">#'+(i+1)+'</span>'
-        +'<span style="color:#7c3aed;font-weight:600">'+p.path_str+'</span>'
-        +'<span style="color:#94a3b8;font-size:10px">('+p.hop_count+'跳)</span>'
+      var isCur=p.is_current;
+      var icon=isCur?'●':'◌';
+      var color=isCur?'#7c3aed':'#94a3b8';
+      var style=isCur?'font-weight:600':'';
+      var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
+      var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
+      var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
+      h+='<div style=\"display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;'+style+'\" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
+        +'<span style=\"color:'+color+';min-width:14px;text-align:center\">'+icon+'</span>'
+        +'<span style=\"color:'+color+'\"'+'>'+p.path_str+'</span>'
+        +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
+        +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+ts0+dur+'</span>'
+        +(isCur?'<span style=\"color:#16a34a;font-size:9px;font-weight:600\">当前</span>':'<span style=\"color:#94a3b8;font-size:9px\">历史</span>')
         +'</div>';
     }
-    if(paths.length>maxShow) h+='<p style="color:#94a3b8;font-size:10px;text-align:center">...还有'+(paths.length-maxShow)+'条路径</p>';
+    if(paths.length>maxShow) h+='<p style=\"color:#94a3b8;font-size:10px;text-align:center\">...还有'+(paths.length-maxShow)+'条路径</p>';
     panel.innerHTML=h;
   }
 
