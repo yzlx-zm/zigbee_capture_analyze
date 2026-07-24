@@ -7,13 +7,16 @@ router = APIRouter()
 
 
 @router.get("/topology/graph")
-async def topology_graph(pan: str = Query(default="")):
+async def topology_graph(pan: str = Query(default=""),
+                         time_start: float | None = Query(default=None),
+                         time_end: float | None = Query(default=None)):
     pkts = get_packets()
     nodes = get_nodes()
     if not pkts:
         return {"nodes": [], "edges": [], "coord": None}
     pan_int = int(pan, 16) if pan else None
-    return topo.build(pkts, nodes, filter_pan=pan_int)
+    return topo.build(pkts, nodes, filter_pan=pan_int,
+                      time_start=time_start, time_end=time_end)
 
 
 @router.get("/nodes")

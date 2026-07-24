@@ -179,7 +179,14 @@ def _detect_asymmetric(neighbor_tables: dict[int, dict[int, dict]]) -> list[dict
 
 # ── 主函数 ──
 
-def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = None) -> dict:
+def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = None,
+         time_start: float | None = None, time_end: float | None = None) -> dict:
+    # 0. 时间过滤
+    if time_start is not None:
+        packets = [p for p in packets if p["ts"] >= time_start]
+    if time_end is not None:
+        packets = [p for p in packets if p["ts"] <= time_end]
+
     # 1. PAN + 协调器
     pan_counts = defaultdict(int)
     for p in packets:
