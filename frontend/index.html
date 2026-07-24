@@ -565,11 +565,16 @@ reg('topo',function(){
     if(curLayout===0){  // fixed column — 按深度从左到右
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')]||99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var posMap={}; var colX=0;
-      Object.keys(cols).sort(function(a,b){return a-b;}).forEach(function(d){
+      Object.keys(cols).sort(function(a,b){return parseInt(a)-parseInt(b);}).forEach(function(d){
         var nodes=cols[d];var nCount=nodes.length;var colH=Math.max(300,nCount*48);
         nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);posMap[n.id()]={x:colX,y:y};});
-        colX+=200;
+        colX+=d==='0'?0:200; // depth0不占列宽, 后续列正常间距
       });
+      // 把depth0(协调器)移到depth1列的左边
+      if(cols['0']&&cols['1']){
+        var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
+        posMap[cols['0'][0].id()]={x:-60,y:c0y}; // 协调器在depth1左侧
+      }
       cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
