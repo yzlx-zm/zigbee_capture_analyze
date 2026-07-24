@@ -338,6 +338,8 @@ reg('topo',function(){
   var tsStart=0, tsEnd=0;     // 抓包时间范围
   var tCenter=null;          // 窗口中心 (null=全部)
   var tSliderTO=null;        // 滑块防抖定时器
+  var curLayout=0;  // 0=concentric, 1=column, 2=breadthfirst, 3=cose
+  var LAYOUT_NAMES=['同心圆','固定列','层次','力导'];
 
   // ═══ 数据加载 ═══
   function loadData(panVal, callback, t0, t1){
@@ -516,7 +518,7 @@ reg('topo',function(){
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
       ],
-      layout:{name:'breadthfirst', directed:true, spacingFactor:1.2, animate:true, animationDuration:600, roots:'[id=\"0\"]'},
+      layout:{name:'preset', positions:{}},  // 手动算位置后 run
       wheelSensitivity:0.3,
     });
 
@@ -537,7 +539,38 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    cy.ready(function(){setTimeout(function(){cy.fit(undefined,30);},1000);});
+    cy.ready(function(){setTimeout(function(){runLayout();},400);});
+  }
+
+  // ═══ 布局引擎 ═══
+  function runLayout(){
+    if(!cy) return;
+    if(curLayout===0){  // concentric — 按深度同心圆
+      var depths={}; cy.nodes().forEach(function(n){var d=n.data('depth');if(d>=0){if(!depths[d])depths[d]=[];depths[d].push(n);}});
+      var maxD=0; for(var d in depths){d=parseInt(d);if(d>maxD)maxD=d;}
+      var radiusStep=Math.min(180,Math.max(80,cy.width()/(maxD+1)/2));
+      Object.keys(depths).forEach(function(d){d=parseInt(d);var nodes=depths[d];var r=(d+1)*radiusStep;var nCount=nodes.length;
+        nodes.forEach(function(n,i){var angle=(2*Math.PI*i)/nCount-Math.PI/2;n.position({x:r*Math.cos(angle),y:r*Math.sin(angle)});});
+      });
+      cy.fit(undefined,40);
+      document.getElementById('tlay').textContent='◎ 同心圆';
+    }else if(curLayout===1){  // column — 深度分列
+      var depths={}; cy.nodes().forEach(function(n){var d=n.data('depth');if(d<0)d=99;if(!depths[d])depths[d]=[];depths[d].push(n);});
+      var colX=0,colW=200;
+      Object.keys(depths).sort(function(a,b){return a-b;}).forEach(function(d){
+        var nodes=depths[d];var nCount=nodes.length;var colH=Math.max(400,nCount*55);
+        nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);n.position({x:colX,y:y});});
+        colX+=colW;
+      });
+      cy.fit(undefined,40);
+      document.getElementById('tlay').textContent='▦ 固定列';
+    }else if(curLayout===2){  // breadthfirst
+      cy.layout({name:'breadthfirst',directed:true,spacingFactor:0.75,animate:true,roots:'#0'}).run();
+      document.getElementById('tlay').textContent='└ 层次';
+    }else{  // cose force-directed
+      cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
+      document.getElementById('tlay').textContent='🔄 力导';
+    }
   }
 
   function highlightNode(aid){
@@ -764,16 +797,8 @@ reg('topo',function(){
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
   document.getElementById('tlay').addEventListener('click',function(){
-    if(!cy) return;
-    var cur=cy.layout().name();
-    var btn=document.getElementById('tlay');
-    if(cur==='breadthfirst'){
-      cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
-      btn.textContent='📐 层次';btn.title='切换为层次布局';
-    }else{
-      cy.layout({name:'breadthfirst',directed:true,spacingFactor:1.2,animate:true,animationDuration:600,roots:'[id=\"0\"]'}).run();
-      btn.textContent='🔄 力导';btn.title='切换为力导向布局';
-    }
+    curLayout=(curLayout+1)%4; runLayout();
+    if(curLayout===2||curLayout===3) setTimeout(function(){cy.fit(undefined,30);},900);
   });
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
 
