@@ -387,7 +387,7 @@ reg('topo',function(){
     var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
     for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→TL</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
-    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){renderGraph(d);renderRoutePaths(d);})})});
+    document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} setTimeout(function(){if(cy)cy.fit(undefined,40);},400);})})});
     document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();location.hash='tl'})});
     // Asymmetric links — 只显示WEAK和ASYMM级别, 点击可高亮图中节点
     var al=d.asymmetric_links||[];
@@ -868,7 +868,7 @@ reg('topo',function(){
     clearTimeout(tSliderTO);
     tSliderTO=setTimeout(function(){
       var pan=S.topoPan||'';
-      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){}},tw.t0,tw.t1);
+      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} setTimeout(function(){if(cy)cy.fit(undefined,40);},400);},tw.t0,tw.t1);
     },300);
   }
 
