@@ -64,7 +64,7 @@ input[type=range]::-webkit-slider-runnable-track{height:6px;background:transpare
 <div id="mc"></div>
 <script>
 var A={get:u=>fetch(u).then(r=>r.json()),post:(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())};
-var S={pkts:0,nodes:0,topo:null,topoPan:null,topoAddr:null};
+var S={pkts:0,nodes:0,topo:null,topoPan:null,topoAddr:null,topoT0:null,topoT1:null};
 var R={};function reg(n,h){R[n]=h}
 function rt(){var h=location.hash.slice(1)||'import';
 document.querySelectorAll('.nt a').forEach(function(t){t.classList.toggle('on',t.dataset.r===h)});
@@ -862,11 +862,12 @@ reg('topo',function(){
 
   function applyTimeFilter(){
     var tw=getTimeWindow();
+    S.topoT0=tw.t0; S.topoT1=tw.t1;  // 存全局状态
     updateTimeLabel();
     clearTimeout(tSliderTO);
     tSliderTO=setTimeout(function(){
       var pan=S.topoPan||'';
-      loadData(pan,function(d){renderGraph(d);renderRoutePaths(d);},tw.t0,tw.t1);
+      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){}},tw.t0,tw.t1);
     },300);
   }
 
@@ -908,7 +909,12 @@ reg('topo',function(){
   document.getElementById('twin-size').addEventListener('change',setWindowFromSize);
 
   // 获取抓包时间范围
-  A.get('/api/import/status').then(function(s){tsStart=s.ts_start;tsEnd=s.ts_end;updateTimeLabel();});
+  A.get('/api/import/status').then(function(s){tsStart=s.ts_start;tsEnd=s.ts_end;
+    // 恢复时间线传来的时间窗口
+    if(S.topoT0!=null&&S.topoT1!=null){tCenter=(S.topoT0+S.topoT1)/2;var ws=S.topoT1-S.topoT0;document.getElementById('twin-size').value=ws;document.getElementById('tsl').disabled=false;document.getElementById('tsl').value=tsToSlider(tCenter);}
+    else if(S.topoT0!=null){tCenter=S.topoT0;document.getElementById('tsl').disabled=false;document.getElementById('tsl').value=tsToSlider(tCenter);}
+    updateTimeLabel();
+  });
 
   // ═══ 初始加载 ═══
   var initPan=S.topoPan||'';
@@ -930,6 +936,9 @@ reg('tl',function(){
   if(!S.tlType) S.tlType='';
   // Override PAN if jumped from topology
   if(S.topoPan){S.tlPan=S.topoPan; S.tlHasSearched=true;}
+  // Sync time from topology slider
+  if(S.topoT0!=null){var d0=new Date(S.topoT0*1000);S.tlTs0H=String(d0.getUTCHours());S.tlTs0M=String(d0.getUTCMinutes());S.tlTs0S=String(d0.getUTCSeconds());S.tlHasSearched=true;}
+  if(S.topoT1!=null){var d1=new Date(S.topoT1*1000);S.tlTs1H=String(d1.getUTCHours());S.tlTs1M=String(d1.getUTCMinutes());S.tlTs1S=String(d1.getUTCSeconds());S.tlHasSearched=true;}
 
   document.getElementById('mc').style.padding='16px';
   // Build H/M/S dropdown helpers
@@ -1001,8 +1010,9 @@ reg('tl',function(){
     S.tlTs1H=document.getElementById('tl-h1').value; S.tlTs1M=document.getElementById('tl-m1').value; S.tlTs1S=document.getElementById('tl-s1').value;
     S.tlType=document.getElementById('tl-type').value;
     S.tlHasSearched=true;
-    // 双向联动: 时间线过滤节点 → 拓扑图高亮
+    // 双向联动: 时间线→拓扑 (节点+时间)
     S.topoAddr=S.tlNode||null;
+    var tf=tlGetTimeFilter(); S.topoT0=tf.ts0; S.topoT1=tf.ts1;
   }
 
   function updPgr(){
