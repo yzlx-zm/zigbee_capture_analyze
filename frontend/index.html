@@ -321,7 +321,7 @@ reg('topo',function(){
     // Cytoscape 图
     +'<div id="cy-graph" style="flex:1;min-height:360px;background:#fafbfc;position:relative">'
     +'<div id="off-frame" style="position:absolute;border:2px dashed #94a3b8;border-radius:6px;background:rgba(148,163,184,0.06);pointer-events:none;display:none;z-index:2"></div>'
-    +'<div id="off-label" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:10px;color:#64748b;padding:6px 10px;border:2px solid #94a3b8;border-radius:4px;background:#fff;pointer-events:none;display:none;font-weight:600;z-index:5">📡 仅LS可见<br>未出现在路径中</div>'
+    +'<div id="off-label" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:10px;color:#92400e;padding:6px 10px;border:2px solid #f59e0b;border-radius:4px;background:#fffbeb;pointer-events:none;display:none;font-weight:600;z-index:5">📡 仅LS可见</div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
     +'<div style="border-top:2px solid #e2e8f0;background:#fff;max-height:220px;overflow-y:auto" id="bottom-panels">'
@@ -571,8 +571,14 @@ reg('topo',function(){
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
     if(curLayout===0){  // fixed column
-      // 全部显示, off-path(depth>=99)80%透明, 其余正常颜色
-      cy.nodes().forEach(function(n){n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;n.style('opacity',d>=99?'0.8':'1');});
+      // off-path节点换琥珀色+连线换可见色
+      cy.nodes().forEach(function(n){n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;
+        if(d>=99){n.style('opacity','0.8');}
+        else if(!n.data('on_path')){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
+          n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
+        }
+        else{n.style('opacity','1');}
+      });
 
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var posMap={};
@@ -600,7 +606,7 @@ reg('topo',function(){
     }else{
       document.getElementById('off-label').style.display='none';
       document.getElementById('off-frame').style.display='none';
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');});
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
