@@ -596,13 +596,10 @@ reg('topo',function(){
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
-      // 左侧色条标识静默节点区域
-      document.getElementById('cy-graph').style.borderLeft='4px solid #f59e0b';
       document.getElementById('off-label').style.display='block';
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
-      document.getElementById('cy-graph').style.borderLeft='';
       document.getElementById('off-label').style.display='none';
       cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
@@ -822,7 +819,7 @@ reg('topo',function(){
   // ═══ 按钮事件 ═══
   document.getElementById('tgo').addEventListener('click',function(){
     var pv=document.getElementById('tpan').value.trim();S.topoPan=pv||null;
-    loadData(pv,function(d){renderGraph(d);renderRoutePaths(d);});
+    loadData(pv,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){}});
   });
   document.getElementById('trst').addEventListener('click',function(){
     document.getElementById('tpan').value='';document.getElementById('taddr').value='';
@@ -830,7 +827,7 @@ reg('topo',function(){
     tCenter=null;
     document.getElementById('tsl').value=500;
     updateTimeLabel();
-    loadData('',function(d){renderGraph(d);renderRoutePaths(d);clearHighlight();});
+    loadData('',function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} try{clearHighlight();}catch(e){}});
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
   document.getElementById('tlay').addEventListener('click',function(){
@@ -916,9 +913,9 @@ reg('topo',function(){
   // ═══ 初始加载 ═══
   var initPan=S.topoPan||'';
   loadData(initPan,function(d){
-    renderGraph(d);
-    renderRoutePaths(d);
-    if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}
+    try{renderGraph(d);}catch(e){console.error(e);}
+    try{renderRoutePaths(d);}catch(e){console.error(e);}
+    try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
   });
 });
 
