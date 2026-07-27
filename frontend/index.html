@@ -314,7 +314,7 @@ reg('topo',function(){
     +'<select id="twin-size" style="font-size:10px;padding:1px 4px">'
     +'<option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option><option value="9999" selected>全部</option></select>'
     +'<button class="btn btn-o" id="tstep-bwd" style="font-size:10px;padding:1px 6px" title="前移">◀</button>'
-    +'<input type="range" id="tsl" min="0" max="1000" value="500" style="flex:1;min-width:140px;height:18px;cursor:pointer" oninput="onTimeSlide()" disabled>'
+    +'<input type="range" id="tsl" min="0" max="1000" value="500" style="flex:1;min-width:140px;height:18px;cursor:pointer" oninput="onTimeSlide()">'
     +'<button class="btn btn-o" id="tstep-fwd" style="font-size:10px;padding:1px 6px" title="后移">▶</button>'
     +'<span id="ttime-label" style="font-size:10px;color:#64748b;white-space:nowrap;min-width:240px">--:--:-- ~ --:--:--</span>'
     +'</div>'
@@ -484,6 +484,10 @@ reg('topo',function(){
       }
     }
 
+    // 保存用户缩放状态
+    var userZoom=null, userPan=null;
+    if(cy){userZoom=cy.zoom();userPan=cy.pan();}
+
     // ── 初始化 Cytoscape ──
     if(cy){cy.destroy();}
     cy=cytoscape({
@@ -558,6 +562,7 @@ reg('topo',function(){
       var rColX=0;for(var d2=1;d2<=pathMax;d2++){var nds3=cols[d2];if(!nds3)continue;nds3=nds3.filter(function(n){return nd[n.data('aid')]!=null&&nd[n.data('aid')]<99;});var pNodes=nds3.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=200;continue;}var ch3=Math.max(300,pNodes.length*48);pNodes.forEach(function(n,i){pos[n.id()]={x:rColX,y:-(ch3/2)+(ch3/(pNodes.length+1))*(i+1)};});rColX+=200;}
       var d99=cols[99]||[];for(var oi=0;oi<d99.length;oi++){pos[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.layout({name:'preset',positions:pos,fit:true,padding:40}).run();
+      if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}  // 恢复用户缩放
       document.getElementById('off-label').style.display='block';
       document.getElementById('tlay').textContent='▦ 固定列';
     })();
@@ -614,6 +619,7 @@ reg('topo',function(){
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
+      if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}
       document.getElementById('off-label').style.display='block';
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
@@ -846,7 +852,7 @@ reg('topo',function(){
     updateTimeLabel();
     loadData('',function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} try{clearHighlight();}catch(e){}});
   });
-  document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
+  document.getElementById('tfit').addEventListener('click',function(){if(cy){cy.zoom(1);cy.pan({x:0,y:0});cy.fit(undefined,30);}});
   document.getElementById('tlay').addEventListener('click',function(){
     curLayout=(curLayout+1)%2; runLayout();
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
