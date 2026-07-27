@@ -537,10 +537,8 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    // 硬编码网格测试 — 验证positions()是否生效
-    cy.nodes().forEach(function(n,i){n.position({x:(i%15)*120,y:Math.floor(i/15)*100});});
-    cy.fit(undefined,40);
-    document.getElementById('tlay').textContent='▦ 固定列';
+    // 默认固定列
+    runLayout();
   }
 
   // ═══ 布局引擎 ═══
@@ -565,21 +563,24 @@ reg('topo',function(){
 
     if(curLayout===0){  // fixed column — 按深度从左到右
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')]||99;if(!cols[d])cols[d]=[];cols[d].push(n);});
+      // 隐藏off-path节点, 只排列路径上的节点
+      cy.nodes().forEach(function(n){if((nodeDepth[n.data('aid')]||99)>=99)n.style('display','none');else n.style('display','element');});
       var posMap={}; var colX=0;
       Object.keys(cols).sort(function(a,b){return parseInt(a)-parseInt(b);}).forEach(function(d){
+        if(parseInt(d)>=99)return; // 跳过off-path列
         var nodes=cols[d];var nCount=nodes.length;var colH=Math.max(300,nCount*48);
         nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);posMap[n.id()]={x:colX,y:y};});
-        colX+=d==='0'?0:200; // depth0不占列宽, 后续列正常间距
+        colX+=d==='0'?0:200;
       });
-      // 把depth0(协调器)移到depth1列的左边
       if(cols['0']&&cols['1']){
         var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
-        posMap[cols['0'][0].id()]={x:-60,y:c0y}; // 协调器在depth1左侧
+        posMap[cols['0'][0].id()]={x:-60,y:c0y};
       }
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
+      cy.nodes().forEach(function(n){n.style('display','element');}); // 力导显示全部
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
