@@ -902,6 +902,11 @@ reg('topo',function(){
     tCenter=Math.max(tsStart+ws/2,Math.min(tsEnd-ws/2,tCenter+shift));
     document.getElementById('tsl').value=tsToSlider(tCenter);
     applyTimeFilter();
+    // 边界指示
+    document.getElementById('tstep-bwd').disabled=(tCenter<=tsStart+ws/2);
+    document.getElementById('tstep-fwd').disabled=(tCenter>=tsEnd-ws/2);
+    document.getElementById('tstep-bwd').style.opacity=document.getElementById('tstep-bwd').disabled?'0.3':'';
+    document.getElementById('tstep-fwd').style.opacity=document.getElementById('tstep-fwd').disabled?'0.3':'';
   }
 
   function setWindowFromSize(){
@@ -925,11 +930,13 @@ reg('topo',function(){
   document.getElementById('tstep-fwd').addEventListener('click',function(){stepWindow(1);});
   document.getElementById('twin-size').addEventListener('change',setWindowFromSize);
 
-  // 获取抓包时间范围
-  A.get('/api/import/status').then(function(s){tsStart=s.ts_start;tsEnd=s.ts_end;
-    // 恢复时间线传来的时间窗口
-    if(S.topoT0!=null&&S.topoT1!=null){tCenter=(S.topoT0+S.topoT1)/2;var ws=S.topoT1-S.topoT0;document.getElementById('twin-size').value=ws;document.getElementById('tsl').disabled=false;document.getElementById('tsl').value=tsToSlider(tCenter);}
-    else if(S.topoT0!=null){tCenter=S.topoT0;document.getElementById('tsl').disabled=false;document.getElementById('tsl').value=tsToSlider(tCenter);}
+  // 获取抓包时间范围 + 时间线过滤约束
+  var tlT0=null, tlT1=null;
+  A.get('/api/import/status').then(function(s){
+    tsStart=s.ts_start;tsEnd=s.ts_end;
+    // 时间线过滤存在时, 以时间线范围为准
+    if(S.topoT0!=null&&S.topoT1!=null){tlT0=S.topoT0;tlT1=S.topoT1;tsStart=S.topoT0;tsEnd=S.topoT1;}
+    else if(S.topoT0!=null){tlT0=S.topoT0;tsStart=S.topoT0;}
     updateTimeLabel();
   });
 
