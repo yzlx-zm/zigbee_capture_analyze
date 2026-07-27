@@ -430,6 +430,7 @@ reg('topo',function(){
     if(!d) return;
     var nbt=d.neighbor_tables||{};
     var ns=d.nodes||[];
+    if(ns.length===0){if(cy){cy.destroy();cy=null;}document.getElementById('tinfo').textContent='该PAN无节点数据';return;}
     var es=d.edges||[];
     var rps=d.route_paths||[];
 
@@ -470,13 +471,15 @@ reg('topo',function(){
       });
     }
 
-    // ── 边: Route Record 路径 → 有向箭头 + class着色 (不去重, 每条路径独立) ──
+    // ── 边: Route Record 路径 (跳过不存在的节点, 避免PAN切换空图) ──
+    var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
       var ci=i % PATH_COLORS.length;
       var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
+        if(!cyNodeIds[sid]||!cyNodeIds[tid]) continue; // 跨PAN节点跳过
         var hasFilter=S.topoT0!=null||S.topoT1!=null;
         var solid=hasFilter?(rp.active!==false):rp.is_current;
         cyEdges.push({
