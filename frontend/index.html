@@ -597,7 +597,7 @@ reg('topo',function(){
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
       document.getElementById('off-label').style.display='block';
-      cy.fit(undefined,40);
+      requestAnimationFrame(function(){cy.fit(undefined,40);});
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
       document.getElementById('off-label').style.display='none';
