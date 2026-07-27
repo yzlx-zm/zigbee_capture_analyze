@@ -541,8 +541,26 @@ reg('topo',function(){
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
 
-    // 默认固定列
-    runLayout();
+    // 默认固定列 — 深度+布局+fit一体化
+    (function(){
+      var nd={};nd[0]=0;var chg=true;
+      while(chg){chg=false;cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;var s=parseInt(e.data('source')),t=parseInt(e.data('target'));if(nd[s]!=null){var nd2=nd[s]+1;if(nd[t]==null||nd2<nd[t]){nd[t]=nd2;chg=true;}}if(nd[t]!=null){var nd2=nd[t]+1;if(nd[s]==null||nd2<nd[s]){nd[s]=nd2;chg=true;}}});}
+      var pathMax=0;for(var k in nd)if(nd[k]>pathMax)pathMax=nd[k];
+      var topoNbt2=S.topo?S.topo.neighbor_tables:null;
+      if(topoNbt2&&topoNbt2[0]){for(var nbStr2 in topoNbt2[0]){var nba2=parseInt(nbStr2);if(nd[nba2]==null)nd[nba2]=1;}}
+      var chg2=true;while(chg2){chg2=false;for(var a2 in topoNbt2||{}){var ai2=parseInt(a2);var ndv=nd[ai2];if(ndv==null||ndv>=99||ndv>=pathMax)continue;var nbs2=topoNbt2[ai2]||{};for(var nb2 in nbs2){var bi2=parseInt(nb2);var ndv2=nd[bi2];if(ndv2==null||ndv2==99){if(ndv+1<=pathMax){nd[bi2]=ndv+1;chg2=true;}}}}}
+      cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;if(d>=99){n.style('opacity','0.8');}else if(!n.data('on_path')){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{n.style('opacity','1');}});
+      var cols={};cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
+      var pos={},offAll=[];cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
+      var offCols=Math.max(3,Math.ceil(offAll.length/12));if(offCols<1)offCols=1;var offPerCol=Math.ceil(offAll.length/offCols),offStartX=-(offCols+2)*200;
+      for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol),ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){pos[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
+      pos['0']={x:-200,y:0};
+      var rColX=0;for(var d2=1;d2<=pathMax;d2++){var nds3=cols[d2];if(!nds3)continue;nds3=nds3.filter(function(n){return nd[n.data('aid')]!=null&&nd[n.data('aid')]<99;});var pNodes=nds3.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=200;continue;}var ch3=Math.max(300,pNodes.length*48);pNodes.forEach(function(n,i){pos[n.id()]={x:rColX,y:-(ch3/2)+(ch3/(pNodes.length+1))*(i+1)};});rColX+=200;}
+      var d99=cols[99]||[];for(var oi=0;oi<d99.length;oi++){pos[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
+      cy.layout({name:'preset',positions:pos,fit:true,padding:40}).run();
+      document.getElementById('off-label').style.display='block';
+      document.getElementById('tlay').textContent='▦ 固定列';
+    })();
   }
 
   // ═══ 布局引擎 ═══
@@ -595,9 +613,8 @@ reg('topo',function(){
       for(var d=1;d<=pathMax;d++){var nds2=cols[d];if(!nds2)continue;nds2=nds2.filter(function(n){return nodeDepth[n.data('aid')]!=null&&nodeDepth[n.data('aid')]<99;});var pNodes=nds2.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=200;continue;}var ch2=Math.max(300,pNodes.length*48);pNodes.forEach(function(n,i){var y=-(ch2/2)+(ch2/(pNodes.length+1))*(i+1);posMap[n.id()]={x:rColX,y:y};});rColX+=200;}
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
-      cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
+      cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
       document.getElementById('off-label').style.display='block';
-      cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
       document.getElementById('off-label').style.display='none';
