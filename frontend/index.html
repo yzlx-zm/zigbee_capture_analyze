@@ -546,47 +546,47 @@ reg('topo',function(){
   // ═══ 布局引擎 ═══
   function runLayout(){
     if(!cy) return;
-    // 从路径边BFS计算深度
-    var nodeDepth={}; nodeDepth[0]=0; gNd=nodeDepth;
-    var routeEdges=[]; cy.edges().forEach(function(e){if(e.data('edge_type')==='route')routeEdges.push(e);});
-    var changed=true;var iter=0;
-    while(changed&&iter++<20){changed=false;routeEdges.forEach(function(e){
+    // BFS深度: Route Record路径
+    var nodeDepth={}; nodeDepth[0]=0;
+    cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;
       var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
-      if(nodeDepth[s]!=null){
-        var nd=nodeDepth[s]+1;
-        if(nodeDepth[t]==null||nd<nodeDepth[t]){nodeDepth[t]=nd;changed=true;}
+      if(nodeDepth[s]!=null){var nd=nodeDepth[s]+1;if(nodeDepth[t]==null||nd<nodeDepth[t])nodeDepth[t]=nd;}
+      if(nodeDepth[t]!=null){var nd=nodeDepth[t]+1;if(nodeDepth[s]==null||nd<nodeDepth[s])nodeDepth[s]=nd;}
+    });
+    var pathMax=0; for(var k in nodeDepth)if(nodeDepth[k]>pathMax)pathMax=nodeDepth[k];
+
+    // LS邻居表补充off-path深度(最多pathMax列, 放左侧)
+    var topoNbt=S.topo?S.topo.neighbor_tables:null;
+    if(topoNbt&&topoNbt[0]){for(var nbStr in topoNbt[0]){var nba=parseInt(nbStr);if(nodeDepth[nba]==null)nodeDepth[nba]=1;}}
+    var chg=true;while(chg){chg=false;
+      for(var a in topoNbt||{}){var ai=parseInt(a);var nd=nodeDepth[ai];if(nd==null||nd>=99||nd>=pathMax)continue;
+        var nbs=topoNbt[ai]||{};
+        for(var nb in nbs){var bi=parseInt(nb);var nd2=nodeDepth[bi];if(nd2==null||nd2==99){if(nd+1<=pathMax){nodeDepth[bi]=nd+1;chg=true;}}}
       }
-      if(nodeDepth[t]!=null){
-        var nd=nodeDepth[t]+1;
-        if(nodeDepth[s]==null||nd<nodeDepth[s]){nodeDepth[s]=nd;changed=true;}
-      }
-    });}
+    }
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
-    if(curLayout===0){  // fixed column — 按深度从左到右
+    if(curLayout===0){  // fixed column
+      // 全部显示, off-path(depth>=99)40%透明
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity',(nodeDepth[n.data('aid')]||99)>=99?'0.4':'1');});
+
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
-      // off-path节点: 默认隐藏, 开关控制
-      var offNodes=[];
-      cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;
-        if(d>=99){offNodes.push(n);n.style('display','none');}
-        else{n.style('display','element');n.style('opacity','1');}
-      });
-      var posMap={}; var colX=0;
-      Object.keys(cols).sort(function(a,b){return parseInt(a)-parseInt(b);}).forEach(function(d){
-        if(parseInt(d)>=99)return; // 跳过off-path列
-        var nodes=cols[d];var nCount=nodes.length;var colH=Math.max(300,nCount*48);
-        nodes.forEach(function(n,i){var y=-(colH/2)+(colH/(nCount+1))*(i+1);posMap[n.id()]={x:colX,y:y};});
-        colX+=d==='0'?0:200;
-      });
-      if(cols['0']&&cols['1']){
-        var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
-        posMap[cols['0'][0].id()]={x:-180,y:c0y};
-      }
+      var posMap={};
+      // left side: off-path columns (depth 1..pathMax), from left to coord
+      var lColX=-(pathMax+1)*200;
+      for(var d=1;d<=pathMax;d++){var nds=cols[d];if(!nds)continue;nds=nds.filter(function(n){return nodeDepth[n.data('aid')]!=null&&nodeDepth[n.data('aid')]<99;});var nCount=nds.length;if(nCount===0){lColX+=200;continue;}var offs=nds.filter(function(n){return!(n.data('on_path'));});if(offs.length===0){lColX+=200;continue;}var ch=Math.max(300,offs.length*48);offs.forEach(function(n,i){var y=-(ch/2)+(ch/(offs.length+1))*(i+1);posMap[n.id()]={x:lColX,y:y};});lColX+=200;}
+      // coordinator
+      posMap['0']={x:-200,y:0};
+      // right side: path columns (depth 1..pathMax), from coord to right
+      var rColX=0;
+      for(var d=1;d<=pathMax;d++){var nds2=cols[d];if(!nds2)continue;nds2=nds2.filter(function(n){return nodeDepth[n.data('aid')]!=null&&nodeDepth[n.data('aid')]<99;});var pNodes=nds2.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=200;continue;}var ch2=Math.max(300,pNodes.length*48);pNodes.forEach(function(n,i){var y=-(ch2/2)+(ch2/(pNodes.length+1))*(i+1);posMap[n.id()]={x:rColX,y:y};});rColX+=200;}
+      // depth>=99 compact grid far right
+      var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','');n.style('width','');n.style('height','');});
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
