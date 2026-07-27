@@ -596,16 +596,14 @@ reg('topo',function(){
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
-      // 静默节点虚线框 + 标签 (等渲染完成)
-      var lbl=document.getElementById('off-label');var frm=document.getElementById('off-frame');
-      lbl.style.display='block';frm.style.display='block';
-      setTimeout(function(){
-        if(offAll.length>0){var x1=Infinity,x2=-Infinity,y1=Infinity,y2=-Infinity;offAll.forEach(function(n){var b=n.boundingBox();if(b.x1<x1)x1=b.x1;if(b.x2>x2)x2=b.x2;if(b.y1<y1)y1=b.y1;if(b.y2>y2)y2=b.y2;});var pad=20;frm.style.left=(x1-pad)+'px';frm.style.top=(y1-pad)+'px';frm.style.width=(x2-x1+pad*2)+'px';frm.style.height=(y2-y1+pad*2)+'px';}
-      },100);
+      // 左侧色条标识静默节点区域
+      document.getElementById('cy-graph').style.borderLeft='4px solid #f59e0b';
+      document.getElementById('off-label').style.display='block';
+      cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
+      document.getElementById('cy-graph').style.borderLeft='';
       document.getElementById('off-label').style.display='none';
-      document.getElementById('off-frame').style.display='none';
       cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
