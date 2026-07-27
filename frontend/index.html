@@ -298,6 +298,7 @@ reg('topo',function(){
     +'<span style="color:#cbd5e1">|</span>'
     +'<button class="btn btn-o" id="tfit" style="font-size:10px">⊞ 适应</button>'
     +'<button class="btn btn-o" id="tlay" style="font-size:10px" title="切换布局">📐 层次</button>'
+    +'<button class="btn btn-o" id="tshow-all" style="font-size:10px" title="显示/隐藏静默节点">👁 静默节点</button>'
     +'<button class="btn btn-o" id="thl-clear" style="font-size:10px" title="清除高亮">🔆 清除高亮</button>'
     +'<span style="color:#cbd5e1">|</span>'
     +'<span style="font-size:10px">图例:</span>'
@@ -339,6 +340,7 @@ reg('topo',function(){
   var tCenter=null;          // 窗口中心 (null=全部)
   var tSliderTO=null;        // 滑块防抖定时器
   var curLayout=0;  // 0=column(default), 1=cose
+  var gNd=null;     // 深度缓存
 
   // ═══ 数据加载 ═══
   function loadData(panVal, callback, t0, t1){
@@ -545,7 +547,7 @@ reg('topo',function(){
   function runLayout(){
     if(!cy) return;
     // 从路径边BFS计算深度
-    var nodeDepth={}; nodeDepth[0]=0;
+    var nodeDepth={}; nodeDepth[0]=0; gNd=nodeDepth;
     var routeEdges=[]; cy.edges().forEach(function(e){if(e.data('edge_type')==='route')routeEdges.push(e);});
     var changed=true;var iter=0;
     while(changed&&iter++<20){changed=false;routeEdges.forEach(function(e){
@@ -563,9 +565,12 @@ reg('topo',function(){
 
     if(curLayout===0){  // fixed column — 按深度从左到右
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
-      // off-path节点收集, 放右侧紧凑网格
+      // off-path节点: 默认隐藏, 开关控制
       var offNodes=[];
-      cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(d>=99){offNodes.push(n);n.style('opacity','0.2');n.style('width','8px');n.style('height','8px');n.style('font-size','0px');}else{n.style('display','element');n.style('opacity','1');}});
+      cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;
+        if(d>=99){offNodes.push(n);n.style('display','none');}
+        else{n.style('display','element');n.style('opacity','1');}
+      });
       var posMap={}; var colX=0;
       Object.keys(cols).sort(function(a,b){return parseInt(a)-parseInt(b);}).forEach(function(d){
         if(parseInt(d)>=99)return; // 跳过off-path列
@@ -577,8 +582,6 @@ reg('topo',function(){
         var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
         posMap[cols['0'][0].id()]={x:-180,y:c0y};
       }
-      // off-path节点: 右侧紧凑网格(20列)
-      if(offNodes.length>0){var ox=colX+120;for(var oi=0;oi<offNodes.length;oi++){posMap[offNodes[oi].id()]={x:ox+(oi%20)*26,y:-200+Math.floor(oi/20)*22};}}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
       cy.fit(undefined,40);
       document.getElementById('tlay').textContent='▦ 固定列';
@@ -812,6 +815,15 @@ reg('topo',function(){
     loadData('',function(d){renderGraph(d);renderRoutePaths(d);clearHighlight();});
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
+  document.getElementById('tshow-all').addEventListener('click',function(){
+    if(!cy)return;var vis=!this.dataset.on;this.dataset.on=vis?'1':'';
+    this.textContent=vis?'👁 隐藏静默':'👁 静默节点';
+    if(!gNd)return;
+    cy.nodes().forEach(function(n){var d=gNd[n.data('aid')];if(d==null)d=99;
+      if(d>=99)n.style('display',vis?'element':'none');
+    });
+    if(vis){cy.fit(undefined,40);}
+  });
   document.getElementById('tlay').addEventListener('click',function(){
     curLayout=(curLayout+1)%2; runLayout();
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
