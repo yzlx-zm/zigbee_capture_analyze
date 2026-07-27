@@ -890,7 +890,7 @@ reg('topo',function(){
     clearTimeout(tSliderTO);
     tSliderTO=setTimeout(function(){
       var pan=S.topoPan||'';
-      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} },tw.t0,tw.t1);
+      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} if(S.topoAddr&&cy){try{var a=parseInt(S.topoAddr,16);highlightNode(a);}catch(e){}} },tw.t0,tw.t1);
     },300);
   }
 
@@ -922,7 +922,7 @@ reg('topo',function(){
       tCenter=null; sl.value=500; sl.disabled=true;
       updateTimeLabel();
       var pan=S.topoPan||'';
-      loadData(pan,function(d){renderGraph(d);renderRoutePaths(d);});
+      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} if(S.topoAddr&&cy){try{var a=parseInt(S.topoAddr,16);highlightNode(a);}catch(e){}} });
       return;
     }
     sl.disabled=false;
