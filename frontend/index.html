@@ -574,7 +574,7 @@ reg('topo',function(){
       });
       if(cols['0']&&cols['1']){
         var c0y=posMap[cols['0'][0].id()]?posMap[cols['0'][0].id()].y:0;
-        posMap[cols['0'][0].id()]={x:-60,y:c0y};
+        posMap[cols['0'][0].id()]={x:-180,y:c0y};
       }
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
       cy.fit(undefined,40);
