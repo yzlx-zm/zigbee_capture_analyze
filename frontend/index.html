@@ -477,9 +477,11 @@ reg('topo',function(){
       var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
+        var hasFilter=S.topoT0!=null||S.topoT1!=null;
+        var solid=hasFilter?(rp.active!==false):rp.is_current;
         cyEdges.push({
-          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, edge_type:'route'},
-          classes:'route-path path-c'+ci+(rp.is_current?'':' historical')
+          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, active:rp.active, edge_type:'route'},
+          classes:'route-path path-c'+ci+(solid?'':' historical')
         });
       }
     }
@@ -534,7 +536,7 @@ reg('topo',function(){
 
     cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=nbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var status=d.is_current?'● 当前路由':'◌ 历史路由';tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+status+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}

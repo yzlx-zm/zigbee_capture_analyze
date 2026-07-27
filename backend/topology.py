@@ -181,7 +181,9 @@ def _detect_asymmetric(neighbor_tables: dict[int, dict[int, dict]]) -> list[dict
 
 def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = None,
          time_start: float | None = None, time_end: float | None = None) -> dict:
-    # 0. 时间过滤
+    # 0. 时间过滤 (保留all_packets给路径构建)
+    has_tf = time_start is not None or time_end is not None
+    all_pkts = packets
     if time_start is not None:
         packets = [p for p in packets if p["ts"] >= time_start]
     if time_end is not None:
@@ -317,7 +319,13 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
 
     # ── 新增: 协议数据驱动的拓扑 ──
     neighbor_tables = _build_neighbor_tables(packets)
-    route_paths = _build_route_paths(packets)
+    route_paths = _build_route_paths(all_pkts)
+    for rp in route_paths:
+        if has_tf:
+            ft, lt = rp.get("first_ts", 0), rp.get("last_ts", 0)
+            rp["active"] = not ((time_start is not None and lt < time_start) or (time_end is not None and ft > time_end))
+        else:
+            rp["active"] = True
     asymmetric_links = _detect_asymmetric(neighbor_tables)
 
     return {
