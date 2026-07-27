@@ -320,7 +320,8 @@ reg('topo',function(){
     +'</div>'
     // Cytoscape 图
     +'<div id="cy-graph" style="flex:1;min-height:360px;background:#fafbfc;position:relative">'
-    +'<div id="off-label" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:10px;color:#94a3b8;padding:8px;border:1px dashed #cbd5e1;border-radius:4px;pointer-events:none;display:none">仅LinkStatus可见<br>未出现在RouteRecord路径中</div>'
+    +'<div id="off-frame" style="position:absolute;border:2px dashed #94a3b8;border-radius:6px;background:rgba(148,163,184,0.06);pointer-events:none;display:none;z-index:2"></div>'
+    +'<div id="off-label" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:10px;color:#64748b;padding:6px 10px;border:2px solid #94a3b8;border-radius:4px;background:#fff;pointer-events:none;display:none;font-weight:600;z-index:5">📡 仅LS可见<br>未出现在路径中</div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
     +'<div style="border-top:2px solid #e2e8f0;background:#fff;max-height:220px;overflow-y:auto" id="bottom-panels">'
@@ -570,14 +571,14 @@ reg('topo',function(){
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
     if(curLayout===0){  // fixed column
-      // 全部显示, off-path(depth>=99)60%透明, 其余正常
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity',(nodeDepth[n.data('aid')]||99)>=99?'0.6':'1');});
+      // 全部显示, off-path(depth>=99)80%透明, 其余正常颜色
+      cy.nodes().forEach(function(n){n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;n.style('opacity',d>=99?'0.8':'1');});
 
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var posMap={};
-      // left: off-path均匀分到pathMax列
+      // left: off-path均分多列(~12节点/列)
       var offAll=[]; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
-      var offCols=Math.min(pathMax,3); if(offCols<1)offCols=1;
+      var offCols=Math.max(3,Math.ceil(offAll.length/12)); if(offCols<1)offCols=1;
       var offPerCol=Math.ceil(offAll.length/offCols);
       var offStartX=-(offCols+2)*200;
       for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol);var ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){posMap[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
@@ -589,14 +590,16 @@ reg('topo',function(){
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.nodes().positions(function(n){return posMap[n.id()]||{x:0,y:0};});
-      // 静默节点虚线框
-      var bb={x1:offX-80,y1:-(offH/2)-30,x2:offX+80,y2:(offH/2)+10};
-      document.getElementById('cy-graph').style.setProperty('--off-bb','inset('+(-bb.y2)+'px '+(-bb.x2)+'px '+(-bb.y1)+'px '+(-bb.x1)+'px)');
-      cy.fit(undefined,40);
-      document.getElementById('off-label').style.display='block';
+      // 静默节点虚线框 + 标签 (等渲染完成)
+      var lbl=document.getElementById('off-label');var frm=document.getElementById('off-frame');
+      lbl.style.display='block';frm.style.display='block';
+      setTimeout(function(){
+        if(offAll.length>0){var x1=Infinity,x2=-Infinity,y1=Infinity,y2=-Infinity;offAll.forEach(function(n){var b=n.boundingBox();if(b.x1<x1)x1=b.x1;if(b.x2>x2)x2=b.x2;if(b.y1<y1)y1=b.y1;if(b.y2>y2)y2=b.y2;});var pad=20;frm.style.left=(x1-pad)+'px';frm.style.top=(y1-pad)+'px';frm.style.width=(x2-x1+pad*2)+'px';frm.style.height=(y2-y1+pad*2)+'px';}
+      },100);
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
       document.getElementById('off-label').style.display='none';
+      document.getElementById('off-frame').style.display='none';
       cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
