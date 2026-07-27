@@ -340,7 +340,6 @@ reg('topo',function(){
   var tCenter=null;          // 窗口中心 (null=全部)
   var tSliderTO=null;        // 滑块防抖定时器
   var curLayout=0;  // 0=column(default), 1=cose
-  var gNd=null;     // 深度缓存
 
   // ═══ 数据加载 ═══
   function loadData(panVal, callback, t0, t1){
@@ -548,11 +547,13 @@ reg('topo',function(){
     if(!cy) return;
     // BFS深度: Route Record路径
     var nodeDepth={}; nodeDepth[0]=0;
-    cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;
-      var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
-      if(nodeDepth[s]!=null){var nd=nodeDepth[s]+1;if(nodeDepth[t]==null||nd<nodeDepth[t])nodeDepth[t]=nd;}
-      if(nodeDepth[t]!=null){var nd=nodeDepth[t]+1;if(nodeDepth[s]==null||nd<nodeDepth[s])nodeDepth[s]=nd;}
-    });
+    var chg=true;while(chg){chg=false;
+      cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;
+        var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
+        if(nodeDepth[s]!=null){var nd=nodeDepth[s]+1;if(nodeDepth[t]==null||nd<nodeDepth[t]){nodeDepth[t]=nd;chg=true;}}
+        if(nodeDepth[t]!=null){var nd=nodeDepth[t]+1;if(nodeDepth[s]==null||nd<nodeDepth[s]){nodeDepth[s]=nd;chg=true;}}
+      });
+    }
     var pathMax=0; for(var k in nodeDepth)if(nodeDepth[k]>pathMax)pathMax=nodeDepth[k];
 
     // LS邻居表补充off-path深度(最多pathMax列, 放左侧)
@@ -815,15 +816,6 @@ reg('topo',function(){
     loadData('',function(d){renderGraph(d);renderRoutePaths(d);clearHighlight();});
   });
   document.getElementById('tfit').addEventListener('click',function(){if(cy) cy.fit(undefined,30);});
-  document.getElementById('tshow-all').addEventListener('click',function(){
-    if(!cy)return;var vis=!this.dataset.on;this.dataset.on=vis?'1':'';
-    this.textContent=vis?'👁 隐藏静默':'👁 静默节点';
-    if(!gNd)return;
-    cy.nodes().forEach(function(n){var d=gNd[n.data('aid')];if(d==null)d=99;
-      if(d>=99)n.style('display',vis?'element':'none');
-    });
-    if(vis){cy.fit(undefined,40);}
-  });
   document.getElementById('tlay').addEventListener('click',function(){
     curLayout=(curLayout+1)%2; runLayout();
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
