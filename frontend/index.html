@@ -570,15 +570,17 @@ reg('topo',function(){
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
     if(curLayout===0){  // fixed column
-      // 全部显示, off-path(depth>=99)40%透明
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity',(nodeDepth[n.data('aid')]||99)>=99?'0.4':'1');});
+      // 全部显示, off-path(depth>=99)60%透明, 其余正常
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity',(nodeDepth[n.data('aid')]||99)>=99?'0.6':'1');});
 
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var posMap={};
-      // left: 所有off-path并为一列(均匀间距)
+      // left: off-path均匀分到pathMax列
       var offAll=[]; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
-      var offX=-(pathMax+2)*200; var offH=Math.max(300,offAll.length*36);
-      offAll.forEach(function(n,i){posMap[n.id()]={x:offX,y:-(offH/2)+(offH/(offAll.length+1))*(i+1)};});
+      var offCols=Math.min(pathMax,3); if(offCols<1)offCols=1;
+      var offPerCol=Math.ceil(offAll.length/offCols);
+      var offStartX=-(offCols+2)*200;
+      for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol);var ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){posMap[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
       // coordinator
       posMap['0']={x:-200,y:0};
       // right: path columns (depth 1..pathMax)
