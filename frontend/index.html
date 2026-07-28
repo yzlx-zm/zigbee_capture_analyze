@@ -601,8 +601,7 @@ reg('topo',function(){
     if(curLayout===0){  // fixed column
       // off-path节点换琥珀色+连线换可见色
       cy.nodes().forEach(function(n){n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;
-        if(d>=99){n.style('opacity','0.8');}
-        else if(!n.data('on_path')){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
+        if(!n.data('on_path')){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
           n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
         }
         else{n.style('opacity','1');}
