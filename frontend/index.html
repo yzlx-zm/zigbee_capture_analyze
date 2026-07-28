@@ -431,6 +431,7 @@ reg('topo',function(){
     var nbt=d.neighbor_tables||{};
     var ns=d.nodes||[];
     if(ns.length===0){if(cy){cy.destroy();cy=null;}document.getElementById('tinfo').textContent='该PAN无节点数据';return;}
+    if(ns.length<10){curLayout=1;} // 小PAN默认力导, 固定列无意义
     var es=d.edges||[];
     var rps=d.route_paths||[];
 
