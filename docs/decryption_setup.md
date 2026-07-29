@@ -189,7 +189,25 @@ tshark -r <pcap文件> -Y "zbee_aps" -T fields -e zbee_aps.cluster | sort | uniq
 
 ## 常见问题排查
 
-### Q: tshark 不返回 APS 数据
+### Q: tshark 不返回 APS 数据（或 NWK 层完全没有）
+
+**第 0 步（最易被忽略）：检查 FCS。** 某些抓包工具导出的 pcap，每帧 FCS 字段是占位值 `0xffff`（Bad FCS）。tshark 默认偏好 `wpan.802154_fcs_ok: TRUE`——**FCS 校验不过就跳过 NWK 解析**，导致所有帧只显示 `wpan:data`，连 `zbee_nwk` 层都不出现，此时再多 key 也没用。
+
+诊断：
+```bash
+# 看帧的协议栈里有没有 zbee_nwk
+tshark -r <pcap> -T fields -e frame.number -e frame.protocols | head
+# 若全是 "wpan:data" 而无 "wpan:zbee_nwk:..." → FCS 问题
+# 确认: -V 看单帧, "Bad FCS" + "Security Enabled: False" 但实际是加密帧
+tshark -r <pcap> -V -c 1 | grep -i "fcs\|protocols"
+```
+
+修复：给所有 tshark 调用加 `-o "wpan.802154_fcs_ok:FALSE"`。**本项目有两个地方调用 tshark，都要加**：
+- `backend/tshark.py`（主解析 + relay 提取，2 处）
+- `backend/verify.py`（基准校验，9 处）——漏改这里会导致 verify 全红、拓扑/时间线被锁
+
+> ⚠️ Wireshark **GUI** 默认不卡 FCS，所以"GUI 能显示但 tshark 不能"是 FCS 问题的典型症状。
+
 1. 检查 `zigbee_pc_keys` 格式 — **必须**是 `"hex","Normal","label"`（引号 hex，无分隔符）
 2. 确认文件在 `%APPDATA%/Wireshark/` 目录下
 3. 用 Wireshark GUI 打开同一个 pcap 验证 Key 是否有效

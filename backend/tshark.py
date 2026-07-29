@@ -90,7 +90,10 @@ def parse_packets(
 def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
     """调用 tshark -T json 解析单个 pcap, 并补充 -T fields 获取完整 relay list"""
     # ── 主解析: JSON ──
-    cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "json"]
+    # -o wpan.802154_fcs_ok:FALSE: 某些抓包工具导出的 pcap FCS=0xffff, tshark 默认
+    #   只在 FCS 有效时解析 NWK 层 (wpan.802154_fcs_ok=TRUE), 导致全部帧被跳过。
+    cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "json",
+           "-o", "wpan.802154_fcs_ok:FALSE"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
     if result.returncode != 0 and not result.stdout.strip():
@@ -105,7 +108,8 @@ def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
     relay_map: dict[int, list[int]] = {}  # frame_number → [addr, ...]
     try:
         relay_cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk.cmd.id == 0x05",
-                     "-T", "fields", "-e", "frame.number", "-e", "zbee_nwk.cmd.relay_device"]
+                     "-T", "fields", "-e", "frame.number", "-e", "zbee_nwk.cmd.relay_device",
+                     "-o", "wpan.802154_fcs_ok:FALSE"]
         relay_result = subprocess.run(relay_cmd, capture_output=True, text=True, timeout=60)
         if relay_result.returncode == 0 and relay_result.stdout.strip():
             for line in relay_result.stdout.strip().split("\n"):

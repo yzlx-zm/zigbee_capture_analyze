@@ -9,6 +9,10 @@ from typing import Optional
 
 from . import tshark as _tshark
 
+# FCS=0xffff 的 pcap 需关闭 FCS 校验才解析 NWK 层 (与 tshark.py 保持一致)
+# 否则 verify 基准查询会返回 0 帧, 导致所有比对失败
+_FCS_OPT = ["-o", "wpan.802154_fcs_ok:FALSE"]
+
 
 def run_verification(
     pcap_paths: list[str],
@@ -229,7 +233,7 @@ def _check_sample_frames(pcap_paths: list[str], packets: list[dict], tshark: str
 
 def _tshark_nwk_count(pcap_path: str, tshark_path: str) -> int:
     """tshark NWK 帧数 (与我们导入filter一致)"""
-    cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "fields", "-e", "frame.number"]
+    cmd = [tshark_path, "-r", pcap_path, *_FCS_OPT, "-Y", "zbee_nwk", "-T", "fields", "-e", "frame.number"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
     return len(lines)
@@ -237,7 +241,7 @@ def _tshark_nwk_count(pcap_path: str, tshark_path: str) -> int:
 
 def _tshark_time_range(pcap_path: str, tshark_path: str) -> tuple[float, float]:
     """tshark 首尾 NWK 帧时间戳"""
-    cmd = [tshark_path, "-r", pcap_path, "-Y", "zbee_nwk", "-T", "fields",
+    cmd = [tshark_path, "-r", pcap_path, *_FCS_OPT, "-Y", "zbee_nwk", "-T", "fields",
            "-e", "frame.time_epoch"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
@@ -257,7 +261,7 @@ def _tshark_all_frames(pcap_paths: list[str], tshark_path: str) -> list[dict]:
     """获取 tshark JSON 全量输出"""
     all_frames = []
     for p in pcap_paths:
-        cmd = [tshark_path, "-r", p, "-Y", "zbee_nwk", "-T", "json"]
+        cmd = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_nwk", "-T", "json"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.stdout.strip():
             all_frames.extend(json.loads(result.stdout))
@@ -271,7 +275,7 @@ def _tshark_type_counts(pcap_paths: list[str], tshark_path: str) -> dict[str, in
     counts: dict[str, int] = {}
     for p in pcap_paths:
         # 统计 NWK frame type
-        cmd = [tshark_path, "-r", p, "-Y", "zbee_nwk", "-T", "fields",
+        cmd = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_nwk", "-T", "fields",
                "-e", "zbee_nwk.fcf_tree.zbee_nwk.frame_type"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         for line in result.stdout.strip().split("\n"):
@@ -282,7 +286,7 @@ def _tshark_type_counts(pcap_paths: list[str], tshark_path: str) -> dict[str, in
                 counts["NWK Cmd"] = counts.get("NWK Cmd", 0) + 1
 
         # 获取 NWK 命令名称
-        cmd2 = [tshark_path, "-r", p, "-Y", "zbee_nwk", "-T", "fields",
+        cmd2 = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_nwk", "-T", "fields",
                 "-e", "zbee_nwk.cmd.id"]
         result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=30)
         # Not used directly — frame_type gives us Data vs Cmd split
@@ -294,7 +298,7 @@ def _tshark_decrypted_count(pcap_paths: list[str], tshark_path: str) -> int:
     """tshark 解密帧数 (有 APS cluster 或 zdp_cluster 的帧)"""
     count = 0
     for p in pcap_paths:
-        cmd = [tshark_path, "-r", p, "-Y", "zbee_aps.cluster or zbee_aps.zdp_cluster",
+        cmd = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_aps.cluster or zbee_aps.zdp_cluster",
                "-T", "fields", "-e", "frame.number"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         count += len([l for l in result.stdout.strip().split("\n") if l.strip()])
@@ -306,7 +310,7 @@ def _tshark_cluster_counts(pcap_paths: list[str], tshark_path: str) -> dict[str,
     counts: dict[str, int] = {}
     for p in pcap_paths:
         # ZCL clusters
-        cmd = [tshark_path, "-r", p, "-Y", "zbee_aps.cluster", "-T", "fields",
+        cmd = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_aps.cluster", "-T", "fields",
                "-e", "zbee_aps.cluster"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         for line in result.stdout.strip().split("\n"):
@@ -318,7 +322,7 @@ def _tshark_cluster_counts(pcap_paths: list[str], tshark_path: str) -> dict[str,
                 except ValueError:
                     pass
         # ZDP clusters
-        cmd2 = [tshark_path, "-r", p, "-Y", "zbee_aps.zdp_cluster", "-T", "fields",
+        cmd2 = [tshark_path, "-r", p, *_FCS_OPT, "-Y", "zbee_aps.zdp_cluster", "-T", "fields",
                 "-e", "zbee_aps.zdp_cluster"]
         result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=30)
         for line in result2.stdout.strip().split("\n"):
