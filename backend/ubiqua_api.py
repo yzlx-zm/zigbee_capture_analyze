@@ -35,6 +35,13 @@ class UbiquaPacket:
 
 
 @dataclass
+class UbiquaKey:
+    """/keys XML 解析后的单个密钥"""
+    key_type: str           # "NetworkKey" / "LinkKey" / ...
+    hex_colon: str          # 冒号分隔 hex, 如 "31:62:D3:3B:..."
+
+
+@dataclass
 class UbiquaStatus:
     connected: bool = False
     host: str = "localhost"
@@ -298,15 +305,64 @@ class UbiquaClient:
 
     # ── 密钥 ──
 
-    def list_keys(self) -> Optional[list[dict]]:
-        """GET /keys → 密钥列表 (含真实 key 值, 注意安全)"""
+    @staticmethod
+    def _xml_parse_keys(xml_str: str) -> list[UbiquaKey]:
+        """从 /keys XML 提取密钥列表.
+
+        Ubiqua /keys 返回 XML:
+            <Keys xmlns="urn:ubilogix:services">
+              <Key Type="NetworkKey">31:62:D3:3B:...</Key>
+              <Key Type="LinkKey">...</Key>
+            </Keys>
+        """
+        result: list[UbiquaKey] = []
+        try:
+            root = ET.fromstring(xml_str)
+            for key_el in root.findall(f"{{{NS}}}Key"):
+                key_type = key_el.get("Type", "")
+                raw = (key_el.text or "").strip()
+                result.append(UbiquaKey(key_type=key_type, hex_colon=raw))
+        except ET.ParseError:
+            pass
+        return result
+
+    def get_network_keys(self) -> Optional[list[str]]:
+        """GET /keys → 规范化的 Network Key hex 列表 (32 位大写, 仅 NetworkKey).
+
+        冒号分隔的 hex 转为 32 位大写无分隔符, 供 key_store 写入 zigbee_pc_keys。
+        LinkKey 被过滤 (NWK 解密只需 NetworkKey)。
+        """
         code, body = self._get("/keys")
-        if code == 200:
-            try:
-                return json.loads(body)
-            except json.JSONDecodeError:
-                pass
-        return None
+        if code != 200:
+            return None
+        keys = self._xml_parse_keys(body)
+        if not keys:
+            return None
+        normalized: list[str] = []
+        for k in keys:
+            if k.key_type != "NetworkKey":
+                continue
+            clean = k.hex_colon.replace(":", "").replace(" ", "").upper()
+            if len(clean) == 32:
+                normalized.append(clean)
+        return normalized
+
+    def list_keys(self) -> Optional[list[dict]]:
+        """GET /keys → 密钥列表 (含真实 key 值, 注意安全).
+
+        Ubiqua 返回 XML; 解析后返回 [{type, hex, hex_normalized}]。
+        """
+        code, body = self._get("/keys")
+        if code != 200:
+            return None
+        keys = self._xml_parse_keys(body)
+        if not keys:
+            return None
+        return [{
+            "type": k.key_type,
+            "hex": k.hex_colon,
+            "hex_normalized": k.hex_colon.replace(":", "").replace(" ", "").upper(),
+        } for k in keys]
 
     def add_key(self, key_hex: str, key_type: str = "NetworkKey") -> bool:
         """POST /keys → 新增密钥"""

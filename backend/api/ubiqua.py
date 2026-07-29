@@ -98,12 +98,13 @@ async def ubiqua_export_csv(filepath: str = Form(...)):
 
 @router.get("/keys")
 async def ubiqua_keys():
-    """Ubiqua 密钥列表"""
+    """Ubiqua 密钥列表 (XML 解析后返回)"""
     client = ua.get_client()
     keys = client.list_keys()
     if keys is None:
-        return JSONResponse({"error": "无法读取密钥"}, 503)
-    return {"keys": keys, "count": len(keys)}
+        return JSONResponse({"error": "无法读取密钥 (Ubiqua 不可达)"}, 503)
+    nwk = [k for k in keys if k.get("type") == "NetworkKey"]
+    return {"keys": keys, "count": len(keys), "network_keys": len(nwk)}
 
 
 @router.get("/filters")

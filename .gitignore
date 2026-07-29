@@ -10,3 +10,8 @@ frontend/lib/*.min.js
 .pytest_cache/
 *.log
 tmp/
+
+# 第三方参考资料 (下载, 不入库)
+analyze_another/
+*.docx
+*.rar

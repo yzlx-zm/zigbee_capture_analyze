@@ -16,6 +16,28 @@ _nodes: dict[int, dict] = {}
 _file_type: str = ""
 _verify_report: dict | None = None  # 校验报告
 _pcap_paths: list[str] = []         # 最近一次导入的 pcap 路径
+_last_ubiqua_sync: dict | None = None  # 最近一次 Ubiqua key 同步结果
+
+
+def _sync_ubiqua_keys() -> dict | None:
+    """导入前从 Ubiqua 同步 Network Key (localhost:19501).
+
+    Ubiqua 不可达 / 无新 key → 返回 None, 静默跳过, 不阻断导入。
+    成功 → 返回 {"synced": 新增数, "total_keys": 去重总数}。
+    """
+    try:
+        from .. import ubiqua_api
+        from .. import key_store
+        client = ubiqua_api.get_client()  # localhost:19501
+        if not client.ping():
+            return None
+        keys = client.get_network_keys()
+        if not keys:
+            return None
+        result = key_store.merge_from_ubiqua(keys)
+        return {"synced": result["added"], "total_keys": result["total"]}
+    except Exception:
+        return None
 
 
 def get_packets():
@@ -114,8 +136,9 @@ async def import_local(path: str = Form(...)):
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type, _verify_report, _pcap_paths
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync
     _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
+    _last_ubiqua_sync = None
     return {"ok": True}
 
 
@@ -141,6 +164,10 @@ async def import_pcap(files: list[UploadFile] = File(...)):
 
         if not tmp_paths:
             return JSONResponse({"error": "未选择文件"}, 400)
+
+        # 导入前透明同步 Ubiqua Network Key (不可达则静默跳过)
+        global _last_ubiqua_sync
+        _last_ubiqua_sync = _sync_ubiqua_keys()
 
         _packets = _tshark.parse_packets(tmp_paths)
         _nodes = _extract_nodes_from_packets(_packets)
@@ -178,6 +205,10 @@ async def import_local_pcap(paths: str = Form(...)):
         return JSONResponse({"error": f"路径不存在: {', '.join(missing)}"}, 400)
 
     try:
+        # 导入前透明同步 Ubiqua Network Key (不可达则静默跳过)
+        global _last_ubiqua_sync
+        _last_ubiqua_sync = _sync_ubiqua_keys()
+
         _packets = _tshark.parse_packets(path_list)
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
@@ -266,6 +297,7 @@ def _import_result() -> dict:
         "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
         "decrypt_stats": decrypt_stats,
         "verify": _verify_report,  # 校验报告
+        "ubiqua_sync": _last_ubiqua_sync,  # Ubiqua key 同步结果 (None=不可达)
     }
 
 

@@ -96,6 +96,35 @@ def add_key(hex_raw: str, label: str) -> dict:
     return {"hex": clean, "label": label}
 
 
+def merge_from_ubiqua(ubiqua_keys: list[str]) -> dict:
+    """合并 Ubiqua Network Key 列表到 zigbee_pc_keys (按 hex 去重).
+
+    - 保留现有所有 key (预设 + 已有自定义), 追加新 key
+    - 按 hex 去重 (大小写不敏感), 避免重复条目
+    - 标签格式: ubiqua_<hex前6位>
+
+    返回: {"added": 新增数, "total": 合并后去重总数}
+    """
+    existing = read_all_keys()
+    existing_hex = {k["hex"].upper() for k in existing}
+    # 保留现有自定义 key (write_all_keys 会自动补预设)
+    custom = [k for k in existing if not k.get("is_preset")]
+
+    added = 0
+    for hex_val in ubiqua_keys:
+        hex_up = hex_val.upper()
+        if hex_up in existing_hex:
+            continue
+        custom.append({"hex": hex_up, "label": f"ubiqua_{hex_up[:6]}"})
+        existing_hex.add(hex_up)
+        added += 1
+
+    if added:
+        write_all_keys(custom)
+
+    return {"added": added, "total": len(existing_hex)}
+
+
 def remove_key(label: str) -> bool:
     """删除一个自定义 Key (预设 Key 不可删除)"""
     if label in PRESET_KEYS:
