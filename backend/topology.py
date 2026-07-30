@@ -197,6 +197,10 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
     main_pan = max(pan_counts, key=pan_counts.get) if pan_counts else None
     coord = 0
 
+    # 未指定 PAN 时默认显示主网络 (多PAN混合无拓扑意义,会导致跨网络节点全部成offpath)
+    if filter_pan is None and main_pan is not None:
+        filter_pan = main_pan
+
     # 2. 通信矩阵 (只取当前PAN的包)
     traffic = defaultdict(int)
     for p in packets:
@@ -318,7 +322,11 @@ def build(packets: list[dict], nodes: dict[int, dict], filter_pan: int | None = 
     pan_list = [{"pan": p, "count": c, "label": f"0x{p:04X}"} for p, c in sorted(pan_counts.items(), key=lambda x: -x[1])[:50]]
 
     # ── 新增: 协议数据驱动的拓扑 ──
-    neighbor_tables = _build_neighbor_tables(packets)
+    # neighbor_tables 按当前 PAN 过滤, 避免多PAN捕获中混入其他网络的Link Status
+    nt_packets = packets  # packets 已时间过滤
+    if filter_pan is not None:
+        nt_packets = [p for p in nt_packets if (p.get("pan_src") or p.get("pan_dst")) == filter_pan]
+    neighbor_tables = _build_neighbor_tables(nt_packets)
     route_paths = _build_route_paths(all_pkts)
     for rp in route_paths:
         if has_tf:

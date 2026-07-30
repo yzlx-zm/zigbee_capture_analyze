@@ -448,10 +448,11 @@ reg('topo',function(){
 
     // ── 节点 ──
     var cyNodes=[];
+    var hasPaths=rps.length>0;  // 无 Route Record 路径时全部按"在路径上"渲染, 否则 offpath 会让整图隐形
     for(var i=0;i<ns.length;i++){
       var n=ns[i]; var aid=n.aid;
       var dt=n.device_type||'unknown';
-      var onPath=!!pathNodes[aid];
+      var onPath=(!hasPaths)||!!pathNodes[aid]||aid===0;  // 无路径全可见; 协调器永远可见
       cyNodes.push({
         data:{id:''+aid, label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0'), aid:aid, device_type:dt, seen:n.seen, on_path:onPath},
         classes:(onPath?dt+' onpath':'offpath')
@@ -630,7 +631,7 @@ reg('topo',function(){
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
       document.getElementById('off-label').style.display='none';
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');});
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');n.style('width','');n.style('height','');n.style('text-opacity','');n.style('font-size','');n.removeClass('offpath');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
