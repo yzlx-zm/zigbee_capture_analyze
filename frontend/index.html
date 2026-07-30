@@ -120,6 +120,9 @@ reg('import',function(){
     +'<button class="btn btn-p" id="gotopo" style="margin-top:8px">查看拓扑 →</button> '
     +'<button class="btn btn-r" id="clr" style="margin-top:8px">清除数据</button></div>';
   document.getElementById('mc').innerHTML=h;
+  // 持久化: 切页回来恢复上次导入结果
+  var saved=sessionStorage.getItem('lastImportResult');
+  if(saved){try{var sd=JSON.parse(saved);sr(sd,sessionStorage.getItem('lastImportName')||'');}catch(e){}}
 
   // Tab switch
   document.querySelectorAll('.imp-tab').forEach(function(btn){
@@ -246,8 +249,6 @@ reg('import',function(){
     }
   });
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
-  // 持久化: 从其他页面切回时恢复上次导入结果 (sessionStorage 不怕hash切换)
-  try{var saved=sessionStorage.getItem('lastImportResult');if(saved){sr(JSON.parse(saved),sessionStorage.getItem('lastImportName')||'');}}catch(e){}
 });
 
 function doI(file){setProg('上传解析中...');
