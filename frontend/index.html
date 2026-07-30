@@ -118,6 +118,7 @@ reg('import',function(){
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
   // 持久化: 切页回来恢复上次导入结果
   var imp=window.__IMP;
+  if(!imp||!imp.result){try{var w=JSON.parse(window.name||'{}');if(w.r)imp={result:w.r,name:w.n};}catch(e){}}
   if(imp&&imp.result){
     var rd=imp.result; var rn=imp.name||'';
     h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
@@ -277,6 +278,7 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
+  try{window.name=JSON.stringify({r:d,n:fname||''});}catch(e){}
   window.__IMP={result:d,name:fname||''};
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
