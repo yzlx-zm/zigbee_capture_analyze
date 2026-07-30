@@ -233,8 +233,6 @@ reg('import',function(){
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
-  // Check if already loaded
-  A.get('/api/import/status').then(function(s){if(s.total){sr({packets:s.total,nodes:s.nodes,by_type:{},file_type:s.type,verify_ok:s.verify_ok})}});
   // Restore full verify report
   A.get('/api/import/verify').then(function(v){S.verifyPassed=v.passed;
     if(v.passed!==null&&document.getElementById('sout')){
