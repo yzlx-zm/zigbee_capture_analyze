@@ -226,6 +226,70 @@ async def import_local_pcap(paths: str = Form(...)):
         return JSONResponse({"error": str(e)}, 500)
 
 
+# ── cubx 导入 (scapy 自解析) ──
+
+@router.post("/import/cubx")
+async def import_cubx(files: list[UploadFile] = File(...)):
+    """上传 .cubx 文件, scapy 自解析 (key 内嵌 + LQI/RSSI)"""
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync
+    from .. import cubx_reader as _cubx
+    import tempfile
+
+    tmp_paths = []
+    try:
+        for f in files:
+            tmp = tempfile.NamedTemporaryFile(suffix=".cubx", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            with open(tmp_path, "wb") as out:
+                while data := await f.read(1024 * 1024):
+                    out.write(data)
+            tmp_paths.append(tmp_path)
+
+        if not tmp_paths:
+            return JSONResponse({"error": "未选择文件"}, 400)
+
+        all_pkts = []
+        for tp in tmp_paths:
+            pkts, added, total = _cubx.parse_cubx(tp)
+            all_pkts.extend(pkts)
+            _last_ubiqua_sync = {"synced": added, "total_keys": total}
+
+        _packets = all_pkts
+        _nodes = _extract_nodes_from_packets(_packets)
+        _file_type = "cubx"
+        _pcap_paths = tmp_paths
+
+        return _import_result()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+    finally:
+        for p in tmp_paths:
+            try: os.unlink(p)
+            except OSError: pass
+
+
+@router.post("/import/local-cubx")
+async def import_local_cubx(path: str = Form(...)):
+    """本地 .cubx 路径导入"""
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync
+    from .. import cubx_reader as _cubx
+
+    if not os.path.exists(path):
+        return JSONResponse({"error": f"路径不存在: {path}"}, 400)
+
+    try:
+        pkts, added, total = _cubx.parse_cubx(path)
+        _last_ubiqua_sync = {"synced": added, "total_keys": total}
+        _packets = pkts
+        _nodes = _extract_nodes_from_packets(_packets)
+        _file_type = "cubx"
+        _pcap_paths = [path]
+        return _import_result()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+
+
 def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
     """从 pcap 包列表中提取节点 (兼容 csv_reader.extract_nodes 格式)"""
     nodes: dict[int, dict] = {}

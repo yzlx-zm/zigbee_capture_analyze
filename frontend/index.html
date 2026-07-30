@@ -108,7 +108,7 @@ reg('import',function(){
     +'</div>'
     +'<div id="imp-pcap" style="display:'+(S.impTab==='pcap'?'block':'none')+'">'
       +'<p style="font-size:11px;color:#94a3b8;margin-bottom:8px">Ubiqua File → Export → pcap</p>'
-      +'<div class="file-drop" id="pdrop"><p>拖拽 .pcap 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng" multiple style="display:none"></div>'
+      +'<div class="file-drop" id="pdrop"><p>拖拽 .pcap / .cubx 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng,.cubx" multiple style="display:none"></div>'
       +'<button class="btn btn-o" id="plpath" style="font-size:11px">或输入本地路径 (逗号分隔多个)...</button>'
       +'<div id="pkey-panel" class="card" style="margin-top:8px;background:#f8fafc">'
         +'<h4 style="font-size:12px;cursor:pointer" id="pkey-toggle">🔑 密钥管理 ▸</h4>'
@@ -251,10 +251,11 @@ function doI(file){setProg('上传解析中...');
   fetch('/api/import/files',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d)})
     .catch(function(e){alert('错误: '+e.message);setProg('')});}
 
-function doPI(files){setProg('上传解析中 (tshark 可能需要 5-10 秒)...');
-  var fd=new FormData();
-  for(var i=0;i<files.length;i++)fd.append('files',files[i]);
-  fetch('/api/import/pcap',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d);if(window._loadKeyPanel)window._loadKeyPanel();})
+function doPI(files){setProg('上传解析中...');
+  var fd=new FormData(); var cubx=0;
+  for(var i=0;i<files.length;i++){fd.append('files',files[i]);if(files[i].name&&files[i].name.toLowerCase().endsWith('.cubx'))cubx=1;}
+  var url=cubx?'/api/import/cubx':'/api/import/pcap';
+  fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d);if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();})
     .catch(function(e){alert('错误: '+e.message);setProg('')});}
 
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
