@@ -226,7 +226,8 @@ reg('import',function(){
     }
     btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;S.lastImportResult=null;S.lastImportName='';sb('就绪');document.getElementById('sout').style.display='none';
+      S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');document.getElementById('sout').style.display='none';
+      try{sessionStorage.removeItem('lastImportResult');sessionStorage.removeItem('lastImportName');}catch(e){}
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
@@ -245,8 +246,8 @@ reg('import',function(){
     }
   });
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
-  // 持久化: 从其他页面切回时恢复上次导入结果
-  if(S.lastImportResult){sr(S.lastImportResult,S.lastImportName);}
+  // 持久化: 从其他页面切回时恢复上次导入结果 (sessionStorage 不怕hash切换)
+  try{var saved=sessionStorage.getItem('lastImportResult');if(saved){sr(JSON.parse(saved),sessionStorage.getItem('lastImportName')||'');}}catch(e){}
 });
 
 function doI(file){setProg('上传解析中...');
@@ -265,7 +266,7 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
-  S.lastImportResult=d;S.lastImportName=fname||'';
+  try{sessionStorage.setItem('lastImportResult',JSON.stringify(d));sessionStorage.setItem('lastImportName',fname||'');}catch(e){}
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
