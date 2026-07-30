@@ -17,6 +17,7 @@ _file_type: str = ""
 _verify_report: dict | None = None  # 校验报告
 _pcap_paths: list[str] = []         # 最近一次导入的 pcap 路径
 _last_ubiqua_sync: dict | None = None  # 最近一次 Ubiqua key 同步结果
+_last_import_summary: dict | None = None  # 最近一次导入摘要 (含文件名, 前端切页恢复用)
 
 
 def _sync_ubiqua_keys() -> dict | None:
@@ -136,9 +137,9 @@ async def import_local(path: str = Form(...)):
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary
     _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
-    _last_ubiqua_sync = None
+    _last_ubiqua_sync = None; _last_import_summary = None
     return {"ok": True}
 
 
@@ -181,7 +182,7 @@ async def import_pcap(files: list[UploadFile] = File(...)):
         except Exception:
             _verify_report = {"passed": False, "error": "校验执行异常"}
 
-        return _import_result()
+        return _import_result(", ".join(getattr(f, "filename", "") for f in files if getattr(f, "filename", "")) if 'files' in dir() else "")
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, 500)
     finally:
@@ -221,7 +222,7 @@ async def import_local_pcap(paths: str = Form(...)):
         except Exception:
             _verify_report = {"passed": False, "error": "校验执行异常"}
 
-        return _import_result()
+        return _import_result(", ".join(getattr(f, "filename", "") for f in files if getattr(f, "filename", "")) if 'files' in dir() else "")
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, 500)
 
@@ -258,14 +259,15 @@ async def import_cubx(files: list[UploadFile] = File(...)):
         _packets = all_pkts
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "cubx"
-        _pcap_paths = tmp_paths
+        _pcap_paths = [getattr(f, "filename", "") for f in files] or tmp_paths
 
-        return _import_result()
+        return _import_result(", ".join(getattr(f, "filename", "") for f in files if getattr(f, "filename", "")))
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
     finally:
         for p in tmp_paths:
             try: os.unlink(p)
+            except OSError: pass
             except OSError: pass
 
 
@@ -344,25 +346,42 @@ def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
     return nodes
 
 
-def _import_result() -> dict:
-    """构建导入结果响应"""
+def _import_result(filename: str | None = None) -> dict:
+    """构建导入结果响应, 并持久化摘要到 _last_import_summary (前端切页恢复用)."""
     from .. import key_store as _ks
+    global _verify_report, _last_import_summary
     types = {}
     for p in _packets:
         t = p["pkt_type"] or "Unknown"
         types[t] = types.get(t, 0) + 1
     decrypt_stats = _ks.get_match_stats(_packets)
-    global _verify_report
-    return {
+    result = {
         "ok": True,
         "packets": len(_packets),
         "nodes": len(_nodes),
         "file_type": _file_type,
+        "filename": filename or (os.path.basename(_pcap_paths[0]) if _pcap_paths else ""),
         "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
         "decrypt_stats": decrypt_stats,
         "verify": _verify_report,  # 校验报告
         "ubiqua_sync": _last_ubiqua_sync,  # Ubiqua key 同步结果 (None=不可达)
     }
+    # 持久化摘要 (后端内存, 不受前端页面切换影响)
+    _last_import_summary = {
+        "packets": result["packets"], "nodes": result["nodes"],
+        "file_type": result["file_type"], "filename": result["filename"],
+        "by_type": result["by_type"], "decrypt_stats": result["decrypt_stats"],
+        "verify": result["verify"], "ubiqua_sync": result["ubiqua_sync"],
+    }
+    return result
+
+
+@router.get("/import/last")
+async def import_last():
+    """最近一次导入摘要 (前端切页恢复用, 后端内存持久)."""
+    if _last_import_summary is None:
+        return {"ok": False}
+    return {"ok": True, **_last_import_summary}
 
 
 @router.get("/import/verify")
