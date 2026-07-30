@@ -271,7 +271,10 @@ function sr(d,fname){document.getElementById('sout').style.display='block';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
   if(d.file_type)h+='<span>类型:'+d.file_type+'</span>';
-  h+='</div><p style="font-size:11px;margin-top:4px">'+JSON.stringify(d.by_type||{}).substr(0,300)+'</p>';
+  // by_type 手动遍历 (JSON.stringify 对该对象可能返回{})
+  var bt=d.by_type||{}; var btArr=[];
+  for(var k in bt){if(bt.hasOwnProperty(k))btArr.push(k+':'+bt[k]);}
+  h+='</div><p style="font-size:11px;margin-top:4px">'+(btArr.join(', ')||'{}').substr(0,300)+'</p>';
   if(d.decrypt_stats){h+='<p style="font-size:11px;margin-top:2px;color:#16a34a">解密: '+d.decrypt_stats.decrypted+'/'+d.decrypt_stats.total_data_frames+' 帧 ('+(d.decrypt_stats.decrypt_rate*100).toFixed(0)+'%) | Clusters: '+JSON.stringify(d.decrypt_stats.by_cluster)+'</p>';}
   // Verification report
   if(d.verify){
