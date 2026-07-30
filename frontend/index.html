@@ -365,6 +365,7 @@ reg('topo',function(){
   function renderSidebar(d){
     if(!d) return;
     var ns=d.nodes||[], es=d.edges||[], rps=d.route_paths||[];
+    var probes=d.route_probes||[], failures=d.route_failures||[];
     document.getElementById('tinfo').textContent=ns.length+' 节点 | 主PAN:0x'+(d.main_pan!=null?d.main_pan.toString(16).toUpperCase():'?');
     var nbt=d.neighbor_tables||{};
     var nbDevCount=Object.keys(nbt).length;
@@ -378,8 +379,11 @@ reg('topo',function(){
     }
     var activeCount=Object.keys(activeSet).length;
     document.getElementById('tstat').innerHTML='<div class="stats">'
-      +'<span>图节点: <b style="color:#16a34a">'+activeCount+'</b>活跃</span><span style="color:#94a3b8">'+(ns.length-activeCount)+'静默</span>'
-      +'<span>图边: <b>'+es.length+'</b>数据流</span><span style="color:#7c3aed">'+rps.length+'路径</span>'
+      +'<span>图节点: <b style=\"color:#16a34a\">'+activeCount+'</b>活跃</span><span style=\"color:#94a3b8\">'+(ns.length-activeCount)+'静默</span>'
+      +'<span>图边: <b>'+es.length+'</b>数据流</span>'
+      +'<span style=\"color:#7c3aed\">'+rps.length+'路径↑</span>'
+      +(probes.length>0?'<span style=\"color:#3b82f6\">'+probes.length+'探测↓</span>':'')
+      +(failures.length>0?'<span style=\"color:#ef4444\">'+failures.length+'失败✕</span>':'')
       +'<span>📡 LS邻居:<b>'+nbTotal+'</b></span><span>LS设备:'+nbDevCount+'</span>'
       +'</div>';
     // PAN list
@@ -685,34 +689,82 @@ reg('topo',function(){
   function renderRoutePaths(d){
     var panel=document.getElementById('bp-routes');
     var paths=d.route_paths||[];
-    if(paths.length===0){panel.innerHTML='<p style=\"color:#94a3b8;font-size:11px;text-align:center;padding:12px\">未发现 Route Record 路径 (抓包中无源路由帧)</p>';return;}
-    // 统计路由变更
-    var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}
-    var changed=0; for(var k in srcPaths){if(srcPaths[k].length>1)changed++;}
-    var h='<div style=\"font-size:11px;color:#64748b;margin-bottom:4px\">'
-      +'共 '+paths.length+' 条路径 | '+Object.keys(srcPaths).length+' 个设备'
-      +(changed>0?' | <b style=\"color:#d97706\">'+changed+' 个设备发生过路由变更</b>':'')
-      +'</div>'
-      +'<div style=\"font-size:10px;color:#94a3b8;margin-bottom:6px\">●实线=当前路由  ◌虚线=历史路由</div>';
-    var maxShow=Math.min(paths.length,20);
-    for(var i=0;i<maxShow;i++){
-      var p=paths[i];
-      var isCur=p.is_current;
-      var icon=isCur?'●':'◌';
-      var color=isCur?'#7c3aed':'#94a3b8';
-      var style=isCur?'font-weight:600':'';
-      var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
-      var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
-      var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
-      h+='<div style=\"display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;'+style+'\" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
-        +'<span style=\"color:'+color+';min-width:14px;text-align:center\">'+icon+'</span>'
-        +'<span style=\"color:'+color+'\"'+'>'+p.path_str+'</span>'
-        +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
-        +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+ts0+dur+'</span>'
-        +(isCur?'<span style=\"color:#16a34a;font-size:9px;font-weight:600\">当前</span>':'<span style=\"color:#94a3b8;font-size:9px\">历史</span>')
-        +'</div>';
+    var probes=d.route_probes||[];
+    var failures=d.route_failures||[];
+
+    if(paths.length===0 && probes.length===0 && failures.length===0){
+      panel.innerHTML='<p style=\"color:#94a3b8;font-size:11px;text-align:center;padding:12px\">未发现路由事件 (该网络无 Route Record/Request/Status 帧)</p>';return;
     }
-    if(paths.length>maxShow) h+='<p style=\"color:#94a3b8;font-size:10px;text-align:center\">...还有'+(paths.length-maxShow)+'条路径</p>';
+
+    // 样式
+    var sep='<div style=\"border-top:1px solid #e2e8f0;margin:8px 0\"></div>';
+    var h='';
+
+    // ── 上行路径 (Route Record) ──
+    if(paths.length>0){
+      var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}
+      var changed=0; for(var k in srcPaths){if(srcPaths[k].length>1)changed++;}
+      h+='<div style=\"font-size:11px;color:#64748b;margin-bottom:4px\">'
+        +'<span style=\"color:#7c3aed;font-weight:600\">↑ 上行路径 (Route Record)</span> '
+        +paths.length+'条 | '+Object.keys(srcPaths).length+'个设备'
+        +(changed>0?' | <b style=\"color:#d97706\">'+changed+'个发生过路由变更</b>':'')
+        +'</div>'
+        +'<div style=\"font-size:10px;color:#94a3b8;margin-bottom:6px\">●实线=当前路由 · ◌虚线=历史路由</div>';
+      var maxShow=Math.min(paths.length,20);
+      for(var i=0;i<maxShow;i++){
+        var p=paths[i];
+        var icon=p.is_current?'●':'◌';
+        var color=p.is_current?'#7c3aed':'#94a3b8';
+        var style=p.is_current?'font-weight:600':'';
+        var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
+        var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
+        var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
+        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;'+style+'\" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
+          +'<span style=\"color:'+color+';min-width:14px;text-align:center\">'+icon+'</span>'
+          +'<span style=\"color:'+color+'\"'+'>'+p.path_str+'</span>'
+          +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
+          +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+ts0+dur+'</span>'
+          +(p.is_current?'<span style=\"color:#16a34a;font-size:9px;font-weight:600\">当前</span>':'<span style=\"color:#94a3b8;font-size:9px\">历史</span>')
+          +'</div>';
+      }
+      if(paths.length>maxShow) h+='<p style=\"color:#94a3b8;font-size:10px;text-align:center\">...还有'+(paths.length-maxShow)+'条路径</p>';
+    }
+
+    // ── 下行探测 (Route Request) ──
+    if(probes.length>0){
+      h+=sep+'<div style=\"font-size:11px;color:#64748b;margin-bottom:6px\">'
+        +'<span style=\"color:#3b82f6;font-weight:600\">↓ 下行探测 (Route Request)</span> '
+        +probes.length+'对</div>';
+      var maxP=Math.min(probes.length,10);
+      for(var i=0;i<maxP;i++){
+        var pp=probes[i];
+        var ts0=new Date(pp.first_ts*1000).toISOString().substr(11,8);
+        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:2px 0;font-family:monospace;font-size:11px\" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
+          +'<span style=\"color:#3b82f6;min-width:14px;text-align:center\">→</span>'
+          +'<span style=\"color:#3b82f6\">'+pp.path_str+'</span>'
+          +'<span style=\"color:#94a3b8;font-size:9px\">×'+pp.count+'次</span>'
+          +'<span style=\"color:#94a3b8;font-size:9px\">'+ts0+'</span>'
+          +'</div>';
+      }
+    }
+
+    // ── 下行失败 (Network Status) ──
+    if(failures.length>0){
+      h+=sep+'<div style=\"font-size:11px;color:#64748b;margin-bottom:6px\">'
+        +'<span style=\"color:#ef4444;font-weight:600\">✕ 下行失败 (Network Status)</span> '
+        +failures.length+'处</div>';
+      for(var i=0;i<failures.length;i++){
+        var f=failures[i];
+        var ts=new Date(f.timestamp*1000).toISOString().substr(11,8);
+        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:2px 0;font-family:monospace;font-size:11px\">'
+          +'<span style=\"color:#ef4444;min-width:14px;text-align:center\">✕</span>'
+          +'<span style=\"color:#ef4444\">'+f.path_str+'</span>'
+          +'<span style=\"color:#ef4444;font-size:9px\">'+f.status_name+'</span>'
+          +'<span style=\"color:#94a3b8;font-size:9px\">'+ts+'</span>'
+          +'</div>';
+      }
+    }
+
     panel.innerHTML=h;
   }
 
