@@ -145,7 +145,7 @@ reg('import',function(){
     var p=prompt('CSV 文件路径:');if(!p)return;
     setProg('导入 CSV...');
     var fd=new FormData();fd.append('path',p);
-    fetch('/api/import/local',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d)})
+    fetch('/api/import/local',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop())})
       .catch(function(e){alert('错误: '+e.message);setProg('')});
   });
 
@@ -156,11 +156,12 @@ reg('import',function(){
   pdrop.addEventListener('drop',function(e){e.preventDefault();if(e.dataTransfer.files.length)doPI(e.dataTransfer.files)});
   pinp.addEventListener('change',function(){if(pinp.files.length)doPI(pinp.files)});
   document.getElementById('plpath').addEventListener('click',function(){
-    var p=prompt('pcap 文件路径 (逗号分隔多个):');if(!p)return;
-    setProg('导入 pcap (tshark 解析中, 可能需要 5-10 秒)...');
-    var fd=new FormData();fd.append('paths',p);
-    fetch('/api/import/local-pcap',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d)})
-      .catch(function(e){alert('错误: '+e.message);setProg('')});
+    var p=prompt('pcap/cubx 文件路径 (逗号分隔多个):');if(!p)return;
+    setProg('导入中...');
+    var isCubx=p.toLowerCase().endsWith('.cubx');
+    var fd=new FormData();
+    if(isCubx){fd.append('path',p);fetch('/api/import/local-cubx',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop());}).catch(function(e){alert('错误: '+e.message);setProg('')});}
+    else{fd.append('paths',p);fetch('/api/import/local-pcap',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop());}).catch(function(e){alert('错误: '+e.message);setProg('')});}
   });
 
   // Key panel toggle
@@ -225,7 +226,7 @@ reg('import',function(){
     }
     btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');document.getElementById('sout').style.display='none';
+      S.topo=null;S.pkts=0;S.nodes=0;S.lastImportResult=null;S.lastImportName='';sb('就绪');document.getElementById('sout').style.display='none';
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
@@ -244,24 +245,30 @@ reg('import',function(){
     }
   });
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
+  // 持久化: 从其他页面切回时恢复上次导入结果
+  if(S.lastImportResult){sr(S.lastImportResult,S.lastImportName);}
 });
 
 function doI(file){setProg('上传解析中...');
   var fd=new FormData();fd.append('files',file);
-  fetch('/api/import/files',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d)})
+  fetch('/api/import/files',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,file.name||'')})
     .catch(function(e){alert('错误: '+e.message);setProg('')});}
 
 function doPI(files){setProg('上传解析中...');
-  var fd=new FormData(); var cubx=0;
-  for(var i=0;i<files.length;i++){fd.append('files',files[i]);if(files[i].name&&files[i].name.toLowerCase().endsWith('.cubx'))cubx=1;}
+  var fd=new FormData(); var cubx=0; var fnames=[];
+  for(var i=0;i<files.length;i++){fd.append('files',files[i]);
+    var n=files[i].name||'';fnames.push(n);if(n.toLowerCase().endsWith('.cubx'))cubx=1;}
   var url=cubx?'/api/import/cubx':'/api/import/pcap';
-  fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d);if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();})
+  fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,fnames.join(', '));if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();})
     .catch(function(e){alert('错误: '+e.message);setProg('')});}
 
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
-function sr(d){document.getElementById('sout').style.display='block';
-  var h='<div class="stats"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
+function sr(d,fname){document.getElementById('sout').style.display='block';
+  S.lastImportResult=d;S.lastImportName=fname||'';
+  var h='';
+  if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
+  h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
   if(d.file_type)h+='<span>类型:'+d.file_type+'</span>';
   h+='</div><p style="font-size:11px;margin-top:4px">'+JSON.stringify(d.by_type||{}).substr(0,300)+'</p>';
   if(d.decrypt_stats){h+='<p style="font-size:11px;margin-top:2px;color:#16a34a">解密: '+d.decrypt_stats.decrypted+'/'+d.decrypt_stats.total_data_frames+' 帧 ('+(d.decrypt_stats.decrypt_rate*100).toFixed(0)+'%) | Clusters: '+JSON.stringify(d.decrypt_stats.by_cluster)+'</p>';}
