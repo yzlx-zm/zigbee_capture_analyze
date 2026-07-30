@@ -219,13 +219,33 @@ def extract_network_status_events(packets: list[dict]) -> list[RouteEvent]:
     return events
 
 
-def extract_events(packets: list[dict]) -> list[RouteEvent]:
-    """统一提取: 所有路由事件 (Route Record + Route Request + Network Status)."""
+def extract_events(packets: list[dict], suppress_duplicates: bool = True) -> list[RouteEvent]:
+    """统一提取: 所有路由事件, 可选重复帧抑制.
+
+    suppress_duplicates=True (默认): 20ms 内同源同目的同类型的事件只保留第一条.
+    基于地址+类型去重 (非字节级, 因事件层面已丢失原始字节).
+    """
     events: list[RouteEvent] = []
     events.extend(extract_route_record_events(packets))
     events.extend(extract_route_request_events(packets))
     events.extend(extract_network_status_events(packets))
     events.sort(key=lambda e: e.timestamp)
+
+    if suppress_duplicates and events:
+        deduped: list[RouteEvent] = []
+        recent: dict[tuple, float] = {}
+        for e in events:
+            if e.event_type == EVENT_ROUTE_RECORD:
+                key = (e.event_type, e.src, e.dst, tuple(e.relays))
+            else:
+                key = (e.event_type, e.src, e.dst)
+            last_ts = recent.get(key)
+            if last_ts is not None and e.timestamp - last_ts <= 0.020:
+                continue
+            recent[key] = e.timestamp
+            deduped.append(e)
+        return deduped
+
     return events
 
 
