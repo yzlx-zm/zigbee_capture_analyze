@@ -350,7 +350,7 @@ reg('topo',function(){
     if(panVal) params.push('pan='+panVal);
     if(t0!=null) params.push('time_start='+t0);
     if(t1!=null) params.push('time_end='+t1);
-    var url='/api/topology/graph'+(params.length?'?'+params.join('&'):'');
+    var url='/api/topology/events'+(params.length?'?'+params.join('&'):'');
     A.get(url).then(function(d){
       topoData=d; S.topo=d;
       try{ if(callback) callback(d); }catch(e){ console.error('renderGraph error:',e); }
