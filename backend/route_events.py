@@ -23,6 +23,9 @@ from .topology import is_unicast
 EVENT_ROUTE_RECORD = "route_record"
 EVENT_ROUTE_REQUEST = "route_request"
 EVENT_NETWORK_STATUS = "network_status"
+EVENT_LEAVE = "leave"
+EVENT_DEVICE_ANNOUNCE = "device_announce"
+EVENT_IEEE_ADDR_REQ = "ieee_addr_req"
 
 
 @dataclass
@@ -46,6 +49,12 @@ class RouteEvent:
     dropped_at_hop: int | None = None
     # Network Status 专属
     status_code: int | None = None
+    # Leave 专属
+    rejoin: bool = False
+    request: bool = False
+    remove_children: bool = False
+    # Device Announce 专属
+    eui64: int | None = None
     # 公共
     packet_id: int = 0
     pan: int | None = None
@@ -219,16 +228,112 @@ def extract_network_status_events(packets: list[dict]) -> list[RouteEvent]:
     return events
 
 
-def extract_events(packets: list[dict], suppress_duplicates: bool = True) -> list[RouteEvent]:
-    """统一提取: 所有路由事件, 可选重复帧抑制.
+def extract_leave_events(packets: list[dict]) -> list[RouteEvent]:
+    """从 tshark 解析的包列表中提取所有 NWK Leave 事件.
 
-    suppress_duplicates=True (默认): 20ms 内同源同目的同类型的事件只保留第一条.
-    基于地址+类型去重 (非字节级, 因事件层面已丢失原始字节).
+    NWK Leave (cmd_id=0x04) 的语义:
+      rejoin: 0=永久离开不复返, 1=离开后重入网
+      request: 0=命令对方离开(踢设备), 1=申请自己离开
+      children: 0=保留子节点, 1=连同子节点一起移出
     """
+    events: list[RouteEvent] = []
+    for p in packets:
+        if p.get("pkt_type") != "Leave":
+            continue
+        src = p.get("nwk_src")
+        dst = p.get("nwk_dst")
+        if src is None or dst is None:
+            continue
+        nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
+        cmd_data = _get_command_data(nwk, "Leave")
+        if not cmd_data:
+            continue
+        # EUI64 从 NWK 层 source EUI64 提取 (被踢设备可能没发过 Device Announce)
+        eui64 = None
+        nwk_src64_str = p.get("nwk_src64", "")
+        if nwk_src64_str and len(nwk_src64_str) == 16:
+            try: eui64 = int(nwk_src64_str, 16)
+            except ValueError: pass
+
+        events.append(RouteEvent(
+            timestamp=p["ts"],
+            event_type=EVENT_LEAVE,
+            src=src, dst=dst,
+            rejoin=cmd_data.get("zbee_nwk.cmd.leave.rejoin", "0") == "1",
+            request=cmd_data.get("zbee_nwk.cmd.leave.request", "0") == "1",
+            remove_children=cmd_data.get("zbee_nwk.cmd.leave.children", "0") == "1",
+            eui64=eui64,
+            pan=p.get("pan_src") or p.get("pan_dst"),
+            packet_id=_get_packet_id(p),
+        ))
+    return events
+
+
+def extract_device_announce_events(packets: list[dict]) -> list[RouteEvent]:
+    """从 tshark 解析的包列表中提取所有 Device Announce 事件 (ZDP 0x0013).
+
+    数据来源: ZDP cluster=0x0013, profile=0x0000.
+    提供短地址 → EUI64 映射 (设备身份证).
+    解析 EUI64 时注意字节序: ZDP payload 中 EUI64 为 little-endian.
+    """
+    events: list[RouteEvent] = []
+    for p in packets:
+        if "Device Announce" not in (p.get("pkt_type") or ""):
+            continue
+        src = p.get("nwk_src")
+        dst = p.get("nwk_dst")
+        if src is None:
+            continue
+        eui64_str = p.get("nwk_src64")
+        eui64 = None
+        if eui64_str and len(eui64_str) == 16:
+            try:
+                eui64 = int(eui64_str, 16)
+            except ValueError:
+                pass
+        events.append(RouteEvent(
+            timestamp=p["ts"],
+            event_type=EVENT_DEVICE_ANNOUNCE,
+            src=src, dst=dst or 0xFFFD,
+            eui64=eui64,
+            pan=p.get("pan_src") or p.get("pan_dst"),
+            packet_id=_get_packet_id(p),
+        ))
+    return events
+
+
+def extract_ieee_addr_req_events(packets: list[dict]) -> list[RouteEvent]:
+    """从 tshark 解析的包列表中提取 IEEE Addr Req 事件 (ZDP 0x0001).
+
+    协调器在离网前密集查询设备 IEEE 地址 —— 作为离网的前置行为标记.
+    """
+    events: list[RouteEvent] = []
+    for p in packets:
+        if p.get("pkt_type") != "ZDP: IEEE Addr Req":
+            continue
+        src = p.get("nwk_src")
+        dst = p.get("nwk_dst")
+        if src is None or dst is None:
+            continue
+        events.append(RouteEvent(
+            timestamp=p["ts"],
+            event_type=EVENT_IEEE_ADDR_REQ,
+            src=src, dst=dst,
+            pan=p.get("pan_src") or p.get("pan_dst"),
+            packet_id=_get_packet_id(p),
+        ))
+    return events
+
+
+def extract_events(packets: list[dict], suppress_duplicates: bool = True) -> list[RouteEvent]:
+    """统一提取: 所有路由事件, 可选重复帧抑制."""
     events: list[RouteEvent] = []
     events.extend(extract_route_record_events(packets))
     events.extend(extract_route_request_events(packets))
     events.extend(extract_network_status_events(packets))
+    events.extend(extract_leave_events(packets))
+    events.extend(extract_device_announce_events(packets))
+    events.extend(extract_ieee_addr_req_events(packets))
     events.sort(key=lambda e: e.timestamp)
 
     if suppress_duplicates and events:
@@ -452,3 +557,187 @@ def _status_name(code: int | None) -> str:
         0x12: "Bad Key Sequence Number",
     }
     return names.get(code, f"Unknown(0x{code:02X})")
+
+
+# ── 诊断聚合 ──
+
+LEAVE_BURST_WINDOW = 5.0       # Leave 帧合并为波次的时间窗口 (秒)
+REJOIN_DETECTION_WINDOW = 30.0  # Leave 后检测 Device Announce 的时间窗口 (秒)
+
+
+def aggregate_offline_diagnosis(
+    timeline: RouteEventTimeline,
+    nodes: dict[int, dict] | None = None,
+    pan: int | None = None,
+    t0: float | None = None,
+    t1: float | None = None,
+) -> dict:
+    """从事件时间线聚合设备离线诊断数据.
+
+    流程:
+      1. 提取 Leave + Device Announce + Network Status 事件
+      2. 按设备分组
+      3. Leave 帧按 5s 窗口合并为 bursts
+      4. Leave 后 30s 内 Device Announce → rejoin_attempt
+      5. 生成每个设备的诊断结论
+    """
+    leave_events = timeline.query(t0, t1, [EVENT_LEAVE])
+    announce_events = timeline.query(t0, t1, [EVENT_DEVICE_ANNOUNCE])
+    ns_events = timeline.query(t0, t1, [EVENT_NETWORK_STATUS])
+    ieee_events = timeline.query(t0, t1, [EVENT_IEEE_ADDR_REQ])
+
+    if pan is not None:
+        leave_events = [e for e in leave_events if e.pan == pan]
+        announce_events = [e for e in announce_events if e.pan == pan]
+        ns_events = [e for e in ns_events if e.pan == pan]
+        ieee_events = [e for e in ieee_events if e.pan == pan]
+
+    if not leave_events:
+        return {
+            "devices": [],
+            "summary": {"total_devices_left": 0, "kicked": 0,
+                        "voluntary": 0, "with_rejoin": 0},
+        }
+
+    # 按设备分组 Leave 事件
+    device_leaves: dict[int, list[RouteEvent]] = {}
+    for e in leave_events:
+        device_leaves.setdefault(e.src, []).append(e)
+
+    devices = []
+    for aid, leaves in sorted(device_leaves.items()):
+        leaves.sort(key=lambda e: e.timestamp)
+
+        # Burst 检测 (5s 窗口)
+        bursts = []
+        current_burst = [leaves[0]]
+        for e in leaves[1:]:
+            if e.timestamp - current_burst[-1].timestamp <= LEAVE_BURST_WINDOW:
+                current_burst.append(e)
+            else:
+                bursts.append(current_burst)
+                current_burst = [e]
+        bursts.append(current_burst)
+
+        burst_data = []
+        for bi, burst in enumerate(bursts):
+            first = burst[0]
+            bd = {
+                "first_ts": burst[0].timestamp,
+                "last_ts": burst[-1].timestamp,
+                "count": len(burst),
+                "rejoin": first.rejoin,
+                "request": first.request,
+                "children": first.remove_children,
+                "type": _leave_type_name(first),
+                "burst_index": bi + 1,
+            }
+            burst_data.append(bd)
+
+        # Rejoin 检测: Leave 后 REJOIN_DETECTION_WINDOW 秒内的 Device Announce
+        rejoin_attempts = []
+        for bi, burst in enumerate(bursts):
+            burst_end = burst[-1].timestamp
+            matching_anns = [e for e in announce_events
+                             if e.src == aid
+                             and burst_end < e.timestamp <= burst_end + REJOIN_DETECTION_WINDOW]
+            if matching_anns:
+                rejoin_attempts.append({
+                    "after_burst": bi + 1,
+                    "announce_count": len(matching_anns),
+                    "first_ts": matching_anns[0].timestamp,
+                    "last_ts": matching_anns[-1].timestamp,
+                    "delay_seconds": round(matching_anns[0].timestamp - burst_end, 1),
+                })
+
+        # 前置事件: Leave 前 NS + IEEE Addr Req
+        pre_ns = [e for e in ns_events if e.src == aid and e.timestamp < bursts[0][0].timestamp]
+        pre_ieee = [e for e in ieee_events if e.dst == aid and e.timestamp < bursts[0][0].timestamp]
+
+        # 诊断结论 + 设备身份
+        announce_for_device = [e for e in announce_events if e.src == aid]
+        node_info = (nodes or {}).get(aid, {})
+        dt = node_info.get("device_type", "router") or "router"
+
+        # EUI64: Device Announce 优先, Leave帧的nwk_src64作为fallback
+        eui64_hex = None
+        if announce_for_device and announce_for_device[0].eui64:
+            eui64_hex = f"{announce_for_device[0].eui64:016x}"
+        else:
+            for e in leaves:
+                if e.eui64:
+                    eui64_hex = f"{e.eui64:016x}"
+                    break
+
+        last_burst = bursts[-1]
+        has_rejoin = len(rejoin_attempts) > 0
+
+        devices.append({
+            "aid": aid,
+            "label": f"0x{aid:04X}",
+            "eui64": eui64_hex,
+            "device_type": dt,
+            "leave_bursts": burst_data,
+            "rejoin_attempts": rejoin_attempts,
+            "pre_events": {
+                "network_status_count": len(pre_ns),
+                "ieee_addr_req_count": len(pre_ieee),
+                "first_ns_ts": pre_ns[0].timestamp if pre_ns else None,
+                "first_ieee_ts": pre_ieee[0].timestamp if pre_ieee else None,
+            },
+            "diagnosis": _build_diagnosis(burst_data, rejoin_attempts,
+                                          not bool([e for e in announce_events
+                                                     if e.src == aid
+                                                     and e.timestamp > last_burst[-1].timestamp
+                                                     + REJOIN_DETECTION_WINDOW])),
+        })
+
+    # 汇总
+    summary = {
+        "total_devices_left": len(devices),
+        "kicked": sum(1 for d in devices if d["diagnosis"]["leave_type"] == "kicked"),
+        "voluntary": sum(1 for d in devices
+                         if d["diagnosis"]["leave_type"] in ("voluntary_permanent", "voluntary_rejoin")),
+        "with_rejoin": sum(1 for d in devices if d["diagnosis"]["has_rejoin_attempt"]),
+    }
+
+    return {"devices": devices, "summary": summary}
+
+
+def _leave_type_name(event: RouteEvent) -> str:
+    """Leave 标志组合 → 类型名."""
+    if event.request:
+        return "voluntary_rejoin" if event.rejoin else "voluntary_permanent"
+    else:
+        return "kicked_rejoin" if event.rejoin else "kicked"
+
+
+def _build_diagnosis(bursts: list[dict], rejoin_attempts: list[dict],
+                     final_departed: bool) -> dict:
+    """根据 burst 和 rejoin 数据生成诊断结论."""
+    first = bursts[0]
+    leave_type = first["type"]
+    has_rejoin = len(rejoin_attempts) > 0
+    final_status = "departed_permanently" if final_departed else "possibly_rejoined"
+
+    # 生成可读摘要
+    type_names = {"kicked": "被踢出网络", "kicked_rejoin": "被踢(允许重入)",
+                  "voluntary_permanent": "主动永久离网", "voluntary_rejoin": "主动暂离"}
+    parts = [type_names.get(leave_type, leave_type)]
+    if has_rejoin:
+        delays = [str(r["delay_seconds"]) + "s" for r in rejoin_attempts]
+        parts.append(f"有重入网尝试 ({', '.join(delays)}后)")
+    if len(bursts) > 1:
+        parts.append(f"{len(bursts)}波离网")
+    if final_departed:
+        parts.append("最终彻底离开")
+    else:
+        parts.append("最终可能已重入网")
+
+    return {
+        "leave_type": leave_type,
+        "has_rejoin_attempt": has_rejoin,
+        "final_status": final_status,
+        "burst_count": len(bursts),
+        "summary": "，".join(parts),
+    }

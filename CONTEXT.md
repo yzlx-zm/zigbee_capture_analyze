@@ -88,3 +88,191 @@
 **区分于**：Route Request 丢弃——发生在路径发现阶段（探测失败）；Network Status——发生在数据传输阶段（实际的源路由失败）。
 
 **数据手册引用**：Zigbee Specification r22 §3.6.3.3.1
+
+---
+
+## 入网生命周期 (Network Lifecycle)
+
+> 2026-07-30 新增。来源：Phase 6 /grilling 会话。Zigbee 设备从入网到离网的完整生命周期建模。
+
+### Phase 1: Association（MAC 入网）
+
+设备通过 MAC 层 Association 流程加入网络：
+- 设备扫描信道找到合适的 PAN + 父节点
+- 发送 **Association Request**（MAC 命令，cmd_id=1）：包含 device_type、rx_on_idle、power_source、allocate_address
+- 父节点回复 **Association Response**（MAC 命令，cmd_id=2）：分配短地址，或拒绝（status != 0）
+- 此时设备拥有 NWK 短地址，但尚无 NWK 加密密钥
+
+**区分于**：Rejoin（使用缓存的网络参数加速入网）、NWK 层的 Transport Key（后续的安全握手）
+
+**数据来源**：802.15.4 MAC 命令帧。当前 pcap 中未观测到（需要抓包在入网时刻）。
+
+### Phase 2: Security Handshake（安全握手）
+
+入网后进行密钥分发和安全建立：
+- 协调器发送 **Transport Key**（APS 命令，cmd_id=5）：用 Trust Center Link Key 加密传输 NWK Key
+  - key_type=1：Network Key；key_type=4：Trust Center Link Key
+  - 包含 key（加密后）、key_seqnum、destination EUI64、source EUI64
+- 设备回复 **Verify Key**（APS cmd_id=15）或 **Confirm Key**（APS cmd_id=16）
+  - Confirm Key 的 status 字段指示成功/失败
+- 密钥建立后，后续通信使用 NWK 层 AES-CCM* 加密
+
+**区分于**：APS 层的加密（用 Link Key，不是 Transport Key 分发的 NWK Key）
+
+**数据来源**：APS 命令帧（zbee_aps.command）。当前 pcap 中未观测到。
+
+### Phase 3: Device Announce（设备通告）
+
+入网或重入网后，设备广播自身身份：
+- **Device Announce**（ZDP 0x0013，cluster=0x0013，profile=0x0000）：
+  - 目标地址：0xFFFD（广播到所有非休眠设备）
+  - Payload：16-bit short address + 64-bit IEEE address + capability byte
+- 这是网络学习 "0x1234 = 70:c5:9c:ff:fe:72:a5:cd" 映射的标准方式
+- Capability byte 指示：device type（coordinator/router/end_device）、power source、rx_on_idle 等
+
+**数据来源**：ZDP 帧（zbee_aps.zdp）。leave_question 中观测到 4 条（均来自 0xCBEB）。
+
+### Phase 4: Device Discovery（设备发现）
+
+协调器或其他设备主动查询设备信息：
+- **IEEE Addr Req/Resp**（ZDP 0x0001 / 0x8001）：通过短地址查 IEEE 地址
+- **NWK Addr Req/Resp**（ZDP 0x0000 / 0x8000）：通过 IEEE 地址查短地址
+- **Node Desc Req/Resp**（ZDP 0x0002 / 0x8002）：查询设备能力（频段、逻辑类型、制造商码）
+- **Active EP Req/Resp**（ZDP 0x0005 / 0x8005）：查询设备有哪些应用端点
+- **Simple Desc Req/Resp**（ZDP 0x0004 / 0x8004）：查询某端点的设备 ID、Cluster 列表
+
+**拓扑价值**：这些查询帧在 Leave 前后密集出现（leave_question 有 61 条 IEEE Addr Req），表明协调器在"踢设备"前正在确认设备身份。
+
+### Phase 5: Normal Operation（正常运行）
+
+设备在网内的正常工作状态。包括 Link Status 广播、数据通信、路由维护。
+此阶段的事件已在路由拓扑部分覆盖（Route Record、Route Request、Link Status、Network Status）。
+
+### Phase 6: Leave（离网）
+
+设备离开网络的协议行为。**NWK Leave 命令**（cmd_id=0x04）：
+
+| 字段 | 值=0 | 值=1 |
+|------|------|------|
+| `rejoin` | 永久离开（不复返） | 离开后重新入网 |
+| `request` | 命令/指令（发送方命令对方离开） | 申请（发送方自己申请离开） |
+| `children` | 不带走子节点 | 连子节点一起移出 |
+
+**含义组合**：
+- `rejoin=0, request=0`：**踢设备**——协调器命令某设备永久离开（leave_question 的 6 条全是此模式）
+- `rejoin=1, request=1`：**设备申请暂时离网**——设备要走了但会回来
+- `rejoin=0, request=1`：**设备主动永久离网**——设备自己决定退出
+- `children=1`：路由器离网时带走子节点（树形拓扑重组的证据）
+
+**配套事件**：Mgmt Leave Req/Resp（ZDP 0x0034）——管理层离网请求（与 NWK Leave 互补或独立使用）。
+
+**数据来源**：NWK 命令帧。leave_question 中观测到 6 条（均为 rejoin=0, request=0 = 踢设备模式）。
+
+### Phase 7: Rejoin（重入网）
+
+离开后或断电后重新加入网络：
+- **Rejoin Request**（NWK cmd_id=0x06）：使用缓存的 NWK 参数（PAN ID、NWK Key、IEEE 地址）发起重入网
+  - 包含 device_type、rx_on_idle、allocate_address
+- **Rejoin Response**（NWK cmd_id=0x07）：协调器回复，分配短地址或拒绝
+  - 包含 network_address、rejoin_status
+- 重入网后通常跟 Device Announce 广播新身份
+
+**区分于**：Association（全新入网，无缓存参数）；Secure Rejoin（使用 NWK Key 加密的 Rejoin）
+
+**数据来源**：NWK 命令帧。当前 pcap 中未观测到。
+
+### 生命周期状态机
+
+```
+[未入网] → Association → [已关联,无密钥]
+  → Transport Key + Verify/Confirm Key → [已入网,已加密]
+  → Device Announce → [身份已通告]
+  → Normal Operation（Link Status, Route Record, 数据通信）
+  → Leave → [已离网]
+  → Rejoin → [已入网,已加密] 或 [入网被拒]
+```
+
+### 可用数据对照
+
+| 阶段 | 帧类型 | leave_question | test2 |
+|------|--------|---------------|-------|
+| Association | MAC Assoc Req/Resp | 0 | 0 |
+| Transport Key | APS cmd 5 | 未查 | 未查 |
+| Device Announce | ZDP 0x0013 | **4** | 0 |
+| IEEE Addr Req | ZDP 0x0001 | **61** | 0 |
+| Leave | NWK cmd 0x04 | **6**（踢设备） | 0 |
+| Rejoin | NWK cmd 0x06/0x07 | 0 | 0 |
+| Mgmt Leave | ZDP 0x0034 | 未查 | 未查 |
+
+**数据手册引用**：Zigbee Specification r22 §3.6.1.8 (Leave), §3.6.1.6 (Rejoin), §2.4.3 (Device Announce);
+Silicon Labs UG105.2 "Device Association"
+
+---
+
+## 诊断分析 (Diagnostics)
+
+> 2026-07-30 新增。来源：Phase 6 /grilling 会话。独立于拓扑分析，聚焦网络问题的证据收集和诊断推断。
+
+### 设备离线分析 (Device Offline Diagnosis)
+
+针对设备离开网络的行为进行证据收集和诊断推断。核心数据源：Leave 命令、Device Announce、IEEE Addr Req、Network Status。
+
+### Leave Burst（离网波次）
+
+同一设备在短时间内（默认 5 秒窗口）发送的连续 Leave 命令集合。一次"离网波次"代表一次独立的离网行为。leave_question 中 0xCBEB 有两次波次：9.2s-10.2s（3 帧）和 23.3s-24.3s（3 帧），间隔 14 秒。
+
+**区分于**：单条 Leave 帧（可能因重传产生多条，属于同一波次）。
+
+### Leave Type（离网类型）
+
+基于 NWK Leave 命令的 `rejoin` 和 `request` 标志推断的离网原因：
+
+| 类型 | rejoin | request | 含义 |
+|------|--------|---------|------|
+| `kicked`（被踢） | 0 | 0 | 协调器/父节点命令设备离开，且不复返 |
+| `voluntary_permanent`（主动永久） | 0 | 1 | 设备自己申请永久离开 |
+| `voluntary_rejoin`（主动暂离） | 1 | 1 | 设备申请暂时离网（会回来） |
+| `kicked_rejoin`（被踢但重入） | 1 | 0 | 被命令离开但允许重入 |
+
+leave_question 中 0xCBEB 的 6 条 Leave 全部为 `kicked` 类型。
+
+**区分于**：Mgmt Leave（ZDP 0x0034，管理层离网请求，使用不同的协议机制）。
+
+### Rejoin Inference（重入网推断）
+
+Leave 事件后出现 Device Announce 帧，推断设备尝试了重入网。推断依据：
+- Device Announce 通常只在入网/重入网后发送
+- Leave 后 30 秒内出现 Device Announce → 标记为"检测到重入网尝试"
+- Leave 后无 Device Announce → 标记为"未检测到重入网"（设备彻底离开）
+
+leave_question 中 0xCBEB 在第一波 Leave（9.2s-10.2s）后 5 秒出现了 4 条 Device Announce（15.4s-15.9s），推断为尝试重入网。第二波 Leave（23.3s-24.3s）后无 Device Announce，推断为彻底离开。
+
+**区分于**：此推断不是协议层面的确认（需要看到 Rejoin Request/Response 才能确认），而是基于可观测证据的合理推测。
+
+### Device Timeline Card（设备时间线卡片）
+
+诊断面板的核心 UI 组件。每张卡片展示一个离网设备的完整证据链：
+
+```
+┌ 0xCBEB  70:c5:9c:ff:fe:72:a5:cd  路由器 ────────┐
+│                                                  │
+│  ▸ 活跃通信 (Link Status, Route Record, Data)     │
+│  ▸ Network Status ×3 出现                         │
+│  ✕ 第一波 Leave ×3 (9.2s-10.2s) [被踢]           │
+│  📢 Device Announce ×4 (15.4s-15.9s) ← 重入网尝试  │
+│  ✕ 第二波 Leave ×3 (23.3s-24.3s) [被踢, 彻底离开] │
+│                                                  │
+│  诊断: 被踢出网络, 有重入网尝试, 最终彻底离网       │
+└──────────────────────────────────────────────────┘
+```
+
+**设计决策**（来自 grilling Q4-5）：后端预聚合 → 前端渲染；按设备分卡片；新页面 `#diag`。
+
+### Diagnostic Panel（诊断面板）
+
+前端新页面 `#diag`（hash 路由），与 `#import`、`#topo`、`#tl`、`#nodes` 同级。设计为可扩展的诊断平台：
+- 第一个诊断场景："设备离线分析"（当前实现）
+- 后续扩展："路由异常分析"、"入网失败分析" 等
+- 每个诊断场景是一个独立区域，互不干扰
+
+**区分于**：拓扑页（展示网络结构）和时间线页（展示原始帧）——诊断面板展示的是**推断结论 + 证据链**。

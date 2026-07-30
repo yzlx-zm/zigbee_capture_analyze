@@ -76,6 +76,21 @@ async def topology_from_events(pan: str = Query(default=""),
                                asymmetric_links=asym)
 
 
+@router.get("/diag/offline")
+async def diag_offline(pan: str = Query(default=""),
+                       time_start: float | None = Query(default=None),
+                       time_end: float | None = Query(default=None)):
+    """设备离线诊断: Leave burst + rejoin 推断 + 诊断结论."""
+    pkts = get_packets()
+    if not pkts:
+        return {"devices": [], "summary": {"total_devices_left": 0}}
+    pan_int = int(pan, 16) if pan else None
+    timeline = _ensure_events_timeline()
+    nodes = get_nodes()
+    return rev.aggregate_offline_diagnosis(timeline, nodes=nodes, pan=pan_int,
+                                           t0=time_start, t1=time_end)
+
+
 @router.get("/nodes")
 async def node_list(search: str = Query(default=""), pan: str = Query(default="")):
     nodes = get_nodes()
