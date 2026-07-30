@@ -235,14 +235,17 @@ def derive_topology(timeline: RouteEventTimeline,
                     nodes: dict[int, dict],
                     pan: int | None = None,
                     t0: float | None = None,
-                    t1: float | None = None) -> dict:
+                    t1: float | None = None,
+                    link_status_tables: dict | None = None,
+                    asymmetric_links: list[dict] | None = None,
+                    ) -> dict:
     """从事件时间线推导拓扑图, 输出格式兼容 topology.build().
 
     Phase 2 加入 Route Request (下行探测) 和 Network Status (下行失败):
-      route_paths    — Route Record 上行实证路径 (格式不变)
+      route_paths    — Route Record 上行实证路径
       route_probes   — Route Request 下行探测记录
       route_failures — Network Status 下行失败定位
-      每条路径新增 direction 字段: upstream_proven / downstream_probed / downstream_failed
+    Phase 3: 接受外部构建的 link_status_tables + asymmetric_links (非事件数据).
     """
     rr_events = timeline.query(t0, t1, [EVENT_ROUTE_RECORD])
     req_events = timeline.query(t0, t1, [EVENT_ROUTE_REQUEST])
@@ -395,11 +398,11 @@ def derive_topology(timeline: RouteEventTimeline,
         "tree_depths": {}, "tree_node_count": len(active_aids),
         "leaf_count": 0, "total_nodes": len(nodes),
         "total_edges": len(edge_list), "parents": {},
-        "neighbor_tables": {},
+        "neighbor_tables": link_status_tables or {},
         "route_paths": route_paths,
         "route_probes": route_probes,
         "route_failures": route_failures,
-        "asymmetric_links": [],
+        "asymmetric_links": asymmetric_links or [],
     }
 
 
