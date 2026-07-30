@@ -118,20 +118,19 @@ reg('import',function(){
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
   // 持久化: 切页回来恢复上次导入结果
   var imp=window.__IMP;
-  if(!imp||!imp.result){try{var w=JSON.parse(window.name||'{}');if(w.r)imp={result:w.r,name:w.n};}catch(e){}}
-  if(imp&&imp.result){
-    var rd=imp.result; var rn=imp.name||'';
+  if(imp&&imp.packets){
     h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
-      +(rn?'<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+rn+'</p>':'')
-      +'<div class=\"stats\"><span>总包:'+(rd.packets||0)+'</span><span>节点:'+(rd.nodes||0)+'</span>'
-      +(rd.file_type?'<span>类型:'+rd.file_type+'</span>':'')
-      +'</div><p style=\"font-size:11px;margin-top:4px\">'+JSON.stringify(rd.by_type||{}).substr(0,300)+'</p>'
-      +'</div><button class=\"btn btn-p\" id=\"gotopo\" style=\"margin-top:8px\">查看拓扑 →</button> '
+      +(imp.fname?'<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+imp.fname+'</p>':'')
+      +'<div class=\"stats\"><span>总包:'+(imp.packets||0)+'</span><span>节点:'+(imp.nodes||0)+'</span>'
+      +(imp.file_type?'<span>类型:'+imp.file_type+'</span>':'')
+      +'</div><p style=\"font-size:11px;margin-top:4px\">'+JSON.stringify(imp.by_type||{}).substr(0,300)+'</p>';
+    if(imp.dec&&imp.dec.decrypted)h+='<p style=\"font-size:11px;margin-top:2px;color:#16a34a\">解密: '+imp.dec.decrypted+'/'+imp.dec.total_data_frames+' 帧 ('+(imp.dec.decrypt_rate*100).toFixed(0)+'%)</p>';
+    h+='</div><button class=\"btn btn-p\" id=\"gotopo\" style=\"margin-top:8px\">查看拓扑 →</button> '
       +'<button class=\"btn btn-r\" id=\"clr\" style=\"margin-top:8px\">清除数据</button></div>';
   }else{
-    h+='<div class="card" id="sout" style="display:none"><h3>📊 导入结果</h3><div id="sdiv"></div>'
-      +'<button class="btn btn-p" id="gotopo" style="margin-top:8px">查看拓扑 →</button> '
-      +'<button class="btn btn-r" id="clr" style=\"margin-top:8px\">清除数据</button></div>';
+    h+='<div class="card" id="sout" style=\"display:none\"><h3>📊 导入结果</h3><div id="sdiv"></div>'
+      +'<button class="btn btn-p\" id=\"gotopo\" style=\"margin-top:8px\">查看拓扑 →</button> '
+      +'<button class=\"btn btn-r\" id=\"clr\" style=\"margin-top:8px\">清除数据</button></div>';
   }
   document.getElementById('mc').innerHTML=h;
 
@@ -241,7 +240,7 @@ reg('import',function(){
     btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
       S.topo=null;S.pkts=0;S.nodes=0;window.__IMP=null;sb('就绪');
-      var so=document.getElementById('sout');if(so)so.style.display='none';
+      try{document.getElementById('sout').style.display='none';}catch(e){}
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
@@ -278,8 +277,11 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
-  try{window.name=JSON.stringify({r:d,n:fname||''});}catch(e){}
-  window.__IMP={result:d,name:fname||''};
+  // 只存关键展示字段, 避开 API 响应中可能不可序列化的嵌套对象
+  var snap={packets:d.packets||0,nodes:d.nodes||0,file_type:d.file_type||'',fname:fname||''};
+  try{snap.by_type=JSON.parse(JSON.stringify(d.by_type||{}));}catch(e){}
+  try{snap.dec=JSON.parse(JSON.stringify(d.decrypt_stats||{}));}catch(e){}
+  window.__IMP=snap;
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
