@@ -19,7 +19,7 @@ def _ensure_events_timeline() -> rev.RouteEventTimeline:
         return _events_timeline
     # 重建
     _events_timeline = rev.RouteEventTimeline()
-    _events_timeline.add(rev.extract_route_record_events(pkts))
+    _events_timeline.add(rev.extract_events(pkts))
     _events_packet_count = len(pkts)
     return _events_timeline
 

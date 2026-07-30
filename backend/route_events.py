@@ -97,6 +97,32 @@ class RouteEventTimeline:
 
 # ── Extraction ──
 
+def _get_packet_id(p: dict) -> int:
+    """从 packet dict 提取帧号 (用于交叉引用)."""
+    layers = p.get("raw_layers", {})
+    frame = layers.get("frame", {})
+    raw = frame.get("frame.number", "0")
+    try:
+        return int(raw) if isinstance(raw, str) else int(raw)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _h(val: str) -> int | None:
+    """'0x0019' → 25, '' → None"""
+    val = val.strip()
+    return int(val, 16) if val else None
+
+
+def _get_command_data(nwk: dict, cmd_name: str) -> dict | None:
+    """从 NWK layers 中提取指定命令帧的 data dict."""
+    for key in nwk:
+        if key.startswith("Command Frame:") and cmd_name in key:
+            data = nwk[key]
+            return data if isinstance(data, dict) else None
+    return None
+
+
 def extract_route_record_events(packets: list[dict]) -> list[RouteEvent]:
     """从 tshark 解析的包列表中提取所有 Route Record 事件.
 
@@ -126,18 +152,84 @@ def extract_route_record_events(packets: list[dict]) -> list[RouteEvent]:
     return events
 
 
-def _get_packet_id(p: dict) -> int:
-    """从 packet dict 提取帧号 (用于交叉引用)."""
-    layers = p.get("raw_layers", {})
-    frame = layers.get("frame", {})
-    raw = frame.get("frame.number", "0")
-    try:
-        return int(raw) if isinstance(raw, str) else int(raw)
-    except (ValueError, TypeError):
-        return 0
+def extract_route_request_events(packets: list[dict]) -> list[RouteEvent]:
+    """从 tshark 解析的包列表中提取所有 Route Request 事件.
+
+    Route Request 是协调器主动向目标设备发起的下行路径探测.
+    从 NWK Command Frame 中提取 destination、cost、many-to-one 标志等.
+    """
+    events: list[RouteEvent] = []
+    for p in packets:
+        if p.get("pkt_type") != "Route Request":
+            continue
+        src = p.get("nwk_src")
+        if src is None:
+            continue
+        nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
+        cmd_data = _get_command_data(nwk, "Route Request")
+        if not cmd_data:
+            continue
+        dst = _h(cmd_data.get("zbee_nwk.cmd.route.dest", ""))
+        if dst is None:
+            continue
+        radius = p.get("nwk_radius", 0) or 0
+        cost = int(cmd_data.get("zbee_nwk.cmd.route.cost", "0"), 16)
+        events.append(RouteEvent(
+            timestamp=p["ts"],
+            event_type=EVENT_ROUTE_REQUEST,
+            src=src,
+            dst=dst,
+            radius=radius,
+            dropped=False,  # passive sniffer can't directly observe drops; Phase 3
+            pan=p.get("pan_src") or p.get("pan_dst"),
+            packet_id=_get_packet_id(p),
+        ))
+    return events
 
 
-# ── Topology Derivation (Phase 1: Route Record only) ──
+def extract_network_status_events(packets: list[dict]) -> list[RouteEvent]:
+    """从 tshark 解析的包列表中提取所有 Network Status 事件.
+
+    Network Status 报告下行源路由失败——在哪跳因为什么原因断了.
+    status_code 含义: 0x00=No Route, 0x01=Tree Link Failure, 0x0C=Many-to-One Failure 等.
+    """
+    events: list[RouteEvent] = []
+    for p in packets:
+        if p.get("pkt_type") != "Network Status":
+            continue
+        src = p.get("nwk_src")
+        dst = p.get("nwk_dst")
+        if src is None or dst is None:
+            continue
+        nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
+        cmd_data = _get_command_data(nwk, "Network Status")
+        if not cmd_data:
+            continue
+        sc_raw = cmd_data.get("zbee_nwk.cmd.status", "")
+        status_code = int(sc_raw, 16) if sc_raw else None
+        events.append(RouteEvent(
+            timestamp=p["ts"],
+            event_type=EVENT_NETWORK_STATUS,
+            src=src,
+            dst=dst,
+            status_code=status_code,
+            pan=p.get("pan_src") or p.get("pan_dst"),
+            packet_id=_get_packet_id(p),
+        ))
+    return events
+
+
+def extract_events(packets: list[dict]) -> list[RouteEvent]:
+    """统一提取: 所有路由事件 (Route Record + Route Request + Network Status)."""
+    events: list[RouteEvent] = []
+    events.extend(extract_route_record_events(packets))
+    events.extend(extract_route_request_events(packets))
+    events.extend(extract_network_status_events(packets))
+    events.sort(key=lambda e: e.timestamp)
+    return events
+
+
+# ── Topology Derivation ──
 
 def derive_topology(timeline: RouteEventTimeline,
                     nodes: dict[int, dict],
@@ -146,18 +238,25 @@ def derive_topology(timeline: RouteEventTimeline,
                     t1: float | None = None) -> dict:
     """从事件时间线推导拓扑图, 输出格式兼容 topology.build().
 
-    当前 Phase 1 仅使用 Route Record 事件构建 path 和 node 列表.
-    后续 Phase 2-3 加入 Route Request / Network Status 后会丰富方向语义.
+    Phase 2 加入 Route Request (下行探测) 和 Network Status (下行失败):
+      route_paths    — Route Record 上行实证路径 (格式不变)
+      route_probes   — Route Request 下行探测记录
+      route_failures — Network Status 下行失败定位
+      每条路径新增 direction 字段: upstream_proven / downstream_probed / downstream_failed
     """
-    events = timeline.query(t0, t1, [EVENT_ROUTE_RECORD])
+    rr_events = timeline.query(t0, t1, [EVENT_ROUTE_RECORD])
+    req_events = timeline.query(t0, t1, [EVENT_ROUTE_REQUEST])
+    ns_events = timeline.query(t0, t1, [EVENT_NETWORK_STATUS])
 
     # PAN 过滤
     if pan is not None:
-        events = [e for e in events if e.pan == pan]
+        rr_events = [e for e in rr_events if e.pan == pan]
+        req_events = [e for e in req_events if e.pan == pan]
+        ns_events = [e for e in ns_events if e.pan == pan]
 
-    # Route paths — 聚合 (src + relays + dst) 去重
+    # ── Route Paths (上行实证) ──
     path_meta: dict[tuple, dict] = {}
-    for e in events:
+    for e in rr_events:
         dedup_key = (e.src, tuple(e.relays), e.dst)
         if dedup_key in path_meta:
             meta = path_meta[dedup_key]
@@ -166,9 +265,7 @@ def derive_topology(timeline: RouteEventTimeline,
             meta["frame_count"] += 1
         else:
             path_meta[dedup_key] = {
-                "first_ts": e.timestamp,
-                "last_ts": e.timestamp,
-                "frame_count": 1,
+                "first_ts": e.timestamp, "last_ts": e.timestamp, "frame_count": 1,
             }
 
     route_paths = []
@@ -179,21 +276,16 @@ def derive_topology(timeline: RouteEventTimeline,
         active = not ((t0 is not None and meta["last_ts"] < t0)
                       or (t1 is not None and meta["first_ts"] > t1))
         route_paths.append({
-            "src": src,
-            "dst": dst,
-            "relays": relays,
+            "src": src, "dst": dst, "relays": relays,
             "hop_count": len(relays) + 1,
             "path_str": path_str,
-            "first_ts": meta["first_ts"],
-            "last_ts": meta["last_ts"],
+            "first_ts": meta["first_ts"], "last_ts": meta["last_ts"],
             "frame_count": meta["frame_count"],
-            "is_current": True,  # Phase 1 暂不区分
-            "active": active,
+            "is_current": True, "active": active,
+            "direction": "upstream_proven",
         })
 
     route_paths.sort(key=lambda x: x["first_ts"])
-
-    # 标记 is_current (同一 src 的最新路径)
     src_latest: dict[int, float] = {}
     for rp in route_paths:
         s = rp["src"]
@@ -202,38 +294,80 @@ def derive_topology(timeline: RouteEventTimeline,
     for rp in route_paths:
         rp["is_current"] = (rp["first_ts"] == src_latest.get(rp["src"]))
 
-    # PAN 统计
+    # ── Route Probes (下行探测) ──
+    probe_meta: dict[tuple, dict] = {}
+    for e in req_events:
+        dedup_key = (e.src, e.dst)
+        if dedup_key in probe_meta:
+            pmeta = probe_meta[dedup_key]
+            pmeta["first_ts"] = min(pmeta["first_ts"], e.timestamp)
+            pmeta["last_ts"] = max(pmeta["last_ts"], e.timestamp)
+            pmeta["count"] += 1
+        else:
+            probe_meta[dedup_key] = {
+                "first_ts": e.timestamp, "last_ts": e.timestamp,
+                "count": 1, "radius": e.radius or 0,
+            }
+    route_probes = []
+    for (src, dst), pmeta in probe_meta.items():
+        active = not ((t0 is not None and pmeta["last_ts"] < t0)
+                      or (t1 is not None and pmeta["first_ts"] > t1))
+        route_probes.append({
+            "src": src, "dst": dst,
+            "path_str": f"0x{src:04X} → 0x{dst:04X} (radius={pmeta['radius']})",
+            "first_ts": pmeta["first_ts"], "last_ts": pmeta["last_ts"],
+            "count": pmeta["count"], "radius": pmeta["radius"],
+            "active": active,
+            "direction": "downstream_probed",
+        })
+    route_probes.sort(key=lambda x: x["first_ts"])
+
+    # ── Route Failures (下行失败) ──
+    route_failures = []
+    for e in ns_events:
+        active = not ((t0 is not None and e.timestamp < t0)
+                      or (t1 is not None and e.timestamp > t1))
+        route_failures.append({
+            "src": e.src, "dst": e.dst,
+            "status_code": e.status_code,
+            "status_name": _status_name(e.status_code),
+            "path_str": f"0x{e.src:04X} → 0x{e.dst:04X} [status=0x{e.status_code:02X}]",
+            "timestamp": e.timestamp,
+            "active": active,
+            "direction": "downstream_failed",
+        })
+
+    # ── PAN 统计 ──
     pan_counts = defaultdict(int)
-    active_aids = set()
-    for e in events:
-        if e.pan:
-            pan_counts[e.pan] += 1
-        active_aids.add(e.src)
-        active_aids.add(e.dst)
+    active_aids: set[int] = set()
+    for e in rr_events:
+        if e.pan: pan_counts[e.pan] += 1
+        active_aids.add(e.src); active_aids.add(e.dst)
         active_aids.update(e.relays)
+    for e in req_events:
+        if e.pan: pan_counts[e.pan] += 1
+        active_aids.add(e.src); active_aids.add(e.dst)
+    for e in ns_events:
+        if e.pan: pan_counts[e.pan] += 1
+        active_aids.add(e.src); active_aids.add(e.dst)
     main_pan = max(pan_counts, key=pan_counts.get) if pan_counts else None
     if pan is None and main_pan is not None:
         pan = main_pan
 
-    # 节点列表 (从 event participants + nodes dict 合并)
+    # ── 节点 ──
     node_list = []
     for aid in sorted(active_aids):
         n = nodes.get(aid, {})
         node_list.append({
-            "aid": aid,
-            "label": f"0x{aid:04X}",
-            "seen": n.get("seen", 0),
-            "pan": pan,
-            "is_coord": aid == 0,
-            "depth": -1,  # 后续 BFS 由前端计算
-            "parent": None,
-            "children": [],
-            "coord_traffic": 0,
+            "aid": aid, "label": f"0x{aid:04X}",
+            "seen": n.get("seen", 0), "pan": pan,
+            "is_coord": aid == 0, "depth": -1,
+            "parent": None, "children": [], "coord_traffic": 0,
             "type_list": n.get("type_list", [])[:10],
             "device_type": n.get("device_type", "unknown"),
         })
 
-    # 边: Route Record 每跳 (粗略, 后续 Link Status 补充)
+    # ── 边: Route Record 逐跳 ──
     edge_list = []
     edge_seen = set()
     for rp in route_paths:
@@ -245,11 +379,9 @@ def derive_topology(timeline: RouteEventTimeline,
                 if ek not in edge_seen:
                     edge_seen.add(ek)
                     edge_list.append({
-                        "src": s, "dst": d,
-                        "count": 1,
+                        "src": s, "dst": d, "count": 1,
                         "success_rate": 1.0,
-                        "is_link_status": False,
-                        "is_parent_child": False,
+                        "is_link_status": False, "is_parent_child": False,
                     })
 
     pan_list = [{"pan": p, "count": c, "label": f"0x{p:04X}"}
@@ -257,19 +389,43 @@ def derive_topology(timeline: RouteEventTimeline,
 
     return {
         "pan_list": pan_list,
-        "nodes": node_list,
-        "edges": edge_list,
-        "coord": 0,
-        "main_pan": main_pan,
+        "nodes": node_list, "edges": edge_list,
+        "coord": 0, "main_pan": main_pan,
         "pans": sorted(pan_counts.keys()),
-        "tree_depths": {},
-        "tree_node_count": len(active_aids),
-        "leaf_count": 0,
-        "total_nodes": len(nodes),
-        "total_edges": len(edge_list),
-        "parents": {},
-        # 协议数据 (Phase 1: 仅 Route Record; Phase 2+ 会丰富)
+        "tree_depths": {}, "tree_node_count": len(active_aids),
+        "leaf_count": 0, "total_nodes": len(nodes),
+        "total_edges": len(edge_list), "parents": {},
         "neighbor_tables": {},
         "route_paths": route_paths,
+        "route_probes": route_probes,
+        "route_failures": route_failures,
         "asymmetric_links": [],
     }
+
+
+def _status_name(code: int | None) -> str:
+    """Network Status 失败码 → 可读名称."""
+    if code is None:
+        return "unknown"
+    names = {
+        0x00: "No Route Available",
+        0x01: "Tree Link Failure",
+        0x02: "Non-Tree Link Failure",
+        0x03: "Low Battery",
+        0x04: "No Routing Capacity",
+        0x05: "No Indirect Capacity",
+        0x06: "Indirect Transaction Expiry",
+        0x07: "Target Device Unavailable",
+        0x08: "Target Address Unallocated",
+        0x09: "Parent Link Failure",
+        0x0A: "Validate Route",
+        0x0B: "Source Route Failure",
+        0x0C: "Many-to-One Route Failure",
+        0x0D: "Address Conflict",
+        0x0E: "Verify Addresses",
+        0x0F: "PAN Identifier Update",
+        0x10: "Network Address Update",
+        0x11: "Bad Frame Counter",
+        0x12: "Bad Key Sequence Number",
+    }
+    return names.get(code, f"Unknown(0x{code:02X})")
