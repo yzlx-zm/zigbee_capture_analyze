@@ -15,7 +15,7 @@ pkts = parse_packets(['C:/Users/Administrator/Desktop/test2-export.pcap'])
 events = extract_route_record_events(pkts)
 tl = RouteEventTimeline()
 tl.add(events)
-assert len(events) == 109, f'Expected 109 Route Record events, got {len(events)}'
+assert len(events) == 33, f'Expected 33 Route Record events (with relay chains), got {len(events)}'
 # verify relay lists are non-empty
 for e in events:
     assert len(e.relays) >= 2, f'Event {e.packet_id} has empty relay list'

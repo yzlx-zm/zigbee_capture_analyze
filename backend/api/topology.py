@@ -2,8 +2,26 @@
 from fastapi import APIRouter, Query
 from .files import get_packets, get_nodes
 from .. import topology as topo
+from .. import route_events as rev
 
 router = APIRouter()
+
+# 全局事件时间线 (从导入的 packets 构建, packets 变化时重建)
+_events_timeline: rev.RouteEventTimeline | None = None
+_events_packet_count: int = 0  # 用于检测 packets 是否变化
+
+
+def _ensure_events_timeline() -> rev.RouteEventTimeline:
+    """惰性构建事件时间线 (packets 不变时只构建一次)."""
+    global _events_timeline, _events_packet_count
+    pkts = get_packets()
+    if _events_timeline is not None and len(pkts) == _events_packet_count:
+        return _events_timeline
+    # 重建
+    _events_timeline = rev.RouteEventTimeline()
+    _events_timeline.add(rev.extract_route_record_events(pkts))
+    _events_packet_count = len(pkts)
+    return _events_timeline
 
 
 @router.get("/topology/graph")
@@ -17,6 +35,21 @@ async def topology_graph(pan: str = Query(default=""),
     pan_int = int(pan, 16) if pan else None
     return topo.build(pkts, nodes, filter_pan=pan_int,
                       time_start=time_start, time_end=time_end)
+
+
+@router.get("/topology/events")
+async def topology_from_events(pan: str = Query(default=""),
+                               time_start: float | None = Query(default=None),
+                               time_end: float | None = Query(default=None)):
+    """事件时间线推导的拓扑 (Phase 1: Route Record 事件)."""
+    pkts = get_packets()
+    nodes = get_nodes()
+    if not pkts:
+        return {"nodes": [], "edges": [], "coord": None}
+    pan_int = int(pan, 16) if pan else None
+    timeline = _ensure_events_timeline()
+    return rev.derive_topology(timeline, nodes, pan=pan_int,
+                               t0=time_start, t1=time_end)
 
 
 @router.get("/nodes")
