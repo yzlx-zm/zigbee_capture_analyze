@@ -118,7 +118,6 @@ reg('import',function(){
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
   // 持久化: 切页回来恢复上次导入结果
   var rd=S._lastResult;
-  if(!rd)console.log('[import] no saved result');
   if(rd){
     var rn=S._lastName||'';
     h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
@@ -278,7 +277,8 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
-  S._lastResult=JSON.parse(JSON.stringify(d));S._lastName=fname||'';
+  try{S._lastResult=JSON.parse(JSON.stringify(d));}catch(e){S._lastResult=d;console.error('deep copy failed:',e);}
+  S._lastName=fname||'';
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
