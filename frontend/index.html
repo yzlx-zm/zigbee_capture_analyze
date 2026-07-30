@@ -116,9 +116,11 @@ reg('import',function(){
       +'</div>'
     +'</div>'
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
-  // 持久化: 切页回来恢复上次导入结果 — 直接写入HTML, 不依赖后续DOM操作
-  if(S._lastResult){
-    var rd=S._lastResult; var rn=S._lastName||'';
+  // 持久化: 切页回来恢复上次导入结果
+  var rd=S._lastResult;
+  if(!rd)console.log('[import] no saved result');
+  if(rd){
+    var rn=S._lastName||'';
     h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
       +(rn?'<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+rn+'</p>':'')
       +'<div class=\"stats\"><span>总包:'+(rd.packets||0)+'</span><span>节点:'+(rd.nodes||0)+'</span>'
@@ -276,7 +278,7 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
-  S._lastResult=d;S._lastName=fname||'';
+  S._lastResult=JSON.parse(JSON.stringify(d));S._lastName=fname||'';
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
