@@ -242,19 +242,26 @@ def _pkt_type(mac_frame_type: int, nwk, aps, decrypted: bool,
 
 
 def _parse_link_status(plaintext: bytes) -> list[dict] | None:
-    """从 NWK command payload 解析 Link Status 邻居表."""
+    """从 NWK command payload 解析 Link Status 邻居表.
+
+    scapy 字段名 (ZigbeeNWKCommandPayload 对 cmd 0x08):
+      entry_count, link_status_list[i].neighbor_network_address / incoming_cost / outgoing_cost
+    """
     try:
         cmd = ZigbeeNWKCommandPayload(plaintext)
         if int(cmd.cmd_identifier) != 8:
             return None
+        count = int(cmd.entry_count)
+        ls_list = cmd.link_status_list
         neighbors = []
-        for i in range(int(cmd.number_of_entries)):
-            nb_addr = int(cmd.neighbor_table[i].neighbor)
+        for i in range(min(count, len(ls_list))):
+            entry = ls_list[i]
+            nb_addr = int(entry.neighbor_network_address)
             if nb_addr < 0xFFF0:
                 neighbors.append({
                     "addr": nb_addr,
-                    "in_cost": int(cmd.neighbor_table[i].incoming_cost),
-                    "out_cost": int(cmd.neighbor_table[i].outgoing_cost),
+                    "in_cost": int(entry.incoming_cost),
+                    "out_cost": int(entry.outgoing_cost),
                 })
         return neighbors if neighbors else None
     except Exception:
