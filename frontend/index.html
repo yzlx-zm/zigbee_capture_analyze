@@ -116,12 +116,22 @@ reg('import',function(){
       +'</div>'
     +'</div>'
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
-  h+='<div class="card" id="sout" style="display:none"><h3>📊 导入结果</h3><div id="sdiv"></div>'
-    +'<button class="btn btn-p" id="gotopo" style="margin-top:8px">查看拓扑 →</button> '
-    +'<button class="btn btn-r" id="clr" style="margin-top:8px">清除数据</button></div>';
+  // 持久化: 切页回来恢复上次导入结果 — 直接写入HTML, 不依赖后续DOM操作
+  if(S._lastResult){
+    var rd=S._lastResult; var rn=S._lastName||'';
+    h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
+      +(rn?'<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+rn+'</p>':'')
+      +'<div class=\"stats\"><span>总包:'+(rd.packets||0)+'</span><span>节点:'+(rd.nodes||0)+'</span>'
+      +(rd.file_type?'<span>类型:'+rd.file_type+'</span>':'')
+      +'</div><p style=\"font-size:11px;margin-top:4px\">'+JSON.stringify(rd.by_type||{}).substr(0,300)+'</p>'
+      +'</div><button class=\"btn btn-p\" id=\"gotopo\" style=\"margin-top:8px\">查看拓扑 →</button> '
+      +'<button class=\"btn btn-r\" id=\"clr\" style=\"margin-top:8px\">清除数据</button></div>';
+  }else{
+    h+='<div class="card" id="sout" style="display:none"><h3>📊 导入结果</h3><div id="sdiv"></div>'
+      +'<button class="btn btn-p" id="gotopo" style="margin-top:8px">查看拓扑 →</button> '
+      +'<button class="btn btn-r" id="clr" style=\"margin-top:8px\">清除数据</button></div>';
+  }
   document.getElementById('mc').innerHTML=h;
-  // 持久化: 切页回来恢复上次导入结果 (S._lastResult 是全局变量, hash切换不丢)
-  if(S._lastResult){sr(S._lastResult,S._lastName||'');}
 
   // Tab switch
   document.querySelectorAll('.imp-tab').forEach(function(btn){
@@ -228,7 +238,8 @@ reg('import',function(){
     }
     btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;S._lastResult=null;S._lastName='';sb('就绪');document.getElementById('sout').style.display='none';
+      S.topo=null;S.pkts=0;S.nodes=0;S._lastResult=null;S._lastName='';sb('就绪');
+      var so=document.getElementById('sout');if(so)so.style.display='none';
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
   });
