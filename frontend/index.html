@@ -117,9 +117,9 @@ reg('import',function(){
     +'</div>'
     +'<div id="prog" style="display:none;margin-top:8px"><p id="imsg" style="font-size:11px"></p></div></div>';
   // 持久化: 切页回来恢复上次导入结果
-  var rd=S._lastResult;
-  if(rd){
-    var rn=S._lastName||'';
+  var imp=window.__IMP;
+  if(imp&&imp.result){
+    var rd=imp.result; var rn=imp.name||'';
     h+='<div class="card" id="sout"><h3>📊 导入结果</h3><div id="sdiv">'
       +(rn?'<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+rn+'</p>':'')
       +'<div class=\"stats\"><span>总包:'+(rd.packets||0)+'</span><span>节点:'+(rd.nodes||0)+'</span>'
@@ -239,7 +239,7 @@ reg('import',function(){
     }
     btn.textContent='清除中...';btn.disabled=true;
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;S._lastResult=null;S._lastName='';sb('就绪');
+      S.topo=null;S.pkts=0;S.nodes=0;window.__IMP=null;sb('就绪');
       var so=document.getElementById('sout');if(so)so.style.display='none';
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.style.background='';btn.style.color='';
     });
@@ -277,8 +277,7 @@ function doPI(files){setProg('上传解析中...');
 function setProg(msg){var el=document.getElementById('prog');if(el){el.style.display=msg?'block':'none';}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';}
 
 function sr(d,fname){document.getElementById('sout').style.display='block';
-  try{S._lastResult=JSON.parse(JSON.stringify(d));}catch(e){S._lastResult=d;console.error('deep copy failed:',e);}
-  S._lastName=fname||'';
+  window.__IMP={result:d,name:fname||''};
   var h='';
   if(fname)h+='<p style=\"font-size:11px;color:#64748b;margin-bottom:4px\">📂 '+fname+'</p>';
   h+='<div class=\"stats\"><span>总包:'+(d.packets||0)+'</span><span>节点:'+(d.nodes||0)+'</span>';
