@@ -206,6 +206,7 @@ reg('topo', function(){
     var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
+      var ci=i % PATH_COLORS.length;
       var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
