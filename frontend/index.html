@@ -88,7 +88,8 @@ function rt(){var h=location.hash.slice(1)||'import';
 window.addEventListener('hashchange',rt);
 </script>
 <script type="module" src="js/app.js"></script>
-
+<script type="module" src="js/topo.js"></script>
+<script>
 // ===== IMPORT =====
 reg('import',function(){
   if(!S.impTab)S.impTab='csv';
@@ -244,8 +245,6 @@ reg('import',function(){
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });
 
-
-<script type="module" src="js/topo.js"></script>
 reg('tl',function(){
   // Init state: remember last filter
   if(!S.tlPan) S.tlPan='';
