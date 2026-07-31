@@ -397,7 +397,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             pass
 
     if aps is not None:
-        if int(aps.frame_control) & 0x02:  # APS security
+        # scapy 把 APS FCF 拆成独立字段: aps_frametype (0=data/1=cmd/2=ack), 不是 frame_control
+        aps_ftype = _h(getattr(aps, "aps_frametype", None)) or 0
+        # APS security 标志在 delivery_mode/单独位, 这里用 frametype+payload 判断
+        if getattr(aps, "security_level", 0):  # APS security enabled
             try:
                 aps_plaintext, key_label = _decrypt_aps(aps, network_keys, link_keys)
                 result["decrypted"] = True
@@ -416,10 +419,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         result["aps_src_ep"] = _h(getattr(aps, "src_endpoint", None))
         result["aps_dst_ep"] = _h(getattr(aps, "dst_endpoint", None))
 
-        # APS Ack detection: frametype==2 AND no payload/counter (genuine short Ack)
-        aps_fcf = int(aps.frame_control)
-        aps_has_payload = (aps_plain is not None and len(aps_plain) > 0)
-        if (aps_fcf & 0x03) == 2 and not aps_has_payload and result["aps_counter"] is None:
+        # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
+        if aps_ftype == 2:
             result["pkt_type"] = "APS Ack"
 
     # Final pkt_type
