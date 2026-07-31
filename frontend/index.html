@@ -412,7 +412,7 @@ reg('topo',function(){
     for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→TL</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
     document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} })})});
-    document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();location.hash='tl'})});
+    document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();S.topoT0=null;S.topoT1=null;location.hash='tl'})});
     // Asymmetric links — 只显示WEAK和ASYMM级别, 点击可高亮图中节点
     var al=d.asymmetric_links||[];
     var alFiltered=[]; for(var i=0;i<al.length;i++){if(al[i].level!=='OK') alFiltered.push(al[i]);}
@@ -571,7 +571,7 @@ reg('topo',function(){
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
 
     // Click → 跳转时间线
-    cy.on('tap','node',function(e){var n=e.target;var aid=n.data('aid');S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');location.hash='tl';});
+    cy.on('tap','node',function(e){var n=e.target;var aid=n.data('aid');S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl';});
 
     // 双击 → 高亮/淡出
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
@@ -812,7 +812,7 @@ reg('topo',function(){
       nd.innerHTML='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
       if(isRouter)nd.innerHTML+=' ['+kids.length+']';
       nd.title='seen:'+n.seen+' depth:'+n.depth;
-      nd.addEventListener('click',function(){S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');location.hash='tl'});
+      nd.addEventListener('click',function(){S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl'});
       li.appendChild(nd);
       if(n.parent!=null){
         var ek=n.parent+'-'+aid;var edge=edgeMap[ek];
