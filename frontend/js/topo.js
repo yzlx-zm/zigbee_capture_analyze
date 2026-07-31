@@ -7,6 +7,7 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 
+reg('topo', function(){
   document.getElementById('mc').style.padding='0';
   var h='<div style="display:flex;height:calc(100vh - 44px)">'
     // ── 左侧边栏 ──
@@ -735,3 +736,4 @@ let tsStart = 0, tsEnd = 0;
     try{renderRoutePaths(d);}catch(e){console.error(e);}
     try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
   });
+});
