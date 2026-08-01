@@ -15,3 +15,4 @@ import './nodes.js';
 import './diag.js';
 
 // ── 初始路由 ──
+if (window.rt) window.rt();
