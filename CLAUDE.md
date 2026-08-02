@@ -2,9 +2,9 @@
 
 ## 嵌入式协作技能库
 
-本项目加载 [embedded-skills](D:/AI_SKILL/embedded-skills/CLAUDE.md) 中的协作技能。
+本项目内置 [embedded-skills](.claude/skills/) 协作技能库（13 个技能，中文版）。
 
-> **默认使用中文版本**（`skills/zh/` 目录）。执行技能时，优先读取中文版指令，以中文回复和产出文档。
+> **默认使用中文版本**。执行技能时，优先读取中文版指令，以中文回复和产出文档。
 
 ### 可用技能
 
@@ -19,6 +19,8 @@
 | `/to-dev-tickets` | 用户 | 规范拆分 → 开发工单（含阻塞边） |
 | `/handoff` | 用户 | 会话交接文档 |
 | `/write-deep-tech-docs` | 用户 | 原理级深度文档 |
+| `/research-datasheet` | 两者 | 后台代理查数据手册/参考手册/errata → 带引用 Markdown |
+| `/prototype-driver` | 两者 | 一次性原型固件，验证寄存器访问或时序逻辑 |
 
 ### 项目自有技能
 
