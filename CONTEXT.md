@@ -276,3 +276,127 @@ leave_question 中 0xCBEB 在第一波 Leave（9.2s-10.2s）后 5 秒出现了 4
 - 每个诊断场景是一个独立区域，互不干扰
 
 **区分于**：拓扑页（展示网络结构）和时间线页（展示原始帧）——诊断面板展示的是**推断结论 + 证据链**。
+
+---
+
+## .cubx 格式与自解析 (Cubx Native Parser)
+
+> 2026-07-30 新增。来源：Phase 7 /grilling 会话。替代 pcap+tshark 管线，实现 key 内嵌、信号数据完整、解析自控。
+
+### .cubx 文件格式
+
+Ubiqua Protocol Analyzer 的原生抓包格式。本质是 **SQLite 数据库**，表结构：
+
+| 表 | 关键列 | 说明 |
+|----|--------|------|
+| `Packets` | Id, Raw, Timestamp, Channel, LQI, RSSI | 802.15.4 原始帧（含 FCS）+ 信号数据 |
+| `Keys` | Id, Type, Key | 内嵌密钥（NetworkKey / LinkKey），**解决 pcap 导出丢 key 的根源问题** |
+| `Addresses` | — | 长短地址映射表 |
+| `Nodes` | — | 节点信息 |
+
+**区分于**：pcap 导出（key 丢失 + FCS 可能为 0xffff + 无 Channel/LQI/RSSI）。
+
+### cubx_reader.py（计划）
+
+新建模块 `backend/cubx_reader.py`，职责：
+1. 读取 .cubx SQLite → 提取 Keys（写入 zigbee_pc_keys）+ 提取 Raw 帧
+2. 用 scapy `Dot15d4FCS` 解析 802.15.4 帧结构
+3. 用 pycryptodome AES-CCM 解密 NWK/APS（参考 akubela `_capture_probe.py`）
+4. 输出 `list[dict]`，格式兼容 `tshark._frame_to_dict`，事件管道无感切换
+
+**设计决策**：
+- 架构：独立模块 `cubx_reader.py`，与 `tshark.py` 平行的输入源
+- MVP 字段范围：pkt_type, ts, ch, nwk_src/dst, mac_src/dst, pan_src/dst, aps_cluster, decrypted, link_status_neighbors, route_record_relays, LQI, RSSI
+- 解密算法：AES-CCM*（ENC-MIC-32），参考 akubela 的 `decrypt_nwk` / `decrypt_aps` / `zigbee_hash` / `security_candidates`
+- 依赖：scapy + pycryptodome（已安装）
+
+**数据来源**：akubela-zigbee-analyser `_capture_probe.py`（参考实现）。
+
+---
+
+## 前端模块化 (Frontend Modularization)
+
+> 2026-07-31 新增。来源：/grilling 技术债治理会话。将 1724 行单体 index.html 拆分为独立模块。
+
+### 全局共享模块（state.js）
+
+所有页面脚本共享的基础设施文件。**只放变量声明和工具函数**，不放任何页面业务逻辑。
+
+**内容边界**：
+- `window.S`：全局状态对象（pkts, nodes, topo, topoPan, topoAddr, topoT0/T1, impTab, verifyPassed 等）
+- `window.A`：HTTP 工具（get/post）
+- `window.sb()`：状态栏更新函数
+- `window.setProg()` / `window.sr()` / `window.doPI()` / `window.doI()`：导入页工具函数
+- `window.fmtTs()`：时间戳格式化（topo+timeline 共用）
+- `window.PATH_COLORS`：路径颜色常量
+- `window.tsStart` / `window.tsEnd`：抓包时间范围（topo+timeline 共用）
+
+**区分于**：页面模块（topo.js 等）——state.js 是可被所有页面引用的**被动数据**，页面模块是**主动逻辑**。
+
+### 页面模块（Page Module）
+
+每个 hash 路由对应一个独立 JS 文件。文件内只包含该页面的 reg() 回调和内部渲染/事件逻辑。
+
+**加载顺序**：state.js 必须第一个加载（提供所有共享变量），页面模块按需加载（无先后依赖）。
+
+**区分于**：state.js 是水平共享层，页面模块是垂直切分。
+
+### index.html 壳
+
+拆分后的 HTML 文件仅保留：
+- `<nav>` 导航栏（页面间切换，不随 hash 变化重建）
+- `<div id="mc">` 主内容容器（页面模块渲染目标）
+- `<link rel="stylesheet">` 引用外部 CSS
+- 共享脚本和页面脚本的 `<script>` 标签（按 state.js → 页面模块顺序）
+- 顶层的 `rt()` 路由调度和 `reg()` 注册函数（极简，~10 行）
+
+**区分于**：拆分前的 1724 行单体 index.html——壳是加载器，单体是全集。
+
+### 设计决策
+
+| # | 决策 | 结论 | 来源 |
+|---|------|------|------|
+| 1 | 拆分策略 | 渐进式——先拆 topo（800行）+ state.js，再拆其余页面 | grilling Q1 |
+| 2 | 共享模块方案 | 单文件 state.js 集中管理（方案 A） | grilling Q2 |
+| 3 | 模块系统 | **ES 模块**（`<script type="module">`）——零构建工具，浏览器原生 `import/export` | grilling Q3 |
+| 4 | 工具函数归属 | `sr/setProg/doPI` 全进 state.js，避免碎片化 | grilling Q4 |
+
+### ES 模块架构
+
+**区分于**：之前的加载顺序契约（`<script>` 标签 + 全局变量依赖）——ES 模块用**编译器强制隔离**替代开发者纪律。未导入的变量在模块内不可见。
+
+### ES Modules
+
+浏览器原生模块系统（Chrome 61+, 2017）。`<script type="module">` 加载的 JS 文件可使用 `import/export` 语法，模块内变量默认私有，只导出明确声明的符号。
+
+**上下文**：本项目无构建工具（无 npm/webpack），但需要跨文件变量隔离——原生 ES 模块是唯一零依赖方案。
+
+**区分于**：CommonJS（Node.js `require`/`module.exports`）——浏览器不支持；AMD（`define`）——已废弃。Vite/webpack 的模块系统是构建时转换的，ES 模块是运行时原生支持的。
+
+### Module Export Boundary（模块导出边界）
+
+`state.js` 的 `export` 声明列表，定义了所有页面模块**能访问什么**。未在 `export` 中的变量，其他模块不可见。
+
+当前边界：
+```js
+// state.js — 导出的符号 (白名单)
+export const S = {...};          // 全局状态
+export const A = {get, post};    // HTTP 工具
+export let tsStart, tsEnd;       // 抓包时间范围 (topo+tl共用)
+export function sb(m) {...}      // 状态栏
+export function fmtTs(ts) {...}  // 时间戳格式化
+export function sr(d, fname) {...} // 导入结果渲染
+export function setProg(msg) {...} // 进度提示
+export function doPI(files) {...}  // pcap/cubx 上传
+export function doI(file) {...}    // CSV 上传
+```
+
+**区分于**：`window.*` 全局变量——导出边界是白名单（显式声明），window 是黑名单（所有变量可用，靠约定隔离）。
+
+### Import-based Coupling（导入耦合）
+
+每个页面模块通过 `import { ... } from './state.js'` 声明自己的依赖。依赖关系是可静态分析的——搜索 `import.*from` 即可列出所有模块的依赖图。
+
+**区分于**：拆分前的隐式耦合（index.html 全局作用域里所有变量相互可见，无法静态分析谁用了谁）。
+
+**数据手册引用**：MDN: `import` / `export` / `<script type="module">`
