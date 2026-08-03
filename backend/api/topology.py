@@ -1,6 +1,6 @@
 """拓扑 + 节点 API"""
 from fastapi import APIRouter, Query
-from .files import get_packets, get_nodes
+from .files import get_packets, get_nodes, get_full_packets
 from .. import topology as topo
 from .. import route_events as rev
 
@@ -89,6 +89,19 @@ async def diag_offline(pan: str = Query(default=""),
     nodes = get_nodes()
     return rev.aggregate_offline_diagnosis(timeline, nodes=nodes, pan=pan_int,
                                            t0=time_start, t1=time_end)
+
+
+@router.get("/diag/l1")
+async def diag_l1():
+    """L1 入网检测: Beacon Request 命中率 (L1-1) + Association 流程 (L1-2).
+
+    需要 cubx 导入 (含 MAC 帧). pcap 导入无 MAC 帧 → 返回不可判定.
+    """
+    from ..detectors import l1 as l1_detector
+    full = get_full_packets()
+    if not full:
+        return {"error": "无数据 (需导入 .cubx 文件)"}
+    return l1_detector.detect(full)
 
 
 @router.get("/nodes")

@@ -137,9 +137,9 @@ async def import_local(path: str = Form(...)):
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary, _full_packets
     _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
-    _last_ubiqua_sync = None; _last_import_summary = None
+    _last_ubiqua_sync = None; _last_import_summary = None; _full_packets = []
     return {"ok": True}
 
 
@@ -229,10 +229,18 @@ async def import_local_pcap(paths: str = Form(...)):
 
 # ── cubx 导入 (scapy 自解析) ──
 
+_full_packets: list[dict] = []  # cubx 全量帧 (含 MAC 命令帧/Beacon, 供 L1 检测)
+
+
+def get_full_packets():
+    """全量帧 (含 MAC 帧, 仅 cubx 导入时有)."""
+    return _full_packets
+
+
 @router.post("/import/cubx")
 async def import_cubx(files: list[UploadFile] = File(...)):
     """上传 .cubx 文件, scapy 自解析 (key 内嵌 + LQI/RSSI)"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets
     from .. import cubx_reader as _cubx
     import tempfile
 
@@ -251,12 +259,17 @@ async def import_cubx(files: list[UploadFile] = File(...)):
             return JSONResponse({"error": "未选择文件"}, 400)
 
         all_pkts = []
+        all_full = []
         for tp in tmp_paths:
-            pkts, added, total = _cubx.parse_cubx(tp)
-            all_pkts.extend(pkts)
+            # 全量解析 (含 MAC 帧) — L1 检测需要 Beacon/Assoc 帧
+            pkts, added, total = _cubx.parse_cubx(tp, include_mac_frames=True)
+            all_full.extend(pkts)
+            # _packets 只保留 NWK 帧 (与 tshark 对齐, 避免 verify 帧数不匹配)
+            all_pkts.extend(p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None)
             _last_ubiqua_sync = {"synced": added, "total_keys": total}
 
         _packets = all_pkts
+        _full_packets = all_full
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "cubx"
         _pcap_paths = [getattr(f, "filename", "") for f in files] or tmp_paths
@@ -274,16 +287,17 @@ async def import_cubx(files: list[UploadFile] = File(...)):
 @router.post("/import/local-cubx")
 async def import_local_cubx(path: str = Form(...)):
     """本地 .cubx 路径导入"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets
     from .. import cubx_reader as _cubx
 
     if not os.path.exists(path):
         return JSONResponse({"error": f"路径不存在: {path}"}, 400)
 
     try:
-        pkts, added, total = _cubx.parse_cubx(path)
+        pkts, added, total = _cubx.parse_cubx(path, include_mac_frames=True)
         _last_ubiqua_sync = {"synced": added, "total_keys": total}
-        _packets = pkts
+        _full_packets = pkts
+        _packets = [p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None]
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "cubx"
         _pcap_paths = [path]
