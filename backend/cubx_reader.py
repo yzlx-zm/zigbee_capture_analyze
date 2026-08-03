@@ -153,8 +153,16 @@ def _load_cubx_keys_internal(db: sqlite3.Connection) -> tuple[list[KeyRecord], l
     return network_keys, link_keys
 
 
+# Zigbee 规范全局默认 Link Key "ZigBeeAlliance09" (公开 well-known key).
+# 入网 TransportKey 帧用 TC Link Key 加密 (APS key-transport-key, key_id=0x02),
+# 若抓包工具的 Keys 表未记录该 key, 解密失败会读到密文首字节 (Security Control),
+# 曾导致 APS 命令 ID 被误读为 0x20/0x38 (实际是 security control 值).
+# tshark 正是用此默认 key 解出命令 ID (验证素材实测确认).
+_DEFAULT_TC_LINK_KEY_HEX = "5A6967426565416C6C69616E63653039"  # "ZigBeeAlliance09"
+
+
 def _load_all_keys(db: sqlite3.Connection) -> tuple[list[KeyRecord], list[KeyRecord]]:
-    """合并 .cubx 内嵌 key + zigbee_pc_keys 外部 key (去重)."""
+    """合并 .cubx 内嵌 key + zigbee_pc_keys 外部 key + 默认全局 Link Key (去重)."""
     network_keys, link_keys = _load_cubx_keys_internal(db)
 
     # 补充 zigbee_pc_keys 中的 key (外部积累的历史密钥)
@@ -168,6 +176,11 @@ def _load_all_keys(db: sqlite3.Connection) -> tuple[list[KeyRecord], list[KeyRec
                 ext_hex_set.add(hex_up)
             except ValueError:
                 pass
+
+    # 补充默认全局 Link Key (ZigBeeAlliance09) — 入网密钥分发的兜底解密候选
+    link_hex_set = {k.value.hex().upper() for k in link_keys}
+    if _DEFAULT_TC_LINK_KEY_HEX not in link_hex_set:
+        link_keys.append(KeyRecord("zigbee-default-link-key", bytes.fromhex(_DEFAULT_TC_LINK_KEY_HEX)))
 
     return network_keys, link_keys
 
@@ -327,6 +340,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "mac_beacon_permit": None,   # Beacon PermitJoin 位 (帧类型 0)
         "link_status_neighbors": None,
         "route_record_relays": None,
+        "nwk_cmd_id": None,          # NWK 命令 ID (4=Leave, 8=Link Status...)
+        "aps_cmd_id": None,          # APS 命令 ID (0x05=TransportKey, 0x08=RequestKey, 0x0F=VerifyKey, 0x10=Confirm)
+        "aps_cmd_key_type": None,    # TransportKey 的 key_type (0x01=NWK Key, 0x04=TC Link Key)
         "raw_layers": {},
     }
 
@@ -410,6 +426,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     # NWK command parsing (on decrypted plaintext)
     if int(nwk.frametype) == 1:
         nwk_cmd_id = _parse_nwk_command_id(plaintext)
+        result["nwk_cmd_id"] = nwk_cmd_id
         if nwk_cmd_id == 8:  # Link Status
             result["link_status_neighbors"] = _parse_link_status(plaintext)
         elif nwk_cmd_id == 5:  # Route Record
@@ -426,8 +443,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     if aps is not None:
         # scapy 把 APS FCF 拆成独立字段: aps_frametype (0=data/1=cmd/2=ack), 不是 frame_control
         aps_ftype = _h(getattr(aps, "aps_frametype", None)) or 0
-        # APS security 标志在 delivery_mode/单独位, 这里用 frametype+payload 判断
-        if getattr(aps, "security_level", 0):  # APS security enabled
+        # APS security: scapy 无 security_level 属性 (曾导致解密分支永不执行,
+        # APS 命令 ID 读到密文首字节 Security Control → 0x20/0x38 误读),
+        # 改用 ZigbeeSecurityHeader 子层判定 (FCF security 位已解析为子层).
+        if aps.haslayer(ZigbeeSecurityHeader):
             try:
                 aps_plaintext, key_label = _decrypt_aps(aps, network_keys, link_keys)
                 result["decrypted"] = True
@@ -449,6 +468,15 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
         if aps_ftype == 2:
             result["pkt_type"] = "APS Ack"
+
+        # APS 命令帧 (aps_frametype==1): 手动字节解析 cmd_id + key_type.
+        # 0x20/0x38 教训: 不依赖 scapy ZigbeeAppCommandPayload (解析有偏差),
+        # 直接读明文 payload 字节 — 官方结构 (zigbee_packet_types.h):
+        #   [0]=command_id, [1]=key_type (仅 TransportKey 0x05 有)
+        if aps_ftype == 1 and aps_plain:
+            result["aps_cmd_id"] = aps_plain[0]
+            if aps_plain[0] == 0x05 and len(aps_plain) >= 2:  # Transport Key
+                result["aps_cmd_key_type"] = aps_plain[1]
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":

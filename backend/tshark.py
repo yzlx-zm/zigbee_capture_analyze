@@ -318,6 +318,10 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     aps_counter = int(aps.get("zbee_aps.counter", "0")) if aps.get("zbee_aps.counter") else None
     aps_src_ep = int(aps.get("zbee_aps.src", ""), 16) if aps.get("zbee_aps.src") else None
     aps_dst_ep = int(aps.get("zbee_aps.dst", ""), 16) if aps.get("zbee_aps.dst") else None
+    # APS 命令帧 (L1-3 密钥分发检测): 命令 ID + TransportKey key_type
+    # 字段官方名: zbee_aps.cmd.id / zbee_aps.cmd.key_type (与 cubx_reader aps_cmd_* 对齐)
+    aps_cmd_id = _h(aps.get("zbee_aps.cmd.id", ""))
+    aps_cmd_key_type = _h(aps.get("zbee_aps.cmd.key_type", ""))
 
     # ZCL 层
     zcl = layers.get("zbee_zcl", {})
@@ -344,6 +348,8 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_profile": aps_profile,
         "aps_counter": aps_counter,
         "aps_src_ep": aps_src_ep, "aps_dst_ep": aps_dst_ep,
+        "aps_cmd_id": aps_cmd_id,
+        "aps_cmd_key_type": aps_cmd_key_type,
         "zcl_cmd_id": zcl_cmd_id,
         "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id) if zcl_cmd_id is not None else None,
         "zcl_direction": zcl_dir,
