@@ -306,6 +306,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     """单帧完整解析 → dict (兼容 tshark._frame_to_dict)."""
     result: dict = {
         "ts": timestamp, "ch": channel, "lqi": lqi, "rssi": rssi,
+        "packet_id": packet_id,
         "pkt_type": "Unknown",
         "pan_src": None, "pan_dst": None,
         "mac_src": None, "mac_dst": None, "mac_seq": None,
@@ -318,6 +319,12 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "sec_frame_counter": None, "sec_mic": None,
         "nwk_radius": None, "nwk_src64": None, "nwk_security": False,
         "mac_fcs_ok": True, "mac_frame_type": 1,
+        "mac_cmd_id": None,          # MAC 命令帧 ID (1=AssocReq, 2=AssocResp, 4=DataReq, 7=BeaconReq...)
+        "mac_src64": None,           # MAC 长地址 (EUI64, 字符串)
+        "mac_dst64": None,           # MAC 目标长地址
+        "mac_cmd_payload": None,     # MAC 命令帧 payload bytes
+        "mac_beacon_pan": None,      # Beacon PAN ID (帧类型 0)
+        "mac_beacon_permit": None,   # Beacon PermitJoin 位 (帧类型 0)
         "link_status_neighbors": None,
         "route_record_relays": None,
         "raw_layers": {},
@@ -342,6 +349,26 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     result["mac_src"] = _addr(getattr(mac, "src_addr", None))
     result["pan_dst"] = _pan_field("dest_panid")
     result["pan_src"] = _pan_field("src_panid") or result["pan_dst"]
+
+    # MAC 命令帧详情 (L1-1/L1-2 检测需要: BeaconReq/AssocReq/AssocResp/DataReq + 长地址)
+    if mac_frame_type == 3:
+        result["mac_cmd_id"] = _h(getattr(mac, "cmd_id", None))
+        # 长地址: AssocReq 源=长地址, AssocResp 目标=长地址
+        result["mac_src64"] = _format_eui(getattr(mac, "src_addr", None)) if _addr(getattr(mac, "src_addr", None)) is None and getattr(mac, "src_addr", None) is not None else None
+        result["mac_dst64"] = _format_eui(getattr(mac, "dest_addr", None)) if _addr(getattr(mac, "dest_addr", None)) is None and getattr(mac, "dest_addr", None) is not None else None
+        try:
+            result["mac_cmd_payload"] = bytes(mac.payload)
+        except Exception:
+            pass
+    elif mac_frame_type == 0:
+        # Beacon: PAN ID + PermitJoin (payload 前 3 字节: PAN(2 LE) + Superframe spec(1, bit7=permit))
+        try:
+            pl = bytes(mac.payload)
+            if len(pl) >= 3:
+                result["mac_beacon_pan"] = int.from_bytes(pl[0:2], "little")
+                result["mac_beacon_permit"] = (pl[2] >> 7) & 1
+        except Exception:
+            pass
 
     # NWK layer
     if not pkt.haslayer(ZigbeeNWK):
@@ -434,11 +461,14 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 # ── Public API ──
 
 
-def parse_cubx(path: str) -> tuple[list[dict], int, int]:
+def parse_cubx(path: str, include_mac_frames: bool = False) -> tuple[list[dict], int, int]:
     """解析 .cubx 文件 → (包列表, key新增数, key去重总数).
 
     Key 自动同步到 zigbee_pc_keys (去重, 幂等).
     包列表按 timestamp 排序, 格式兼容 tshark.parse_packets 输出.
+
+    include_mac_frames=True: 额外保留 MAC 命令帧和 Beacon (L1-1/L1-2 入网检测需要,
+    默认 False 与 tshark -Y zbee_nwk 对齐只保留 NWK 帧).
     """
     cubx_path = Path(path).expanduser().resolve()
     if not cubx_path.is_file():
@@ -465,8 +495,10 @@ def parse_cubx(path: str) -> tuple[list[dict], int, int]:
                 int(ch), int(lqi), int(rssi),
                 nwk_keys, link_keys,
             )
-            # 只保留 NWK 帧 (与 tshark -Y zbee_nwk 对齐)
-            if pkt.get("nwk_src") is not None or pkt.get("nwk_dst") is not None:
+            # 只保留 NWK 帧 (与 tshark -Y zbee_nwk 对齐), 除非 include_mac_frames
+            is_nwk = pkt.get("nwk_src") is not None or pkt.get("nwk_dst") is not None
+            is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None)
+            if is_nwk or (include_mac_frames and is_mac_relevant):
                 packets.append(pkt)
 
         packets.sort(key=lambda p: p["ts"])
