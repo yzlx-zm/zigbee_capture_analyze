@@ -341,6 +341,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "link_status_neighbors": None,
         "route_record_relays": None,
         "nwk_cmd_id": None,          # NWK 命令 ID (4=Leave, 8=Link Status...)
+        "nwk_status_code": None,     # Network Status 错误码 (0x0B=Source Route Failure)
+        "nwk_status_target": None,   # Network Status 目标短地址
         "aps_cmd_id": None,          # APS 命令 ID (0x05=TransportKey, 0x08=RequestKey, 0x0F=VerifyKey, 0x10=Confirm)
         "aps_cmd_key_type": None,    # TransportKey 的 key_type (0x01=NWK Key, 0x04=TC Link Key)
         "raw_layers": {},
@@ -431,6 +433,11 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             result["link_status_neighbors"] = _parse_link_status(plaintext)
         elif nwk_cmd_id == 5:  # Route Record
             result["route_record_relays"] = _parse_route_record(plaintext)
+        elif nwk_cmd_id == 3 and len(plaintext) >= 4:  # Network Status
+            # payload: [cmd_id(1)][code(1)][target(2 LE)]
+            # 0x0B = Source Route Failure (L1-3 路由根因判定需要)
+            result["nwk_status_code"] = plaintext[1]
+            result["nwk_status_target"] = int.from_bytes(plaintext[2:4], "little")
 
     # APS / ZDP parsing (only for NWK Data frames, not NWK commands)
     aps = None

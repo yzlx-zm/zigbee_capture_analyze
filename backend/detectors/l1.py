@@ -261,6 +261,7 @@ def detect_l1_3(packets: list[dict]) -> dict:
         ev = {
             "transport_nwk": [], "request_key": [], "transport_tclk": [],
             "verify": [], "confirm": [], "announce": [], "leave": [],
+            "route_error": [],  # Network Status (Source Route Failure 等) 针对该设备
         }
         for p in packets:
             nsrc, ndst = p.get("nwk_src"), p.get("nwk_dst")
@@ -281,6 +282,9 @@ def detect_l1_3(packets: list[dict]) -> dict:
                 ev["announce"].append(p)
             elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE and (nsrc == dev or ndst == dev):
                 ev["leave"].append(p)
+            elif p.get("nwk_cmd_id") == 3 and p.get("nwk_status_target") == dev:
+                # Network Status 路由错误, target == 本设备 (0x0B=Source Route Failure)
+                ev["route_error"].append(p)
 
         dev_result = _judge_l1_3_device(dev, ev)
         results.append(dev_result)
@@ -328,6 +332,7 @@ def _judge_l1_3_device(dev: int, ev: dict) -> dict:
         "transport_tclk": len(tclk), "verify": len(vk), "confirm": len(cf),
         "announce": len(ann), "leave": len(lv),
         "leave_active": leave_active, "leave_kicked": leave_kicked,
+        "route_error": len(ev["route_error"]),
     }
 
     def hit(rule, conf, summary):
@@ -349,11 +354,17 @@ def _judge_l1_3_device(dev: int, ev: dict) -> dict:
         last_cf = max(p["ts"] for p in cf)
         retries_after = [p for p in (vk + rk) if p["ts"] > last_cf]
         if retries_after:
+            # 伴随路由错误 (Network Status) → 根因指向 L3 路由/链路层:
+            # 真实素材 (中继入网抓包) 中 Confirm 经中继转发失败 (Source Route Failure),
+            # 设备收不到确认而重发 — 不是密钥内容问题.
+            route_errors = ev["route_error"]
+            route_hint = (f", 伴随 Network Status 路由错误 ×{len(route_errors)} (疑似 Confirm 转发失败/非对称链路, L3 根因)"
+                          if route_errors else "")
             if left:
                 return hit("B2-LOOP", "中",
-                           f"验证循环: Confirm 后仍重发 VerifyKey/ReqKey ×{len(retries_after)}, 设备离开")
+                           f"验证循环: Confirm 后仍重发 VerifyKey/ReqKey ×{len(retries_after)}, 设备离开{route_hint}")
             return inconclusive(
-                f"验证循环: Confirm 后仍重发 ×{len(retries_after)} (设备未离开, 需设备日志确认)", "低")
+                f"验证循环: Confirm 后仍重发 ×{len(retries_after)} (设备未离开, 需设备日志确认){route_hint}", "低")
     # ── C: confirm 出现 + 无异常 → 健康 ──
     if cf:
         if left:

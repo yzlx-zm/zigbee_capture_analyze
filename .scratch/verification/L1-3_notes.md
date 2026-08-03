@@ -78,19 +78,48 @@ t+ 79.228s  #6929  NWK Leave (838D→广播)                  ← 设备主动�
 **NWK Key (用户提供并确认)**: 故障网络 = `c91b384e572a97c8b07a3ae3dbcbdbfd` (从 k1 明文解出, 完全一致)。
 健康网络 = `0731fe01c8d9fef2a9bd3a3c6b95b80d`。每网络一把, 与 16B 无关。
 
-## 帧级结论 (最终, 诚实版)
+## 🔴 根因确认 (2026-08-03 用户人工复核 + 芯科官方文档)
 
-1. **838D 的 VerifyKey 内容完全正确**: hash 与 TC 发的 TCLK 匹配, 回显正确
-2. **838D 唯一确定的行为异常**: TC 回 Confirm 后 (t+61.07) 仍发起第二轮 VerifyKey (t+62.63), 反复 ×7, 最终主动 Leave (t+79.2, #6929)
-3. **对照健康 0x2951**: VerifyKey ×3 (APS重传) → Confirm → 收敛, 无 Confirm 后重发
-4. **对照设备A (CE93/F67F)**: 相同协议、相同 Confirm 结构 → 收敛
-5. **"谁不认谁"帧级无法确定**: 内容都对, Confirm 结构与其他设备一致 — 需 838D 设备日志 (验证失败码/重试原因)
+**真正根因 = Confirm 经中继 1885 转发失败 (Source Route Failure), 属 L3 路由/链路层 — 不是密钥协议问题!**
 
-## 待定 (需设备侧信息)
+用户 Ubiqua 复核发现: 5259 (VerifyKey) 中继正常转发, 5269/5270 (网关 Confirm) 中继 1885 接收成功,
+但转发给 838D 时失败 — **帧 5272: Network Status [0x03] code=[0x0B] Source Route Failure target=0x838D**!
 
-- 838D 设备日志: 验证失败码 / 重试原因 (核心, 唯一能定位谁不认谁的手段)
-- Confirm 的 [00][04] 字节含义 (00=成功/失败状态? 无法确定)
-- F67F (设备A第一次入网) t+38.2 Leave 的原因 (流程完整但离开 — 与 838D 不同场景, 待查)
+**素材全貌 (脚本验证)**:
+- **39 个 Network Status 全部 1885→0000, target 全部 0x838D**
+- **每轮 Confirm 后都有 route error**: #5269→3个 (#5272/5274/5276), #5378→7个, #5609-5631→6个 — 没有一轮成功送达
+- 838D 是 **SED** (80 次 Data Request 轮询), 轮询拿不到 Confirm
+- 非对称: 上行 (838D→1885→网关 VerifyKey) 通, 下行 (网关→1885→838D Confirm) 断
+
+**官方依据 (芯科 message.h / stack-info.h)**:
+- 0x0B = SL_ZIGBEE_ROUTE_ERROR_SOURCE_ROUTE_FAILURE
+- concentrator (网关) 用 MTO 收 + 源路由发; broken link 前一节点 (1885) 生成 route error 沿 MTO 回报
+- "three route error messages in succession" = APS retry 3 次的官方预期 (#5272/5274/5276 精确匹配)
+
+**完整根因链**:
+```
+838D 入网 → TCLK 分发成功 → VerifyKey 内容正确 (keyed_hash(TCLK,3))
+→ 网关回 Confirm SUCCESS ×8
+→ 1885 转发 Confirm 给 838D 全部失败 (Source Route Failure ×39) ← 根因!
+→ 838D 收不到确认 → 重发 VerifyKey ×3 轮 (同样失败)
+→ 838D 改发 RequestKey ×7 → 网关安全策略拒绝
+→ 838D 放弃 → Leave (#6929)
+```
+
+**检测器修正**: B2-LOOP 判定新增 Network Status (0x0B) 检查 — 伴随路由错误 → 根因标注 L3
+(不是密钥内容问题)。cubx_reader 新增 nwk_status_code/nwk_status_target 解析。
+
+## 帧级结论 (最终修正版)
+
+1. 838D VerifyKey 内容 100% 正确 (keyed_hash 匹配)
+2. 网关 Confirm 8 次全部 SUCCESS
+3. **Confirm 全部在 1885→838D 转发环节丢失 (Source Route Failure)**
+4. 838D 因此重发 → 被拒 → Leave
+
+## 待定 (次要点)
+
+- 1885→838D 链路为何断? (中继 child 表 / 非对称链路 / 射频) — 需现场/设备侧确认
+- F67F (设备A第一次入网) t+38.2 Leave 的原因 (与 838D 不同场景, 待查)
 
 ## 素材价值
 
