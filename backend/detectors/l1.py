@@ -1,13 +1,29 @@
-"""L1 场景检测器 — 网络形成与入网 (L1-1 发现失败 / L1-2 Association 失败)
+"""L1 场景检测器 — 网络形成与入网 (L1-1 发现失败 / L1-2 Association 失败 / L1-3 密钥分发失败)
 
 输入: cubx_reader.parse_cubx(include_mac_frames=True) 的包 dict 列表.
 输出: 检测报告 dict, 按 ADR-0002 置信度分级 (高/中/低/不可判定).
 
-判定规则来源: docs/scenarios/L1-1.md v1.2, L1-2.md v1.2
+判定规则来源: docs/scenarios/L1-1.md v1.2, L1-2.md v1.2, L1-3.md v1.2
 """
 from __future__ import annotations
 
 from collections import defaultdict
+
+# ── APS 命令 ID (官方 zigbee_packet_types.h) ──
+APS_CMD_TRANSPORT_KEY = 0x05
+APS_CMD_UPDATE_DEVICE = 0x06
+APS_CMD_REMOVE_DEVICE = 0x07
+APS_CMD_REQUEST_KEY = 0x08
+APS_CMD_VERIFY_KEY = 0x0F
+APS_CMD_VERIFY_KEY_CONFIRM = 0x10
+APS_KEY_TYPE_NWK = 0x01          # TransportKey 里 NWK Key 的 key_type
+APS_KEY_TYPE_TC_LINK = 0x04      # TransportKey 里 TC Link Key 的 key_type
+ZDP_DEVICE_ANNOUNCE = 0x0013
+NWK_CMD_LEAVE = 0x04
+
+# ── L1-3 判定参数 ──
+KEY_RESP_WINDOW_S = 5.0          # B1: ReqKey 后等 TCLK 响应窗口 [待素材校准]
+VERIFY_LOOP_RETRY_THRESHOLD = 2  # B2-LOOP: verify/reqkey 重发轮次阈值 [待素材校准]
 
 # ── MAC 命令 ID ──
 MAC_ASSOC_REQ = 1
@@ -209,6 +225,182 @@ def detect_l1_2(packets: list[dict]) -> dict:
     }
 
 
+# ── L1-3 检测: 密钥分发失败 (Assoc 成功但拿不到/验证不了 NWK Key) ──
+
+def detect_l1_3(packets: list[dict]) -> dict:
+    """密钥分发流程检测 (文档 L1-3.md v1.2).
+
+    规则 (官方依据 + 健康实测 + 真实故障素材确认):
+      - A1: 0x05(NWK) 缺失 + Announce 缺失 + 设备重试/Leave → TC 未分发
+      - A2: 0x05(NWK) 出现但设备无反应 (无 Announce/无后续) → 设备解不出
+      - A' : 0x05(NWK) 缺失 + Announce 出现 → preconfigured NWK Key (排除)
+      - B1 : 0x08 出现 + 5s 无 0x05(TCLK) 响应 + 设备 Leave → TC 不响应 key 请求
+      - B2 : 0x05(TCLK) 出现 + 0x0F/0x10 缺失 + Leave → 验证失败
+      - B2-LOOP: 0x05(TCLK)+0x10 出现但 verify/reqkey 反复重发 + Leave → 验证不收敛
+      - C   : 0x10 出现 + 无反复重试 + 无 Leave → 健康
+    按设备维度判定 (每台入网成功的设备独立评估), 任一命中 → L1-3_HIT.
+    """
+    # 1. 入网成功设备: AssocResp status=0x00 → 短地址
+    joined_devs = set()
+    for p in packets:
+        if p.get("mac_cmd_id") != MAC_ASSOC_RESP:
+            continue
+        pl = p.get("mac_cmd_payload") or b""
+        if len(pl) >= 3 and pl[2] == ASSOC_STATUS_OK:
+            joined_devs.add(int.from_bytes(pl[0:2], "little"))
+
+    if not joined_devs:
+        return {
+            "scenario": "L1-3", "verdict": "INCONCLUSIVE", "confidence": "不可判定",
+            "summary": "无 Assoc 成功设备 (无入网活动)", "devices": [],
+        }
+
+    # 2. 每台设备收集证据
+    results = []
+    for dev in sorted(joined_devs):
+        ev = {
+            "transport_nwk": [], "request_key": [], "transport_tclk": [],
+            "verify": [], "confirm": [], "announce": [], "leave": [],
+        }
+        for p in packets:
+            nsrc, ndst = p.get("nwk_src"), p.get("nwk_dst")
+            cid = p.get("aps_cmd_id")
+            if cid == APS_CMD_TRANSPORT_KEY:
+                kt = p.get("aps_cmd_key_type")
+                if kt == APS_KEY_TYPE_NWK and ndst == dev:
+                    ev["transport_nwk"].append(p)
+                elif kt == APS_KEY_TYPE_TC_LINK and ndst == dev:
+                    ev["transport_tclk"].append(p)
+            elif cid == APS_CMD_REQUEST_KEY and nsrc == dev:
+                ev["request_key"].append(p)
+            elif cid == APS_CMD_VERIFY_KEY and nsrc == dev:
+                ev["verify"].append(p)
+            elif cid == APS_CMD_VERIFY_KEY_CONFIRM and ndst == dev:
+                ev["confirm"].append(p)
+            elif p.get("aps_cluster") == ZDP_DEVICE_ANNOUNCE and nsrc == dev:
+                ev["announce"].append(p)
+            elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE and (nsrc == dev or ndst == dev):
+                ev["leave"].append(p)
+
+        dev_result = _judge_l1_3_device(dev, ev)
+        results.append(dev_result)
+
+    hits = [r for r in results if r["verdict"].startswith("L1-3")]
+    healthies = [r for r in results if r["verdict"] == "HEALTHY"]
+    if hits:
+        verdict = "L1-3_HIT"
+        confidence = "高" if any(r["confidence"] == "高" for r in hits) else "中"
+        summary = "密钥分发/验证异常: " + ", ".join(
+            f"0x{r['device']:04X} ({r['sub_rule']})" for r in hits)
+    elif healthies:
+        verdict = "HEALTHY"
+        confidence = "高"
+        summary = f"密钥流程完整 ({len(healthies)}/{len(results)} 设备验证成功)"
+    else:
+        verdict = "INCONCLUSIVE"
+        confidence = "低"
+        summary = "入网设备密钥流程未完整 (无异常判定证据)"
+
+    return {
+        "scenario": "L1-3",
+        "verdict": verdict,
+        "confidence": confidence,
+        "summary": summary,
+        "joined_device_count": len(results),
+        "devices": results,
+    }
+
+
+def _judge_l1_3_device(dev: int, ev: dict) -> dict:
+    """单设备 L1-3 判定 → 规则 A1/A2/A'/B1/B2/B2-LOOP/C/INCONCLUSIVE."""
+    tnwk = ev["transport_nwk"]; tclk = ev["transport_tclk"]
+    rk = ev["request_key"]; vk = ev["verify"]; cf = ev["confirm"]
+    ann = ev["announce"]; lv = ev["leave"]
+
+    # Leave 方向: src=设备 → 设备主动; TC→设备 → 被踢
+    leave_active = any(p.get("nwk_src") == dev for p in lv)
+    leave_kicked = any(p.get("nwk_src") == 0x0000 and p.get("nwk_dst") == dev for p in lv)
+    left = bool(lv)
+
+    base = {
+        "device": dev,
+        "transport_nwk": len(tnwk), "request_key": len(rk),
+        "transport_tclk": len(tclk), "verify": len(vk), "confirm": len(cf),
+        "announce": len(ann), "leave": len(lv),
+        "leave_active": leave_active, "leave_kicked": leave_kicked,
+    }
+
+    def hit(rule, conf, summary):
+        return {**base, "verdict": "L1-3_HIT", "sub_rule": rule,
+                "confidence": conf, "summary": summary}
+
+    def healthy(summary):
+        return {**base, "verdict": "HEALTHY", "sub_rule": "C",
+                "confidence": "高", "summary": summary}
+
+    def inconclusive(summary, conf="低"):
+        return {**base, "verdict": "INCONCLUSIVE", "sub_rule": None,
+                "confidence": conf, "summary": summary}
+
+    # ── B2-LOOP: confirm 出现但验证不收敛 (真实素材 838D) ──
+    if cf and (vk or rk):
+        # 循环定义: 最后一次 confirm 之后仍有 verify/reqkey 重发 (验证未收敛).
+        # 流程内的正常帧 (verify 在 confirm 前 / reqkey 在 TCLK 前) 不计入.
+        last_cf = max(p["ts"] for p in cf)
+        retries_after = [p for p in (vk + rk) if p["ts"] > last_cf]
+        if retries_after:
+            if left:
+                return hit("B2-LOOP", "中",
+                           f"验证循环: Confirm 后仍重发 VerifyKey/ReqKey ×{len(retries_after)}, 设备离开")
+            return inconclusive(
+                f"验证循环: Confirm 后仍重发 ×{len(retries_after)} (设备未离开, 需设备日志确认)", "低")
+    # ── C: confirm 出现 + 无异常 → 健康 ──
+    if cf:
+        if left:
+            return inconclusive(
+                f"Confirm 出现但设备离开 (主动={leave_active}, 被踢={leave_kicked}) — 非密钥分发根因", "低")
+        return healthy("Confirm 出现且设备未离开 (密钥验证完成)")
+
+    # ── B2: TCLK 出现但 verify/confirm 缺失 ──
+    if tclk:
+        if left:
+            return hit("B2", "高",
+                       "TCLK 已分发但 VerifyKey/Confirm 缺失, 设备离开 (密钥验证失败)")
+        return inconclusive("TCLK 已分发但 Verify/Confirm 缺失, 设备未离开", "中")
+
+    # ── B1: ReqKey 出现 + 5s 无 TCLK 响应 ──
+    if rk:
+        first_rk = min(p["ts"] for p in rk)
+        responded = [p for p in tclk if p["ts"] <= first_rk + KEY_RESP_WINDOW_S]
+        if not responded:
+            if left:
+                return hit("B1", "高",
+                           f"RequestKey ×{len(rk)} 无 TCLK 响应 (5s 窗口), 设备离开 (TC 不响应 key 请求)")
+            return inconclusive("RequestKey 无响应但设备未离开", "中")
+
+    # ── A2: NWK Key 出现但设备无反应 ──
+    if tnwk and not ann and not vk:
+        if left:
+            return hit("A2", "高",
+                       "TransportKey(NWK) 已发但设备无 Announce/后续 (设备解不出密钥)")
+        return inconclusive("TransportKey(NWK) 已发但设备无反应, 未离开", "中")
+
+    # ── A1: 无 NWK Key + 无 Announce ──
+    if not tnwk:
+        if ann:
+            # A': preconfigured NWK Key (排除)
+            return healthy("无 TransportKey(NWK) 但 Announce 出现 — preconfigured NWK Key 场景 (排除)")
+        if left:
+            return hit("A1", "高",
+                       "无 TransportKey(NWK) 且无 Announce, 设备重试/离开 (TC 未分发密钥)")
+        return inconclusive("无 TransportKey(NWK) 且无 Announce, 设备未离开", "中")
+
+    # ── 兜底 ──
+    if ann and not lv:
+        return inconclusive("入网流程部分完成 (有 NWK Key/Announce 但密钥流程未走完)", "低")
+    return inconclusive("入网设备无完整密钥流程证据", "低")
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict]) -> dict:
@@ -216,4 +408,5 @@ def detect(packets: list[dict]) -> dict:
     return {
         "l1_1": detect_l1_1(packets),
         "l1_2": detect_l1_2(packets),
+        "l1_3": detect_l1_3(packets),
     }
