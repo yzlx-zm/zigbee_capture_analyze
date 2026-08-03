@@ -461,3 +461,46 @@ export function doI(file) {...}    // CSV 上传
 **精确定义**：① **抓包未覆盖** — sniffer 射频范围外节点的帧完全缺失；② **设备未听到** — sniffer 抓到了但目标设备可能没收到（反之亦然）；③ **sniffer 听不到** — 仅发送方知晓的失败（未送达的传输、内部重传计数）在抓包里无痕迹。
 
 **区分于**：帧丢失（抓包工具自身丢帧）；时间窗口不足（抓得太短，如 Link Status 16s 周期只抓 10s）。
+
+---
+
+## L1/L2 场景验证 (L1/L2 Scenario Verification)
+
+> 2026-08-01 新增。来源：MCP 二次复核（silicon-labs-docs + gecko_sdk 源码）。L1-1/L1-2 拆解文档的协议级判定规则已获官方确认。
+
+### 协议级判定规则（已官方确认）— 权威依据
+
+| 断言 | 官方依据 | 状态 |
+|------|---------|------|
+| AssocReq=0x01, AssocResp=0x02, BeaconReq=0x07 | gecko_sdk `mac-command.h`; Zephyr `ieee802154_frame.h` | ✅ |
+| Association 8 步流程 | UG235.02 §4.3 | ✅ |
+| status: 0x00 成功/0x01 容量满/0x02 拒绝/0x80+ 保留 | Zephyr `ieee802154_association_status_field` | ✅ |
+| 0xFFFE=未分配(成功) vs 0xFFFF=拒绝 | UG235.02: "not assigned → 0xfffe" | ✅ |
+| Beacon Request 单跳广播、跨 PAN 边界 | docs.silabs.com "Network Activities" | ✅ |
+| Steering 12 步 + 默认掩码 BIT32(11)\|BIT32(14) | network-steering.c 源码 `#define` | ✅ |
+| NO_BEACONS(0xAB) / JOIN_FAILED(0x9B) 语义 | network-steering-v2.c `cleanupAndStop` / `tryNextMethod` | ✅ |
+
+### 实测类断言（待抓包验证）— 无官方文档可核
+
+- Beacon 响应延迟基线 3-48ms（L1-1 第 12 层）
+- AssocResp 延迟基线 ~205ms（L1-2 第 12 层）
+- request→响应命中率 32/32（L1-1 第 12 层）
+
+### 验证标准（用户决策）
+
+**判定规则成立即可**——匹配方法/阈值/status 语义正确即通过；具体计数允许素材差异浮动。
+
+### 验证流程
+
+1. 用户提供标准入网抓包（健康）+ 错误复现抓包
+2. 检测模块原型 `backend/detectors/l1.py`（吃扩展后的包 dict）输出指标
+3. 对比文档断言 → 一致/差异/存疑
+4. 差异逐条问裁决 → 修正文档/模块
+
+### 关键数据缺口
+
+现有 `parse_cubx` 过滤 `if nwk_src or nwk_dst` → **MAC 命令帧（Beacon Request/Assoc Req/Resp）被全部丢弃**。检测模块原型必须先扩展 `cubx_reader` 提取 MAC 命令层（cmd_id + 长地址）。
+
+### TC Key 验证失败 → Leave（L1-3 铁证级依据）
+
+network-steering-v2.c `finishSteeringEventHandler`：**"Key verification failed. Leaving network" → `emberLeaveNetwork()`**。TC 发 Transport Key 后设备 Verify Key 失败会直接 Leave——L1-3（密钥分发失败）拆解时的协议级确认。
