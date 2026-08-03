@@ -8,23 +8,27 @@
 
 设备 838D 经中继 1885 多跳入网后, **"入网后立即被踢出去了"**。
 
-## 帧级时间线 (838D, t0=抓包起点)
+## 帧级时间线 (838D, t0=抓包起点, 帧号=cubx Packets.Id 可在 Ubiqua 核对)
 
 ```
-t+57.5  Assoc成功 (AssocResp 0x838D/0x00, 来自中继 70b3d52b600bdbbe)
-t+58.0  0x1885→838D TransKey (0x05, key_type=0x01 NWK)   ← TC 经中继 1885 分发 NWK Key (多跳)
-t+58.0  838D announce ×6
-t+60.0  838D→0000 ReqKey (0x08, key_type=0x04) ×4        ← 请求 TC Link Key
-t+60.1  0000→838D TransKey (0x05, key_type=0x04 TCLK)     ← TCLK 分发 (标准 34B 明文可见)
-t+61.0  838D→0000 VerifyKey (0x0F) ×3                     ← 验证 (明文!)
-t+61.1  0000→838D Confirm (0x10) ×2                       ← TC 确认
-t+62.6  VerifyKey ×4 (Confirm 后仍重发!)                  ← 异常: 验证未收敛
-t+64.6  VerifyKey ×2 → Confirm ×5
-t+67.0  ReqKey ×2 (重新请求 key)                          ← 异常: 回退重新请求
-t+70.3  ReqKey ×3
-t+74.5  ReqKey ×2
-t+79.2  838D→广播 Leave                                    ← 设备主动离网 (非 TC 踢)
+t+ 57.506s  #4973  AssocResp [addr=0x838D status=0x00] (来自 70b3d52b600bdbbe)
+t+ 58.016s  #4994  TransportKey key_type=0x01 (TC→838D, 经中继 1885)
+t+ 58.027s  #4996  Device Announce ×6 (#4996/5001/5002/5003/5049/5100)
+t+ 60.029s  #5155  RequestKey ×4 (#5155/5157/5160/5162, 838D→TC)
+t+ 60.068s  #5164  TransportKey key_type=0x04 TCLK (TC→838D)
+t+ 61.028s  #5259  VerifyKey ×3 (#5259/5261/5263, 838D→TC)
+t+ 61.067s  #5269  Confirm ×2 (#5269/5270, TC→838D)
+t+ 62.630s  #5362  VerifyKey ×4 (#5362/5368/5370/5372)   ← Confirm 后仍重发!
+t+ 62.684s  #5378  Confirm
+t+ 64.630s  #5565  VerifyKey ×2 (#5565/5582)
+t+ 64.762s  #5609  Confirm ×5 (#5609-5631)
+t+ 67.030s  #5822  RequestKey ×2 (#5822/5826)            ← 回退重新请求
+t+ 70.296s  #6010  RequestKey ×3 (#6010/6016/6018)
+t+ 74.532s  #6275  RequestKey ×2 (#6275/6283)
+t+ 79.228s  #6929  NWK Leave (838D→广播)                  ← 设备主动离网 (~21.7s 后)
 ```
+
+**关键异常窗口**: t+61.07s 收到 Confirm 后, 设备在 t+62.63s 又发 VerifyKey — **验证未收敛**, 随后多轮重试, 最终主动 Leave。
 
 ## 密钥明文对比 (决定性证据)
 
