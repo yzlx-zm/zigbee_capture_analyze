@@ -30,31 +30,41 @@ t+ 79.228s  #6929  NWK Leave (838D→广播)                  ← 设备主动�
 
 **关键异常窗口**: t+61.07s 收到 Confirm 后, 设备在 t+62.63s 又发 VerifyKey — **验证未收敛**, 随后多轮重试, 最终主动 Leave。
 
-## 密钥明文对比 (决定性证据)
+## 密钥明文对比 (决定性证据, 2026-08-03 二次修正 — 诚实版)
 
-| 项 | 值 | 结论 |
-|----|----|------|
-| TC 分发的 TCLK | `f362b92ae1397acaf78d8949aa6ed446` | 标准 34B TransKey 明文可读 |
-| 838D VerifyKey 携带 key | `6847635e4c38c1a4bab24513c21a9973` 或 `bab24513c21a9973746e59f8902e7796` (格式待定) | **≠ TCLK** |
-| VerifyKey 加密状态 | **明文** (无 APS security header) | 健康素材 0x2951 的 VerifyKey 是**加密**的 |
-| TC Confirm | `10 00 04 [838D-EUI]` 11 字节, 内容恒定 | 非标准 34B 格式 |
+**⚠️ 两次修正说明**:
+- 第一次修正: "VerifyKey key≠TCLK" 不是 838D 异常 (所有设备都 ≠)。
+- **第二次修正 (重要)**: 
+  ① **CE93 与 F67F 是同一台物理设备** (真实 EUI 均为 `a4c1389becfd06ab`) — F67F 入网 → Leave → 以 CE93 短地址再次入网。之前"多设备对比"实际只有 3 台: 838D / 8A41 / 设备A(CE93=F67F)。
+  ② **VerifyKey 明文 + 26B 短格式是全网络正常行为** (含健康素材 0x2951) — "838D VerifyKey 明文异常"结论**错误**。
+  ③ **TransportKey.dst 与真实 EUI 差 1 字节不导致失败** (CE93/F67F 差 1 字节但验证成功; 838D 完全一致反而失败)。
 
-对照 (健康素材 1-标准入网抓包-2): VerifyKey 加密 (TCLK 解出), Confirm 标准。
+**全设备对比 (解密后明文, 二次修正)**:
 
-## 帧级结论 (不依赖根因归因)
+| 设备 | 真实EUI | TK.dst (TC视角) | dst一致? | TCLK | VerifyKey 16B | 结果 |
+|------|---------|-----------------|---------|------|---------------|------|
+| 838D | a4c1384c5e634768 | a4c1384c5e634768 | ✓ | f362b92a... | bab24513c21a9973746e59f8902e7796 | **未收敛→Leave** |
+| 8A41 | a4c13832e19d035d | a4c13832e19d035d | ✓ | 6cd6b978... | (无VerifyKey) | 正常 |
+| CE93=F67F | a4c1389becfd06ab | a4c138**b9**ecfd06ab | ✗差1字节 | 538d9eda...(两次相同) | 2441948a... (两次相同) | 正常 |
 
-1. **入网流程前半段正常**: Assoc → NWK Key → announce → ReqKey → TCLK 全部成功
-2. **Verify 环节无法收敛**: VerifyKey 携带 key ≠ TC 分发的 TCLK;设备在 Confirm 后仍反复重发 VerifyKey, 后回退 ReqKey 重新请求
-3. **~22 秒后设备主动 Leave** (src=838D 广播 Leave, 符合官方 "Key verification failed → emberLeaveNetwork" 帧级表现)
-4. **判定**: L1-3 规则 B2 **"验证循环型"变体** — TCLK 出现 + Verify/ReqKey 反复 + 设备 Leave
-   (严格 B2 是 Confirm 缺失;本素材 Confirm 出现但验证不收敛 — 规则需扩展)
+**结构规律 (全网络一致)**:
+- TransportKey(TCLK) = `[05][04][TCLK 16B][dst 8B][src 8B]` 34B — **标准格式**
+- VerifyKey = `[0f][04][8B][16B]` 26B 明文 — 前 8B **回显 TK.dst 字段**
+- Confirm = `[10][00][04][8B]` 11B 明文 — 同样回显
+- VerifyKey 16B: **设备绑定** (同一设备两次入网相同; 838D 不同) — 16B ≠ TCLK (所有设备都 ≠)
+- CE93 的 dst 差 1 字节 (9b→b9, 疑似 nibble 交换) — 疑 TC 侧 EUI 记录处理痕迹, 但**不影响验证**
 
-## 待定 (需设备固件/日志信息)
+**帧级确定的事实 (仅此而已)**:
+1. 838D 前半段入网正常 (Assoc→NWK Key→announce→ReqKey→TCLK)
+2. 838D 在 TC 回 Confirm 后**仍重发 VerifyKey/ReqKey ×7** (t+62.6 ~ t+74.5)
+3. 838D 最终**主动 Leave** (t+79.2, #6929)
+4. **"谁不认谁" (TC 不认 838D 的 16B, 还是 838D 不认 TC 的 Confirm) 帧级无法确定** — 不妄自揣测
 
-- 838D 为什么 VerifyKey 明文? (同是自家 Telink 设备, 健康素材 0x2951 是加密的 → 固件版本/配置差异?)
-- VerifyKey 携带 key ≠ TCLK 的语义? (设备收到的 TCLK 解密错误? 或 VerifyKey 格式/字段解析不同?)
-- 网关 Confirm 11B 短格式的语义? (自家网关实现? 非标准?)
-- 设备侧日志: `Key verification failed` / `NO_LINK_KEY_RECEIVED` 确认
+## 待定 (需设备侧信息)
+
+- 838D 设备日志: 验证失败码 / 重试原因 (核心)
+- 16B 验证值的计算语义 (无法从帧级确定)
+- Confirm 的 [00][04] 含义 (无法确定)
 
 ## 素材价值
 
