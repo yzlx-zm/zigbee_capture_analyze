@@ -126,8 +126,13 @@ def _check_type_distribution(pcap_paths: list[str], packets: list[dict], tshark:
 
 
 def _check_decryption(pcap_paths: list[str], packets: list[dict], tshark: str, report: dict):
-    """解密帧数一致性 — 对比有 APS 数据的帧数"""
-    decrypted = sum(1 for p in packets if p.get("decrypted"))
+    """解密帧数一致性 — 对比有 APS 数据的帧数.
+
+    口径对齐: tshark 用 zbee_aps.cluster/zdp_cluster 存在判定;
+    这里也用 aps_cluster 存在 (不用 decrypted, 因有 counter 无 cluster 的帧
+    (APS Ack/空payload) 会两边不一致).
+    """
+    decrypted = sum(1 for p in packets if p.get("aps_cluster") is not None)
     # tshark: count frames with zbee_aps.cluster or zbee_aps.zdp_cluster
     tshark_dec = _tshark_decrypted_count(pcap_paths, tshark)
 

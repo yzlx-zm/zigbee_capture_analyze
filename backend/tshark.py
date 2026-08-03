@@ -87,6 +87,91 @@ def parse_packets(
     return all_packets
 
 
+def parse_mac_frames(tshark_path: str, pcap_path: str) -> list[dict]:
+    """提取 pcap 的 MAC 命令帧 + Beacon (L1-1/L1-2 入网检测需要).
+
+    字段对齐 cubx_reader 的 mac_* 命名:
+      mac_cmd_id / mac_src64 / mac_dst64 / mac_cmd_payload
+      mac_beacon_pan / mac_beacon_permit / mac_frame_type / packet_id
+    """
+    cmd = [tshark_path, "-r", pcap_path, "-o", "wpan.802154_fcs_ok:FALSE",
+           "-Y", "wpan.cmd or wpan.assoc_permit", "-T", "json"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0 and not result.stdout.strip():
+        return []
+    if not result.stdout.strip():
+        return []
+    try:
+        raw_frames = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+
+    frames = []
+    for tf in raw_frames:
+        layers = tf.get("_source", {}).get("layers", {})
+        frame = layers.get("frame", {})
+        wpan = layers.get("wpan", {})
+        # 时间戳
+        ts_raw = frame.get("frame.time_epoch", "0")
+        try:
+            ts = float(ts_raw)
+        except ValueError:
+            from datetime import datetime
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp()
+            except (ValueError, OSError):
+                continue
+        frame_num = int(frame.get("frame.number", "0"))
+        fcf_tree = wpan.get("wpan.fcf_tree", {})
+        frame_type_raw = fcf_tree.get("wpan.frame_type", "")
+        try:
+            ft = int(frame_type_raw, 16) if frame_type_raw else -1
+        except ValueError:
+            ft = -1
+
+        # AssocResp payload: wpan.asoc.addr (short addr) + wpan.assoc.status
+        # 构造与 cubx mac_cmd_payload 等价的 bytes (short_addr 2LE + status 1)
+        mac_payload = None
+        ar = wpan.get("Association Response", {})
+        if ar:
+            try:
+                saddr = int(ar.get("wpan.asoc.addr", "0"), 16)
+                status = int(ar.get("wpan.assoc.status", "0"), 16)
+                mac_payload = bytes([saddr & 0xFF, (saddr >> 8) & 0xFF, status])
+            except (ValueError, TypeError):
+                mac_payload = None
+
+        d = {
+            "ts": ts, "ch": 0,
+            "packet_id": frame_num,
+            "mac_frame_type": ft,
+            "mac_cmd_id": _h(wpan.get("wpan.cmd", "")),
+            "mac_src64": _hex_colon(wpan.get("wpan.src64", "")),
+            "mac_dst64": _hex_colon(wpan.get("wpan.dst64", "")),
+            "mac_cmd_payload": mac_payload,
+            "mac_beacon_pan": _h(wpan.get("wpan.src_pan", "")),
+            "mac_beacon_permit": None,
+            "mac_src": _h(wpan.get("wpan.src16", "")),
+            "mac_dst": _h(wpan.get("wpan.dst16", "")),
+            "mac_seq": _h(wpan.get("wpan.seq_no", "")),
+            "pan_src": _h(wpan.get("wpan.src_pan", "")),
+            "pan_dst": _h(wpan.get("wpan.dst_pan", "")),
+            "pkt_type": "MAC Cmd" if ft == 3 else "Beacon",
+        }
+        # Beacon PermitJoin (tshark 放在 "Superframe Specification" 子 dict)
+        permit_raw = None
+        for k, v in wpan.items():
+            if isinstance(v, dict) and "wpan.assoc_permit" in v:
+                permit_raw = v["wpan.assoc_permit"]
+                break
+        if permit_raw is None:
+            permit_raw = wpan.get("wpan.assoc_permit")
+        if permit_raw is not None:
+            d["mac_beacon_permit"] = 1 if str(permit_raw) in ("1", "True", "true") else 0
+        frames.append(d)
+    return frames
+
+
 def _parse_single(tshark_path: str, pcap_path: str) -> list[dict]:
     """调用 tshark -T json 解析单个 pcap, 并补充 -T fields 获取完整 relay list"""
     # ── 主解析: JSON ──

@@ -215,6 +215,18 @@ async def import_local_pcap(paths: str = Form(...)):
         _file_type = "pcap"
         _pcap_paths = path_list
 
+        # 全量帧 (含 MAC 命令帧/Beacon) — L1 检测需要
+        global _full_packets
+        try:
+            _full_packets = []
+            tshark_path = _tshark.find_tshark()
+            for p in path_list:
+                _full_packets.extend(_tshark.parse_mac_frames(tshark_path, p))
+            _full_packets.extend(_packets)
+            _full_packets.sort(key=lambda p: p["ts"])
+        except Exception:
+            _full_packets = list(_packets)
+
         # 运行校验
         try:
             from .. import verify as _verify
