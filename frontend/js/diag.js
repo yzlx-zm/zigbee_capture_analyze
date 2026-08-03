@@ -23,7 +23,7 @@ reg('diag',function(){
       +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
       // L1-1
       +'<div style="flex:1;min-width:280px;background:#fff;border-radius:6px;padding:10px;border:1px solid #e2e8f0">'
-      +'<div style="font-weight:600;font-size:12px;margin-bottom:4px">L1-1 发现失败 <span style="color:'+vc1+';font-weight:700">'+l1.verdict+'</span> <span style="color:#94a3b8;font-size:10px">'+l1.confidence+'</span></div>'
+      +'<div style="font-weight:600;font-size:12px;margin-bottom:4px">L1-1 发现失败: <span style="color:'+vc1+';font-weight:700">'+l1.verdict+'</span> <span style="color:#94a3b8;font-size:10px" title="置信度: 高=直接证据/中=帧模式/低=推断/不可判定=数据不足">置信度:'+l1.confidence+'</span></div>'
       +'<div style="font-size:11px;color:#475569;line-height:1.6">'
       +'Beacon Request: <b>'+l1.beacon_request_count+'</b> 个 | 命中 <b style="color:'+vc1+'">'+l1.hit_count+'/'+l1.beacon_request_count+'</b> ('+(l1.hit_rate*100).toFixed(0)+'%)<br>'
       +'最大连续MISS: <b>'+l1.max_consecutive_miss+'</b> (判定阈值≥2)<br>'
@@ -31,7 +31,7 @@ reg('diag',function(){
       +'</div></div>'
       // L1-2
       +'<div style="flex:1;min-width:280px;background:#fff;border-radius:6px;padding:10px;border:1px solid #e2e8f0">'
-      +'<div style="font-weight:600;font-size:12px;margin-bottom:4px">L1-2 Association <span style="color:'+vc2+';font-weight:700">'+l2.verdict+'</span> <span style="color:#94a3b8;font-size:10px">'+l2.confidence+'</span></div>'
+      +'<div style="font-weight:600;font-size:12px;margin-bottom:4px">L1-2 Association: <span style="color:'+vc2+';font-weight:700">'+l2.verdict+'</span> <span style="color:#94a3b8;font-size:10px" title="置信度: 高=直接证据/中=帧模式/低=推断/不可判定=数据不足">置信度:'+l2.confidence+'</span></div>'
       +'<div style="font-size:11px;color:#475569;line-height:1.6">'
       +'AssocReq: <b>'+l2.assoc_req_count+'</b> | 成功 <b style="color:#16a34a">'+l2.success_count+'</b> | 无响应 <b style="color:#f59e0b">'+l2.no_response_count+'</b> | 拒绝 <b style="color:#dc2626">'+l2.rejected_count+'</b><br>'
       +'<span style="color:#64748b">'+l2.summary+'</span>'
