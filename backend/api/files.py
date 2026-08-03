@@ -148,7 +148,7 @@ async def import_clear():
 @router.post("/import/pcap")
 async def import_pcap(files: list[UploadFile] = File(...)):
     """上传 pcap 文件 (支持多文件), tshark 批量解析 + 合并"""
-    global _packets, _nodes, _file_type
+    global _packets, _nodes, _file_type, _full_packets
     from .. import tshark as _tshark
     import tempfile
 
@@ -174,6 +174,17 @@ async def import_pcap(files: list[UploadFile] = File(...)):
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
         _pcap_paths = [os.path.abspath(p) for p in tmp_paths]
+
+        # 全量帧 (含 MAC 命令帧/Beacon) — L1 检测需要
+        try:
+            _full_packets = []
+            tshark_path = _tshark.find_tshark()
+            for p in tmp_paths:
+                _full_packets.extend(_tshark.parse_mac_frames(tshark_path, p))
+            _full_packets.extend(_packets)
+            _full_packets.sort(key=lambda p: p["ts"])
+        except Exception:
+            _full_packets = list(_packets)
 
         # 运行校验
         try:

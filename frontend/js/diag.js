@@ -11,7 +11,9 @@ reg('diag',function(){
     if(l1d && l1d.error){
       h+='<div class="card" style="margin-bottom:12px;background:#fef2f2;border-left:3px solid #dc2626">'
         +'<h3 style="color:#dc2626">L1 入网检测</h3>'
-        +'<p style="font-size:11px;color:#94a3b8">'+l1d.error+' (L1 检测需要 .cubx 导入, pcap 无 MAC 帧)</p></div>';
+        +'<p style="font-size:11px;color:#94a3b8">'+l1d.error+' (L1 检测需要 .cubx 或含 MAC 帧的 pcap)</p></div>';
+      document.getElementById('mc').innerHTML=h;
+      renderOffline();
       return;
     }
     var l1 = l1d ? (l1d.l1_1||{}) : {};
