@@ -198,6 +198,24 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .key-panel { margin-top: var(--sp-2); background: #f8fafc; }
 .key-panel h4 { font-size: var(--fs-md); cursor: pointer; }
 .key-add-row { margin-top: var(--sp-2); display: flex; gap: var(--sp-1); }
+.key-hex { cursor: pointer; }                                  /* 点击展开/收起完整 Key */
+.key-hex:hover { color: var(--c-primary); }
+
+/* 11.2.1 导入流程反馈 (U6) */
+.prog { display: flex; align-items: center; gap: 6px; margin-top: var(--sp-2); padding: var(--sp-2);
+  background: var(--c-info-bg); border-radius: var(--r-sm); font-size: var(--fs-sm); }
+.prog-err { background: var(--c-danger-bg); }
+.prog-err #imsg { color: var(--c-danger); }
+.prog-err .spin { display: none; }
+.spin { width: 12px; height: 12px; border: 2px solid var(--c-border-strong);
+  border-top-color: var(--c-primary); border-radius: 50%; animation: spin .8s linear infinite;
+  flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#mc.busy .file-drop, #mc.busy button { pointer-events: none; opacity: .55; }  /* 上传中禁用导入控件 */
+.verify-detail { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-text-3); }
+.verify-detail summary { cursor: pointer; }
+.verify-detail pre { margin-top: 4px; white-space: pre-wrap; word-break: break-all;
+  background: var(--c-canvas); padding: 4px 6px; border-radius: var(--r-sm); max-height: 120px; overflow: auto; }
 
 /* 11.3 拓扑页 */
 #tside { width: 340px; flex-shrink: 0; overflow-y: auto; padding: var(--sp-2);
@@ -213,6 +231,12 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .timebar .t-label { font-size: var(--fs-xs); color: var(--c-text-3); white-space: nowrap; }
 .timebar select { font-size: var(--fs-xs); padding: 1px 4px; }
 #ttime-label { font-size: var(--fs-xs); color: var(--c-text-3); white-space: nowrap; min-width: 240px; }
+/* 时间刻度条 (U7): 总时长 + 当前窗口位置 */
+.time-scale { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; }
+.time-scale .ts-label { font-size: 9px; color: var(--c-text-4); font-family: var(--font-mono); white-space: nowrap; }
+.time-scale .ts-track { flex: 1; height: 4px; background: var(--c-border-strong); border-radius: 2px; position: relative; }
+.time-scale .ts-window { position: absolute; top: -1px; height: 6px; background: var(--c-primary); border-radius: 2px; opacity: 0.55; }
+.btn-o.on { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }   /* 开关态按钮 (静默节点) */
 #twin-size { font-size: var(--fs-xs); padding: 1px 4px; }
 #tsl { flex: 1; min-width: 140px; height: 18px; cursor: pointer; }
 #cy-graph { position: relative; flex: 1; min-height: 360px; background: var(--c-canvas); }

@@ -39,6 +39,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 **Tickets**: U1 视觉设计系统 / U2=02 拓扑时间控制 / U3 节点页补齐 / U4 页面联动 / U5 时间线优化 / U6 导入页优化 / U7 拓扑页优化
 **已完成切片**: 诊断页 L1-1/2/3/4 卡片统一模板 + 视觉规范初版 (提交 24aa25f)
 - [U1 视觉设计系统](issues/U1-视觉设计系统.md) — 设计系统建成: 13 组 token + 状态色体系 + 组件/工具类, CSS 全抽 `frontend/css/app.css` (index.html 内嵌 style 清零), JS inline 样式清零 (仅动态数据色保留); 孤儿类补齐 (.btn-s/.imp-tab/.badge 等); 截图见 .scratch/verification/u1-design-system/; 素材验证通过 (340 包)
+- [U7 拓扑页优化](issues/U7-拓扑页优化.md) — 形状分类 (协调器六边/路由菱形/终端圆/未知三角) + 死控件修复 (taddr 定位 / 静默节点切换) + 播放按钮 + 时间刻度条 + 图实例复用 (时间过滤不再重建, 性能提升); 截图见 .scratch/verification/u7-topo/
 
 ## Not yet specified
 
