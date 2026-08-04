@@ -412,6 +412,171 @@ def _judge_l1_3_device(dev: int, ev: dict) -> dict:
     return inconclusive("入网设备无完整密钥流程证据", "低")
 
 
+# ── L1-4 检测: TC 拒绝入网 / 运营期踢人 ──
+
+BROADCAST_ADDR = 0xFFFD
+
+def detect_l1_4(packets: list[dict]) -> dict:
+    """TC 拒绝入网 / 运营期踢人检测 (文档 L1-4.md v1.0).
+
+    规则 (官方依据 + 素材实证 2026-08-04):
+      - R1 : Remove Device (0x07) 出现 + 目标未完成入网 (无 TransportKey(NWK)/Announce)
+            → 入网阶段显式拒绝 (高置信, 官方: TC deny → Remove Device 给 parent)
+      - R2a: Remove Device (0x07) 出现 + 目标已入网 → 运营期踢人 (高置信)
+      - R2b: 已入网设备广播 Leave (dst=0xFFFD, rejoin=0/request=0) + 无密钥验证失败上下文
+            → 疑似运营期踢人 (中置信; TC 指令帧 0x07 经常抓不到, 素材实证)
+            密钥验证失败上下文 (tclk 分发后 verify/confirm 缺失) → 归 L1-3-B2, 不报 R2b
+      - R3 : Assoc 成功 + 无 0x07 + 无 TransportKey(NWK) + 无 Announce + 设备消失/Leave
+            → 静默拒绝 (中置信; 官方 ignore 路径 parent 2s 静默移除)
+            ⚠️ 与 L1-3-A1 帧级重叠 → 双报提示, 需 TC/设备日志仲裁
+      - EX  : 无 0x07 且 (TransportKey(NWK) 或 Announce 出现) → 排除 (TC 允许入网)
+    按设备维度判定 (同 L1-3 模式), 任一命中 → L1-4_HIT.
+    """
+    # 1. 入网成功设备: AssocResp status=0x00 → 短地址 (同 detect_l1_3)
+    joined_devs = set()
+    for p in packets:
+        if p.get("mac_cmd_id") != MAC_ASSOC_RESP:
+            continue
+        pl = p.get("mac_cmd_payload") or b""
+        if len(pl) >= 3 and pl[2] == ASSOC_STATUS_OK:
+            joined_devs.add(int.from_bytes(pl[0:2], "little"))
+
+    # 2. Remove Device 事件全量 (供展示 + R1/R2a 设备匹配)
+    remove_events = []
+    for p in packets:
+        if p.get("aps_cmd_id") == APS_CMD_REMOVE_DEVICE:
+            remove_events.append({
+                "packet_id": p.get("packet_id"),
+                "ts": p["ts"],
+                "nwk_src": p.get("nwk_src"),
+                "nwk_dst": p.get("nwk_dst"),
+                "target_eui64": p.get("aps_cmd_remove_target"),
+            })
+
+    # 3. 每台设备收集证据
+    results = []
+    for dev in sorted(joined_devs):
+        ev = {
+            "transport_nwk": [], "announce": [], "tclk": [], "verify": [], "confirm": [],
+            "leave_broadcast": [], "leave_any": [],
+        }
+        for p in packets:
+            nsrc, ndst = p.get("nwk_src"), p.get("nwk_dst")
+            cid = p.get("aps_cmd_id")
+            if cid == APS_CMD_TRANSPORT_KEY:
+                kt = p.get("aps_cmd_key_type")
+                if kt == APS_KEY_TYPE_NWK and ndst == dev:
+                    ev["transport_nwk"].append(p)
+                elif kt == APS_KEY_TYPE_TC_LINK and ndst == dev:
+                    ev["tclk"].append(p)
+            elif cid == APS_CMD_VERIFY_KEY and nsrc == dev:
+                ev["verify"].append(p)
+            elif cid == APS_CMD_VERIFY_KEY_CONFIRM and ndst == dev:
+                ev["confirm"].append(p)
+            elif p.get("aps_cluster") == ZDP_DEVICE_ANNOUNCE and nsrc == dev:
+                ev["announce"].append(p)
+            elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE:
+                if nsrc == dev:
+                    ev["leave_any"].append(p)
+                    if ndst == BROADCAST_ADDR:
+                        ev["leave_broadcast"].append(p)
+        dev_result = _judge_l1_4_device(dev, ev, remove_events)
+        results.append(dev_result)
+
+    hits = [r for r in results if r["verdict"].startswith("L1-4")]
+    healthies = [r for r in results if r["verdict"] == "HEALTHY"]
+    if hits:
+        verdict = "L1-4_HIT"
+        confidence = "高" if any(r["confidence"] == "高" for r in hits) else "中"
+        summary = "TC 拒绝/踢人: " + ", ".join(
+            f"0x{r['device']:04X} ({r['sub_rule']})" for r in hits)
+    elif healthies:
+        verdict = "HEALTHY"
+        confidence = "高"
+        summary = f"无 TC 拒绝/踢人证据 ({len(healthies)}/{len(results)} 设备已入网且未被移除)"
+    else:
+        verdict = "INCONCLUSIVE"
+        confidence = "低"
+        summary = "无完整入网上下文 (L1-4 判定需 Assoc 成功设备)"
+
+    return {
+        "scenario": "L1-4",
+        "verdict": verdict,
+        "confidence": confidence,
+        "summary": summary,
+        "joined_device_count": len(results),
+        "remove_event_count": len(remove_events),
+        "remove_events": remove_events,
+        "devices": results,
+    }
+
+
+def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict]) -> dict:
+    """单设备 L1-4 判定 → R1/R2a/R2b/R3/HEALTHY/INCONCLUSIVE."""
+    tnwk = ev["transport_nwk"]; ann = ev["announce"]
+    tclk = ev["tclk"]; vk = ev["verify"]; cf = ev["confirm"]
+    lb = ev["leave_broadcast"]; lany = ev["leave_any"]
+
+    # 该设备的 Remove Device 帧: nwk_dst == 自身 (router 或直连 TC 的 ED)
+    # (ED 经 parent 踢出时 dst=parent, target EUI64 匹配待增强 — 文档第 8 层已声明)
+    rm_frames = [r for r in remove_events if r["nwk_dst"] == dev]
+
+    joined = bool(tnwk or ann)  # 已入网判据: 拿到 NWK Key 或发过 Announce
+
+    base = {
+        "device": dev,
+        "remove_device": len(rm_frames),
+        "transport_nwk": len(tnwk), "announce": len(ann),
+        "leave_broadcast": len(lb), "leave": len(lany),
+    }
+
+    def hit(rule, conf, summary):
+        return {**base, "verdict": "L1-4_HIT", "sub_rule": rule,
+                "confidence": conf, "summary": summary}
+
+    def healthy(summary):
+        return {**base, "verdict": "HEALTHY", "sub_rule": None,
+                "confidence": "高", "summary": summary}
+
+    def inconclusive(summary, conf="低"):
+        return {**base, "verdict": "INCONCLUSIVE", "sub_rule": None,
+                "confidence": conf, "summary": summary}
+
+    # ── R1/R2a: Remove Device 出现 (显式拒绝/踢人, 高置信) ──
+    if rm_frames:
+        if joined:
+            return hit("R2a", "高",
+                       f"Remove Device ×{len(rm_frames)} 踢已入网设备 (运营期踢人, APS 认证)")
+        return hit("R1", "高",
+                   f"Remove Device ×{len(rm_frames)} 拒绝入网 (设备未完成入网: 无 NWK Key/Announce)")
+
+    # ── R2b: 已入网设备广播 Leave (rejoin=0) 且无密钥验证失败上下文 ──
+    kicked_bc = [p for p in lb
+                 if p.get("nwk_leave_rejoin") == 0 and p.get("nwk_leave_request") == 0]
+    if joined and kicked_bc:
+        # 密钥验证失败上下文 (L1-3-B2 特征): TCLK 已分发但 Verify/Confirm 缺失
+        key_fail_ctx = bool(tclk) and not (vk and cf)
+        if not key_fail_ctx:
+            return hit("R2b", "中",
+                       f"已入网设备广播 Leave ×{len(kicked_bc)} (rejoin=0/request=0) — "
+                       "疑似运营期踢人 (TC 指令帧不可见; 无密钥验证失败痕迹, 已排除 L1-3-B2)")
+        return inconclusive(
+            f"已入网设备广播 Leave ×{len(kicked_bc)} 但伴随 TCLK 验证失败上下文 — 归 L1-3-B2 判定", "中")
+
+    # ── R3: 未入网 (Assoc 成功但无 key/Announce) + 设备消失/Leave → 静默拒绝 ──
+    if not tnwk and not ann:
+        if lany:
+            return hit("R3", "中",
+                       f"Assoc 成功但无 TransportKey(NWK)/Announce, 设备 Leave — 疑似 TC 静默拒绝"
+                       "(官方 ignore 路径 2s 移除); ⚠️ 与 L1-3-A1 帧级重叠, 需 TC/设备日志仲裁")
+        return inconclusive("Assoc 成功但无 TransportKey(NWK)/Announce, 设备未消失", "中")
+
+    # ── 排除 ──
+    if not lany:
+        return healthy("已入网且无 Leave — TC 允许入网 (排除 L1-4)")
+    return inconclusive("已入网设备广播 Leave 但 rejoin 标志为可重入 (rejoin=1, 设备暂离非被踢)", "低")
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict]) -> dict:
@@ -420,4 +585,5 @@ def detect(packets: list[dict]) -> dict:
         "l1_1": detect_l1_1(packets),
         "l1_2": detect_l1_2(packets),
         "l1_3": detect_l1_3(packets),
+        "l1_4": detect_l1_4(packets),
     }

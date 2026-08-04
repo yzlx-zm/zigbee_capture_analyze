@@ -438,6 +438,13 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             # 0x0B = Source Route Failure (L1-3 路由根因判定需要)
             result["nwk_status_code"] = plaintext[1]
             result["nwk_status_target"] = int.from_bytes(plaintext[2:4], "little")
+        elif nwk_cmd_id == 4 and len(plaintext) >= 2:  # Leave
+            # payload: [cmd_id(1)][options(1)]; options: bit5=rejoin, bit6=request, bit7=children
+            # (与 tshark zbee_nwk.cmd.leave.* 对齐, L1-4 踢人判定需要)
+            opts = plaintext[1]
+            result["nwk_leave_rejoin"] = (opts >> 5) & 1
+            result["nwk_leave_request"] = (opts >> 6) & 1
+            result["nwk_leave_children"] = (opts >> 7) & 1
 
     # APS / ZDP parsing (only for NWK Data frames, not NWK commands)
     aps = None
@@ -484,6 +491,13 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             result["aps_cmd_id"] = aps_plain[0]
             if aps_plain[0] == 0x05 and len(aps_plain) >= 2:  # Transport Key
                 result["aps_cmd_key_type"] = aps_plain[1]
+            elif aps_plain[0] == 0x07 and len(aps_plain) >= 9:  # Remove Device
+                # payload: [cmd_id(1)][target EUI64(8 LE)] — L1-4 踢人检测
+                result["aps_cmd_remove_target"] = _format_eui(
+                    int.from_bytes(aps_plain[1:9], "little"))
+            elif aps_plain[0] == 0x06 and len(aps_plain) >= 2:  # Update Device
+                # payload: [cmd_id(1)][status(1)] — 1=UNSECURED_JOIN, 2=DEVICE_LEFT
+                result["aps_cmd_update_status"] = aps_plain[1]
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":

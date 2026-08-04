@@ -19,9 +19,11 @@ reg('diag',function(){
     var l1 = l1d ? (l1d.l1_1||{}) : {};
     var l2 = l1d ? (l1d.l1_2||{}) : {};
     var l3 = l1d ? (l1d.l1_3||{}) : {};
+    var l4 = l1d ? (l1d.l1_4||{}) : {};
     var vc1 = l1.verdict==='HEALTHY' ? '#16a34a' : (l1.verdict==='L1-1_HIT' ? '#dc2626' : '#f59e0b');
     var vc2 = l2.verdict==='HEALTHY' ? '#16a34a' : (l2.verdict==='L1-2_HIT_REJECTED' ? '#dc2626' : '#f59e0b');
     var vc3 = l3.verdict==='HEALTHY' ? '#16a34a' : (l3.verdict==='L1-3_HIT' ? '#dc2626' : '#f59e0b');
+    var vc4 = l4.verdict==='HEALTHY' ? '#16a34a' : (l4.verdict==='L1-4_HIT' ? '#dc2626' : '#f59e0b');
     h+='<div class="card" style="margin-bottom:12px;background:#f8fafc;border-left:3px solid #3b82f6">'
       +'<h3 style="font-size:13px;margin-bottom:8px">🔍 L1 入网检测 <span style="font-size:10px;color:#94a3b8;font-weight:400">(文档→测试→工具)</span></h3>'
       +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
@@ -53,6 +55,31 @@ reg('diag',function(){
               +'<b style="font-family:monospace">0x'+d.device.toString(16).toUpperCase().padStart(4,'0')+'</b>: '
               +'<span style="color:'+dc+'">'+d.verdict+(d.sub_rule?' ('+d.sub_rule+')':'')+'</span> '
               +'<span style="color:#94a3b8">T'+d.transport_nwk+'/RQ'+d.request_key+'/Tclk'+d.transport_tclk+'/V'+d.verify+'/C'+d.confirm+'/L'+d.leave+'</span>'
+              +'<div style="color:#64748b">'+d.summary+'</div></div>';
+          }).join('')
+        +'</div>' : '')
+      +'</div></div>'
+      // L1-4
+      +'<div style="flex:1;min-width:280px;background:#fff;border-radius:6px;padding:10px;border:1px solid #e2e8f0">'
+      +'<div style="font-weight:600;font-size:12px;margin-bottom:4px">L1-4 TC 拒绝/踢人: <span style="color:'+vc4+';font-weight:700">'+l4.verdict+'</span> <span style="color:#94a3b8;font-size:10px" title="置信度: 高=直接证据/中=帧模式/低=推断/不可判定=数据不足">置信度:'+l4.confidence+'</span></div>'
+      +'<div style="font-size:11px;color:#475569;line-height:1.6">'
+      +'Remove Device(0x07): <b>'+l4.remove_event_count+'</b> 帧 | 入网设备: <b>'+l4.joined_device_count+'</b> 台<br>'
+      +'<span style="color:#64748b">'+l4.summary+'</span>'
+      +((l4.remove_events||[]).length ? '<div style="margin-top:4px;border-top:1px dashed #e2e8f0;padding-top:4px">'
+        +(l4.remove_events||[]).map(function(r){
+            return '<div style="font-size:10px;margin-top:2px;font-family:monospace">'
+              +'0x'+r.nwk_dst.toString(16).toUpperCase().padStart(4,'0')+' ← 0x'+r.nwk_src.toString(16).toUpperCase().padStart(4,'0')
+              +(r.target_eui64?' → '+r.target_eui64:'')
+              +'</div>';
+          }).join('')
+        +'</div>' : '')
+      +((l4.devices||[]).length ? '<div style="margin-top:4px;border-top:1px dashed #e2e8f0;padding-top:4px">'
+        +(l4.devices||[]).map(function(d){
+            var dc = d.verdict==='HEALTHY' ? '#16a34a' : (d.verdict==='L1-4_HIT' ? '#dc2626' : '#f59e0b');
+            return '<div style="font-size:10px;margin-top:2px">'
+              +'<b style="font-family:monospace">0x'+d.device.toString(16).toUpperCase().padStart(4,'0')+'</b>: '
+              +'<span style="color:'+dc+'">'+d.verdict+(d.sub_rule?' ('+d.sub_rule+')':'')+'</span> '
+              +'<span style="color:#94a3b8">Rm'+d.remove_device+'/Ann'+d.announce+'/Lv'+d.leave+'</span>'
               +'<div style="color:#64748b">'+d.summary+'</div></div>';
           }).join('')
         +'</div>' : '')

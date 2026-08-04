@@ -12,7 +12,7 @@
 | L1-1 | 信道/网络发现失败 | ✅ 闭环 | MAC BeaconReq/Beacon 提取 (v1.2) |
 | L1-2 | Association 失败 | ✅ 闭环 | MAC AssocReq/Resp 提取 (v1.2) |
 | L1-3 | 密钥分发失败 | ✅ 闭环 | APS 命令 ID + NWK 错误码 (v1.3, B2-LOOP-ROUTE) |
-| L1-4 | TC 拒绝入网 | 📝 部分 | 需 Remove Device (0x07) / Leave rejoin=0 检测 |
+| L1-4 | TC 拒绝入网 | 📝 检测器就绪 (R2b 素材验证通过) | Remove Device (0x07) target 提取 + 广播 Leave (rejoin=0) + 静默拒绝 (R1/R2a/R3 待素材) |
 | L1-5 | 大网络多跳入网失败 | ⬜ | 需 Update Device + TC 地址解析检测 |
 | L1-6 | 并发入网风暴 | ⬜ | 需 Assoc 并发计数 |
 | L1-7 | 误入错误 PAN | ⬜ | 需 EPAN ID 对比 |

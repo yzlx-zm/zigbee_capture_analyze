@@ -280,6 +280,22 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
                         })
         link_status_neighbors = neighbors if neighbors else None
 
+    # ── NWK 命令 ID + Leave 标志 (L1-4 踢人检测 / L1-3 Leave 判定需要) ──
+    # 命令名 → ID 映射 (zigbee_packet_types.h): 1=Route Request, 2=Route Reply,
+    # 3=Network Status, 4=Leave, 5=Route Record, 6=Rejoin Request, 7=Rejoin Response, 8=Link Status
+    NWK_CMD_IDS = {
+        "Route Request": 1, "Route Reply": 2, "Network Status": 3,
+        "Leave": 4, "Route Record": 5, "Rejoin Request": 6,
+        "Rejoin Response": 7, "Link Status": 8,
+    }
+    nwk_cmd_id = NWK_CMD_IDS.get(cmd_name) if cmd_name else None
+    nwk_leave_rejoin = nwk_leave_request = nwk_leave_children = None
+    if cmd_name == "Leave" and isinstance(cmd_data, dict):
+        # 官方字段: zbee_nwk.cmd.leave.rejoin (0x20) / request (0x40) / children (0x80)
+        nwk_leave_rejoin = 1 if str(cmd_data.get("zbee_nwk.cmd.leave.rejoin", "")) in ("1", "True", "true") else 0
+        nwk_leave_request = 1 if str(cmd_data.get("zbee_nwk.cmd.leave.request", "")) in ("1", "True", "true") else 0
+        nwk_leave_children = 1 if str(cmd_data.get("zbee_nwk.cmd.leave.children", "")) in ("1", "True", "true") else 0
+
     if cmd_name == "Route Record" and isinstance(cmd_data, dict):
         relay_count = int(cmd_data.get("zbee_nwk.cmd.relay_count", "0"))
         # 优先使用 -T fields 提取的完整 relay 列表 (JSON 多实例字段只保留最后一个)
@@ -322,6 +338,14 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     # 字段官方名: zbee_aps.cmd.id / zbee_aps.cmd.key_type (与 cubx_reader aps_cmd_* 对齐)
     aps_cmd_id = _h(aps.get("zbee_aps.cmd.id", ""))
     aps_cmd_key_type = _h(aps.get("zbee_aps.cmd.key_type", ""))
+    # L1-4: Remove Device (0x07) target EUI64 / Update Device (0x06) status
+    # 字段官方名: zbee_aps.cmd.device (被移除/更新的设备 EUI64) / zbee_aps.cmd.update_status
+    aps_cmd_remove_target = None
+    aps_cmd_update_status = None
+    if aps_cmd_id == 0x07:
+        aps_cmd_remove_target = _hex_colon(aps.get("zbee_aps.cmd.device", ""))
+    elif aps_cmd_id == 0x06:
+        aps_cmd_update_status = _h(aps.get("zbee_aps.cmd.update_status", ""))
 
     # ZCL 层
     zcl = layers.get("zbee_zcl", {})
@@ -350,6 +374,12 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_src_ep": aps_src_ep, "aps_dst_ep": aps_dst_ep,
         "aps_cmd_id": aps_cmd_id,
         "aps_cmd_key_type": aps_cmd_key_type,
+        "aps_cmd_remove_target": aps_cmd_remove_target,
+        "aps_cmd_update_status": aps_cmd_update_status,
+        "nwk_cmd_id": nwk_cmd_id,
+        "nwk_leave_rejoin": nwk_leave_rejoin,
+        "nwk_leave_request": nwk_leave_request,
+        "nwk_leave_children": nwk_leave_children,
         "zcl_cmd_id": zcl_cmd_id,
         "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id) if zcl_cmd_id is not None else None,
         "zcl_direction": zcl_dir,

@@ -24,7 +24,7 @@
 
 | 文件 | 大小 | 内容 | 验证状态 |
 |------|------|------|----------|
-| `leave_question_packet.pcap` | 90KB | Leave 问题包 | ⏳ 早期问题素材 |
+| `leave_question_packet.pcap` | 90KB | Leave 问题包 (0xCBEB 路由器被踢: 广播 Leave ×6 rejoin=0, 无 0x07) | ✅ **L1-4-R2b 验证通过** (2026-08-04, tshark 复核: 6 条广播 Leave, 0 条 Remove Device) |
 | `test3_cpature_leave.pcap` | 696KB | test3 leave 捕获 | ⏳ 早期问题素材 |
 | `test2-ubiqua-export.cubx` | 1.3MB | test2 导出 (大量琥珀色终端节点问题) | ⏳ 早期问题素材 |
 | `test2-ubiqua-export.pcap` / `test2-export.pcap` / `test3-ubiqua-export.pcap` | ~1MB | test2/test3 pcap 版 | ⏳ 早期问题素材 |

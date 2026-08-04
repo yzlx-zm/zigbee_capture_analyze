@@ -29,13 +29,16 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [素材台账] — 验证可用-记录 素材定位;中继入网抓包(1) = L1-3 真实故障素材
 - [前端 ES 模块化] — index.html 95 行 + 模块化 JS;L1 检测卡片 (含 L1-3 设备明细)
 - [场景体系全景调研](issues/00-场景体系全景调研.md) — taxonomy v1.0 已定义 8 大类 55 场景;验证状态总表见 docs/scenarios/OVERVIEW.md;838D 案例 = L3-5 源路由失效 (场景交叉)
+- [L1-4 检测闭环](issues/05-L1-4TC拒绝.md) — 文档 v1.1 + 检测器 R1/R2a/R2b/R3;素材实证: 运营期踢人可见信号 = 设备广播 Leave (rejoin=0), TC 指令帧 (0x07) 经常抓不到;R2b 素材验证通过 (leave_question), R1/R2a/R3 待素材
+- [解析器字段扩展] — tshark/cubx 对齐补 nwk_cmd_id + Leave 标志 + Remove Device target (0x07) / Update Device status (0x06);tshark.py 此前缺 nwk_cmd_id 提取 (pcap 路径 L1-3 Leave 判定缺口, 已补齐)
 
 ## Not yet specified
 
-- 55 场景中 52 个未闭环 — 优先级由用户定 (低挂果实: L3-5/L2-1/L6-S3/L1-4)
+- 55 场景中 51 个未闭环 — 优先级由用户定 (低挂果实: L3-5/L2-1/L6-S3/L2-6)
 - 1885→838D 下行链路断的根因 (非对称: 上行通下行断) — 需现场信息
 - 前端剩余需求清单 — 待评估 (除拓扑时间控制外, 02 待用户确认)
 - L1-3 规则 A1/A2/B1 的故障帧形态 — 等用户素材后验证
+- L1-4 规则 R1/R2a (0x07 显式拒绝/踢人) 与 R3 (静默拒绝) — 等复现素材 (网关白名单 deny / 删除设备操作)
 
 ## Out of scope
 
