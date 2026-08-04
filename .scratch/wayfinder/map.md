@@ -29,7 +29,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [素材台账] — 验证可用-记录 素材定位;中继入网抓包(1) = L1-3 真实故障素材
 - [前端 ES 模块化] — index.html 95 行 + 模块化 JS;L1 检测卡片 (含 L1-3 设备明细)
 - [场景体系全景调研](issues/00-场景体系全景调研.md) — taxonomy v1.0 已定义 8 大类 55 场景;验证状态总表见 docs/scenarios/OVERVIEW.md;838D 案例 = L3-5 源路由失效 (场景交叉)
-- [L1-4 检测闭环](issues/05-L1-4TC拒绝.md) — 文档 v1.1 + 检测器 R1/R2a/R2b/R3;素材实证: 运营期踢人可见信号 = 设备广播 Leave (rejoin=0), TC 指令帧 (0x07) 经常抓不到;R2b 素材验证通过 (leave_question), R1/R2a/R3 待素材
+- [L1-4 检测闭环](issues/05-L1-4TC拒绝.md) — 文档 v1.2 (自审修正) + 检测器 R1/R2a/R2b/R3;素材实证: 运营期踢人路径 = **ZDO Mgmt Leave Req (0x0034) 指令可见** (leave_question ×12) + 设备广播 Leave 响应 (rejoin=0);R2b 高置信验证通过, R1/R2a/R3 待素材
 - [解析器字段扩展] — tshark/cubx 对齐补 nwk_cmd_id + Leave 标志 + Remove Device target (0x07) / Update Device status (0x06);tshark.py 此前缺 nwk_cmd_id 提取 (pcap 路径 L1-3 Leave 判定缺口, 已补齐)
 
 ## UI 工程模块 (2026-08-04 拆分)

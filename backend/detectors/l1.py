@@ -19,6 +19,7 @@ APS_CMD_VERIFY_KEY_CONFIRM = 0x10
 APS_KEY_TYPE_NWK = 0x01          # TransportKey 里 NWK Key 的 key_type
 APS_KEY_TYPE_TC_LINK = 0x04      # TransportKey 里 TC Link Key 的 key_type
 ZDP_DEVICE_ANNOUNCE = 0x0013
+ZDP_MGMT_LEAVE_REQ = 0x0034   # ZDO Mgmt Leave Req — TC 踢人管理指令 (L1-4-R2b, 素材实证)
 NWK_CMD_LEAVE = 0x04
 
 # ── L1-3 判定参数 ──
@@ -417,15 +418,18 @@ def _judge_l1_3_device(dev: int, ev: dict) -> dict:
 BROADCAST_ADDR = 0xFFFD
 
 def detect_l1_4(packets: list[dict]) -> dict:
-    """TC 拒绝入网 / 运营期踢人检测 (文档 L1-4.md v1.0).
+    """TC 拒绝入网 / 运营期踢人检测 (文档 L1-4.md v1.2).
 
     规则 (官方依据 + 素材实证 2026-08-04):
       - R1 : Remove Device (0x07) 出现 + 目标未完成入网 (无 TransportKey(NWK)/Announce)
             → 入网阶段显式拒绝 (高置信, 官方: TC deny → Remove Device 给 parent)
-      - R2a: Remove Device (0x07) 出现 + 目标已入网 → 运营期踢人 (高置信)
-      - R2b: 已入网设备广播 Leave (dst=0xFFFD, rejoin=0/request=0) + 无密钥验证失败上下文
-            → 疑似运营期踢人 (中置信; TC 指令帧 0x07 经常抓不到, 素材实证)
-            密钥验证失败上下文 (tclk 分发后 verify/confirm 缺失) → 归 L1-3-B2, 不报 R2b
+      - R2a: Remove Device (0x07) 出现 + 目标已入网 → 运营期踢人 (高置信, APS 认证)
+      - R2b: ZDO Mgmt Leave Req (cluster 0x0034, TC→设备) + 设备已入网
+            → 运营期踢人 (高置信, ZDO 管理指令路径)
+            素材实证: leave_question TC 踢 0xCBEB 走此路径 (Mgmt Leave Req ×12 可见)
+      - R2c: 已入网设备广播 Leave (dst=0xFFFD, rejoin=0) + 无前置指令帧 + 无密钥验证失败上下文
+            → 疑似运营期踢人 (中置信; 无法帧级排除设备自愿永久离网 — 两者广播 Leave 帧级相同,
+            区别在有无前置指令帧; 指令帧可能未被 sniffer 捕获)
       - R3 : Assoc 成功 + 无 0x07 + 无 TransportKey(NWK) + 无 Announce + 设备消失/Leave
             → 静默拒绝 (中置信; 官方 ignore 路径 parent 2s 静默移除)
             ⚠️ 与 L1-3-A1 帧级重叠 → 双报提示, 需 TC/设备日志仲裁
@@ -453,7 +457,18 @@ def detect_l1_4(packets: list[dict]) -> dict:
                 "target_eui64": p.get("aps_cmd_remove_target"),
             })
 
-    # 3. 每台设备收集证据
+    # 3. Mgmt Leave Req (ZDP 0x0034) 事件全量 — ZDO 踢人指令 (素材实证路径)
+    #    TC(0x0000) 向设备单播 Mgmt Leave Req → 设备执行 Leave
+    mgmt_leave_events = []
+    for p in packets:
+        if p.get("aps_cluster") == ZDP_MGMT_LEAVE_REQ and p.get("nwk_src") == 0x0000:
+            mgmt_leave_events.append({
+                "packet_id": p.get("packet_id"),
+                "ts": p["ts"],
+                "nwk_dst": p.get("nwk_dst"),
+            })
+
+    # 4. 每台设备收集证据
     results = []
     for dev in sorted(joined_devs):
         ev = {
@@ -480,7 +495,7 @@ def detect_l1_4(packets: list[dict]) -> dict:
                     ev["leave_any"].append(p)
                     if ndst == BROADCAST_ADDR:
                         ev["leave_broadcast"].append(p)
-        dev_result = _judge_l1_4_device(dev, ev, remove_events)
+        dev_result = _judge_l1_4_device(dev, ev, remove_events, mgmt_leave_events)
         results.append(dev_result)
 
     hits = [r for r in results if r["verdict"].startswith("L1-4")]
@@ -507,12 +522,15 @@ def detect_l1_4(packets: list[dict]) -> dict:
         "joined_device_count": len(results),
         "remove_event_count": len(remove_events),
         "remove_events": remove_events,
+        "mgmt_leave_req_count": len(mgmt_leave_events),
+        "mgmt_leave_events": mgmt_leave_events,
         "devices": results,
     }
 
 
-def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict]) -> dict:
-    """单设备 L1-4 判定 → R1/R2a/R2b/R3/HEALTHY/INCONCLUSIVE."""
+def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict],
+                       mgmt_leave_events: list[dict]) -> dict:
+    """单设备 L1-4 判定 → R1/R2a/R2b/R2c/R3/HEALTHY/INCONCLUSIVE."""
     tnwk = ev["transport_nwk"]; ann = ev["announce"]
     tclk = ev["tclk"]; vk = ev["verify"]; cf = ev["confirm"]
     lb = ev["leave_broadcast"]; lany = ev["leave_any"]
@@ -520,12 +538,15 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict]) -> dict:
     # 该设备的 Remove Device 帧: nwk_dst == 自身 (router 或直连 TC 的 ED)
     # (ED 经 parent 踢出时 dst=parent, target EUI64 匹配待增强 — 文档第 8 层已声明)
     rm_frames = [r for r in remove_events if r["nwk_dst"] == dev]
+    # 该设备的 Mgmt Leave Req (TC→dev, ZDO 踢人指令)
+    ml_req = [m for m in mgmt_leave_events if m["nwk_dst"] == dev]
 
     joined = bool(tnwk or ann)  # 已入网判据: 拿到 NWK Key 或发过 Announce
 
     base = {
         "device": dev,
         "remove_device": len(rm_frames),
+        "mgmt_leave_req": len(ml_req),
         "transport_nwk": len(tnwk), "announce": len(ann),
         "leave_broadcast": len(lb), "leave": len(lany),
     }
@@ -550,16 +571,25 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict]) -> dict:
         return hit("R1", "高",
                    f"Remove Device ×{len(rm_frames)} 拒绝入网 (设备未完成入网: 无 NWK Key/Announce)")
 
-    # ── R2b: 已入网设备广播 Leave (rejoin=0) 且无密钥验证失败上下文 ──
+    # ── R2b: Mgmt Leave Req (ZDO 踢人指令, 高置信, 素材实证) ──
+    if ml_req:
+        if joined:
+            return hit("R2b", "高",
+                       f"Mgmt Leave Req (0x0034) ×{len(ml_req)} TC 指令设备离开 (ZDO 管理路径踢人)")
+        return hit("R2b", "高",
+                   f"Mgmt Leave Req (0x0034) ×{len(ml_req)} TC 指令未入网设备离开 (ZDO 管理路径)")
+
+    # ── R2c: 已入网设备广播 Leave (rejoin=0) 无前置指令帧 ──
     kicked_bc = [p for p in lb
                  if p.get("nwk_leave_rejoin") == 0 and p.get("nwk_leave_request") == 0]
     if joined and kicked_bc:
         # 密钥验证失败上下文 (L1-3-B2 特征): TCLK 已分发但 Verify/Confirm 缺失
         key_fail_ctx = bool(tclk) and not (vk and cf)
         if not key_fail_ctx:
-            return hit("R2b", "中",
+            return hit("R2c", "中",
                        f"已入网设备广播 Leave ×{len(kicked_bc)} (rejoin=0/request=0) — "
-                       "疑似运营期踢人 (TC 指令帧不可见; 无密钥验证失败痕迹, 已排除 L1-3-B2)")
+                       "疑似运营期踢人 (无前置指令帧可见; 无法帧级排除设备自愿永久离网; "
+                       "无密钥验证失败痕迹, 已排除 L1-3-B2)")
         return inconclusive(
             f"已入网设备广播 Leave ×{len(kicked_bc)} 但伴随 TCLK 验证失败上下文 — 归 L1-3-B2 判定", "中")
 

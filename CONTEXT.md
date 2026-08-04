@@ -236,9 +236,11 @@ Silicon Labs UG105.2 "Device Association"
 
 leave_question 中 0xCBEB 的 6 条 Leave 全部为 `kicked` 类型。
 **帧方向实证（2026-08-04, tshark 复核, 详见 docs/scenarios/L1-4.md 示例 B）**：6 条均为**设备广播**
-（src=0xCBEB → dst=0xFFFD）——是设备侧 Leave Announcement（设备执行 Leave 时广播，Silabs KB），
-**TC 的指令帧（0x07 Remove Device 或单播 Leave）未被抓到**。"协调器命令 0xCBEB 离开" 是早期推断，
-帧方向不支持；L1-4 检测器因此需要 R2b 规则（广播 Leave rejoin=0 判定）。
+（src=0xCBEB → dst=0xFFFD）——是设备侧 Leave Announcement（设备执行 Leave 时广播，Silabs KB）。
+**TC 的踢人指令 = ZDO Mgmt Leave Req（ZDP cluster 0x0034）×12，第二波踢人前完全可见**
+（t=1785138818.0-19.4，TC 单播 0000→0xCBEB）；第一波（t=1785138804.4）无指令帧可见。"协调器命令
+0xCBEB 离开" 是早期推断，帧方向不支持（指令在 ZDO 层而非 NWK 单播 Leave）。运营期踢人三路径:
+APS Remove Device (0x07) / ZDO Mgmt Leave Req (0x0034) / NWK Leave（L1-4 检测器 R2a/R2b/R2c）。
 
 **区分于**：Mgmt Leave（ZDP 0x0034，管理层离网请求，使用不同的协议机制）。
 
