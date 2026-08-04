@@ -9,62 +9,62 @@ let tsStart = 0, tsEnd = 0;
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
 reg('topo', function(){
-  document.getElementById('mc').style.padding='0';
-  var h='<div style="display:flex;height:calc(100vh - 44px)">'
+  var h='<div class="page">'
     // ── 左侧边栏 ──
-    +'<div id="tside" style="width:340px;flex-shrink:0;overflow-y:auto;padding:8px;background:#fff;border-right:1px solid #e2e8f0;transition:width 0.3s">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-    +'<button class="btn btn-o" id="tside-tog" title="折叠侧边栏" style="font-size:10px;padding:2px 6px">◀ 折叠</button>'
-    +'<span id="tinfo" style="font-size:11px;color:#64748b"></span></div>'
-    +'<div class="card" style="padding:8px"><h3 style="font-size:12px;margin-bottom:4px">📊 拓扑统计</h3><div id="tstat"></div></div>'
-    +'<div class="card" style="padding:8px"><h3 style="font-size:12px;margin-bottom:4px">📡 PAN 列表</h3><div id="pan-list" style="max-height:200px;overflow-y:auto"></div></div>'
-    +'<div class="card" style="padding:8px"><h3 style="font-size:12px;margin-bottom:4px">📋 不对称链路</h3><div id="tasym"></div></div>'
+    +'<div id="tside">'
+    +'<div class="tside-head">'
+    +'<button class="btn btn-o btn-s" id="tside-tog" title="折叠侧边栏">◀ 折叠</button>'
+    +'<span id="tinfo"></span></div>'
+    +'<div class="card card-tight"><h3>📊 拓扑统计</h3><div id="tstat"></div></div>'
+    +'<div class="card card-tight"><h3>📡 PAN 列表</h3><div id="pan-list" class="scroll-y"></div></div>'
+    +'<div class="card card-tight"><h3>📋 不对称链路</h3><div id="tasym"></div></div>'
     +'</div>'
     // ── 主区域 ──
-    +'<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">'
+    +'<div class="col grow oh">'
     // 工具栏
-    +'<div style="display:flex;gap:6px;padding:8px;background:#fff;border-bottom:1px solid #e2e8f0;flex-wrap:wrap;align-items:center">'
-    +'<input id="tpan" placeholder="PAN (16B6)" style="width:100px;font-family:monospace;font-size:11px">'
-    +'<input id="taddr" placeholder="地址" style="width:90px;font-family:monospace;font-size:11px">'
-    +'<button class="btn btn-p" id="tgo" style="font-size:10px">🔍 筛选</button><button class="btn btn-o" id="trst" style="font-size:10px">重置</button>'
-    +'<span style="color:#cbd5e1">|</span>'
-    +'<button class="btn btn-o" id="tfit" style="font-size:10px">⊞ 适应</button>'
-    +'<button class="btn btn-o" id="tlay" style="font-size:10px" title="切换布局">📐 层次</button>'
-    +'<button class="btn btn-o" id="tshow-all" style="font-size:10px" title="显示/隐藏静默节点">👁 静默节点</button>'
-    +'<button class="btn btn-o" id="thl-clear" style="font-size:10px" title="清除高亮">🔆 清除高亮</button>'
-    +'<span style="color:#cbd5e1">|</span>'
-    +'<span style="font-size:10px">图例:</span>'
-    +'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#f59e0b"></span><span style="font-size:10px">Coord</span>'
-    +'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#3b82f6"></span><span style="font-size:10px">Router</span>'
-    +'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#16a34a"></span><span style="font-size:10px">EndDev</span>'
-    +'<span style="display:inline-block;width:12px;height:12px;background:#94a3b8"></span><span style="font-size:10px">Unknown</span>'
-    +'<span style="margin-left:4px;font-size:10px">边:绿&gt;80% 黄&gt;50% 红 | 紫色虚线=路由路径 | 灰色点=静默节点</span>'
+    +'<div class="toolbar">'
+    +'<input id="tpan" placeholder="PAN (16B6)" class="mono w-100 t-11">'
+    +'<input id="taddr" placeholder="地址" class="mono w-90 t-11">'
+    +'<button class="btn btn-p btn-s" id="tgo">🔍 筛选</button><button class="btn btn-o btn-s" id="trst">重置</button>'
+    +'<span class="toolbar-sep">|</span>'
+    +'<button class="btn btn-o btn-s" id="tfit">⊞ 适应</button>'
+    +'<button class="btn btn-o btn-s" id="tlay" title="切换布局">📐 层次</button>'
+    +'<button class="btn btn-o btn-s" id="tshow-all" title="显示/隐藏静默节点">👁 静默节点</button>'
+    +'<button class="btn btn-o btn-s" id="thl-clear" title="清除高亮">🔆 清除高亮</button>'
+    +'<span class="toolbar-sep">|</span>'
+    +'<span class="legend">图例:'
+    +'<span class="dot coord"></span>Coord'
+    +'<span class="dot router"></span>Router'
+    +'<span class="dot enddev"></span>EndDev'
+    +'<span class="dot unknown square"></span>Unknown'
+    +'<span class="legend-tip">边:绿&gt;80% 黄&gt;50% 红 | 紫色虚线=路由路径 | 灰色点=静默节点</span>'
+    +'</span>'
     +'</div>'
     // ── 时间控制条: 单滑块(窗口中心) + 窗口大小 ──
-    +'<div style="display:flex;gap:8px;padding:4px 8px;background:#f8fafc;border-bottom:1px solid #e2e8f0;align-items:center;flex-wrap:wrap">'
-    +'<span style="font-size:10px;color:#64748b;white-space:nowrap">⏱ 窗口:</span>'
-    +'<select id="twin-size" style="font-size:10px;padding:1px 4px">'
+    +'<div class="timebar">'
+    +'<span class="t-label">⏱ 窗口:</span>'
+    +'<select id="twin-size">'
     +'<option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option><option value="9999" selected>全部</option></select>'
-    +'<button class="btn btn-o" id="tstep-bwd" style="font-size:10px;padding:1px 6px" title="前移">◀</button>'
-    +'<input type="range" id="tsl" min="0" max="1000" value="500" style="flex:1;min-width:140px;height:18px;cursor:pointer" oninput="onTimeSlide()">'
-    +'<button class="btn btn-o" id="tstep-fwd" style="font-size:10px;padding:1px 6px" title="后移">▶</button>'
-    +'<span id="ttime-label" style="font-size:10px;color:#64748b;white-space:nowrap;min-width:240px">--:--:-- ~ --:--:--</span>'
+    +'<button class="btn btn-o btn-s" id="tstep-bwd" title="前移">◀</button>'
+    +'<input type="range" id="tsl" min="0" max="1000" value="500" oninput="onTimeSlide()">'
+    +'<button class="btn btn-o btn-s" id="tstep-fwd" title="后移">▶</button>'
+    +'<span id="ttime-label">--:--:-- ~ --:--:--</span>'
     +'</div>'
     // Cytoscape 图
-    +'<div id="cy-graph" style="flex:1;min-height:360px;background:#fafbfc;position:relative">'
-    +'<div id="off-frame" style="position:absolute;border:2px dashed #94a3b8;border-radius:6px;background:rgba(148,163,184,0.06);pointer-events:none;display:none;z-index:2"></div>'
-    +'<div id="off-label" style="position:absolute;left:4px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:10px;color:#92400e;padding:6px 10px;border:2px solid #f59e0b;border-radius:4px;background:#fffbeb;pointer-events:none;display:none;font-weight:600;z-index:5">📡 仅LS可见</div>'
+    +'<div id="cy-graph">'
+    +'<div id="off-frame"></div>'
+    +'<div id="off-label">📡 仅LS可见</div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
-    +'<div style="border-top:2px solid #e2e8f0;background:#fff;max-height:220px;overflow-y:auto" id="bottom-panels">'
-    +'<div style="display:flex;border-bottom:1px solid #e2e8f0">'
-    +'<button class="btn bp-tab on" style="border-radius:0;border:none;border-bottom:2px solid #3b82f6;font-size:11px;padding:6px 14px" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
-    +'<button class="btn bp-tab" style="border-radius:0;border:none;border-bottom:2px solid transparent;font-size:11px;padding:6px 14px" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
-    +'<button class="btn bp-tab" style="border-radius:0;border:none;border-bottom:2px solid transparent;font-size:11px;padding:6px 14px" onclick="togBpTab(\'tree\',this)">🌳 层级树</button>'
+    +'<div id="bottom-panels">'
+    +'<div class="bp-head">'
+    +'<button class="btn bp-tab on" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
+    +'<button class="btn bp-tab" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
+    +'<button class="btn bp-tab" onclick="togBpTab(\'tree\',this)">🌳 层级树</button>'
     +'</div>'
-    +'<div id="bp-routes" style="padding:8px"></div>'
-    +'<div id="bp-neighbors" style="padding:8px;display:none"></div>'
-    +'<div id="bp-tree" style="padding:8px;display:none"><ul class="tree" id="tree-root"></ul></div>'
+    +'<div id="bp-routes" class="bp-body"></div>'
+    +'<div id="bp-neighbors" class="bp-body hidden"></div>'
+    +'<div id="bp-tree" class="bp-body hidden"><ul class="tree" id="tree-root"></ul></div>'
     +'</div>'
     +'</div></div>';
   document.getElementById('mc').innerHTML=h;
@@ -106,17 +106,17 @@ reg('topo', function(){
     }
     var activeCount=Object.keys(activeSet).length;
     document.getElementById('tstat').innerHTML='<div class="stats">'
-      +'<span>图节点: <b style=\"color:#16a34a\">'+activeCount+'</b>活跃</span><span style=\"color:#94a3b8\">'+(ns.length-activeCount)+'静默</span>'
+      +'<span>图节点: <b class="text-success">'+activeCount+'</b>活跃</span><span class="text-dim">'+(ns.length-activeCount)+'静默</span>'
       +'<span>图边: <b>'+es.length+'</b>数据流</span>'
-      +'<span style=\"color:#7c3aed\">'+rps.length+'路径↑</span>'
-      +(probes.length>0?'<span style=\"color:#3b82f6\">'+probes.length+'探测↓</span>':'')
-      +(failures.length>0?'<span style=\"color:#ef4444\">'+failures.length+'失败✕</span>':'')
+      +'<span class="text-route">'+rps.length+'路径↑</span>'
+      +(probes.length>0?'<span class="text-info">'+probes.length+'探测↓</span>':'')
+      +(failures.length>0?'<span class="text-danger-strong">'+failures.length+'失败✕</span>':'')
       +'<span>📡 LS邻居:<b>'+nbTotal+'</b></span><span>LS设备:'+nbDevCount+'</span>'
       +'</div>';
     // PAN list
     var pl=d.pan_list||[];
     var ph='<table class="tbl"><tr><th>PAN</th><th>包数</th></tr>';
-    for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'" style="cursor:pointer"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'" style="font-size:10px">→TL</button></td></tr>';}
+    for(var i=0;i<pl.length;i++){ph+='<tr class="pan-row" data-pan="'+pl[i].pan+'"><td>'+pl[i].label+'</td><td>'+pl[i].count+'</td><td><button class="btn btn-o btn-s pan-tl-btn" data-pan="'+pl[i].pan+'">→TL</button></td></tr>';}
     document.getElementById('pan-list').innerHTML=ph+'</table>';
     document.querySelectorAll('.pan-row').forEach(function(r){r.addEventListener('click',function(e){if(e.target.classList.contains('pan-tl-btn'))return;var pv=parseInt(this.dataset.pan);var ps=pv.toString(16).toUpperCase();document.getElementById('tpan').value=ps;S.topoPan=ps;loadData(ps,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} })})});
     document.querySelectorAll('.pan-tl-btn').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();S.topoPan=parseInt(this.dataset.pan).toString(16).toUpperCase();S.topoT0=null;S.topoT1=null;location.hash='tl'})});
@@ -126,17 +126,17 @@ reg('topo', function(){
     var ah='';
     var alTitle='📋 不对称链路 ('+alFiltered.length+'条, 不含OK)';
     document.querySelector('#tasym').parentElement.querySelector('h3').textContent=alTitle;
-    if(alFiltered.length===0){ah='<p style="font-size:10px;color:#16a34a">✅ 未发现不对称链路</p>';}
+    if(alFiltered.length===0){ah='<p class="t-10 text-success">✅ 未发现不对称链路</p>';}
     else{
       ah='<table class="tbl"><tr><th>A</th><th>B</th><th>A→B</th><th>B→A</th><th>差</th></tr>';
       var maxShow=Math.min(alFiltered.length,15);
       for(var i=0;i<maxShow;i++){
         var a=alFiltered[i];var lc=a.level==='WEAK'?'#d97706':'#dc2626';
-        ah+='<tr class="asym-row" data-a="'+a.a+'" data-b="'+a.b+'" style="cursor:pointer">'
+        ah+='<tr class="asym-row" data-a="'+a.a+'" data-b="'+a.b+'">'
           +'<td>0x'+a.a.toString(16).toUpperCase().padStart(4,'0')+'</td><td>0x'+a.b.toString(16).toUpperCase().padStart(4,'0')+'</td>'
-          +'<td>'+a.a_to_b_cost+'</td><td>'+a.b_to_a_cost+'</td><td style="color:'+lc+';font-weight:600">'+a.diff+'</td></tr>';
+          +'<td>'+a.a_to_b_cost+'</td><td>'+a.b_to_a_cost+'</td><td class="text-strong" style="color:'+lc+'">'+a.diff+'</td></tr>';
       }
-      if(alFiltered.length>maxShow) ah+='<tr><td colspan="5" style="color:#94a3b8;text-align:center">...还有'+(alFiltered.length-maxShow)+'条</td></tr>';
+      if(alFiltered.length>maxShow) ah+='<tr><td colspan="5" class="text-dim text-center">...还有'+(alFiltered.length-maxShow)+'条</td></tr>';
       ah+='</table>';
     }
     document.getElementById('tasym').innerHTML=ah;
@@ -419,74 +419,73 @@ reg('topo', function(){
     var failures=d.route_failures||[];
 
     if(paths.length===0 && probes.length===0 && failures.length===0){
-      panel.innerHTML='<p style=\"color:#94a3b8;font-size:11px;text-align:center;padding:12px\">未发现路由事件 (该网络无 Route Record/Request/Status 帧)</p>';return;
+      panel.innerHTML='<p class="empty">未发现路由事件 (该网络无 Route Record/Request/Status 帧)</p>';return;
     }
 
     // 样式
-    var sep='<div style=\"border-top:1px solid #e2e8f0;margin:8px 0\"></div>';
+    var sep='<div class="sep"></div>';
     var h='';
 
     // ── 上行路径 (Route Record) ──
     if(paths.length>0){
       var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}
       var changed=0; for(var k in srcPaths){if(srcPaths[k].length>1)changed++;}
-      h+='<div style=\"font-size:11px;color:#64748b;margin-bottom:4px\">'
-        +'<span style=\"color:#7c3aed;font-weight:600\">↑ 上行路径 (Route Record)</span> '
+      h+='<div class="path-head">'
+        +'<span class="text-route text-strong">↑ 上行路径 (Route Record)</span> '
         +paths.length+'条 | '+Object.keys(srcPaths).length+'个设备'
-        +(changed>0?' | <b style=\"color:#d97706\">'+changed+'个发生过路由变更</b>':'')
+        +(changed>0?' | <b class="text-amber">'+changed+'个发生过路由变更</b>':'')
         +'</div>'
-        +'<div style=\"font-size:10px;color:#94a3b8;margin-bottom:6px\">●实线=当前路由 · ◌虚线=历史路由</div>';
+        +'<div class="path-tip">●实线=当前路由 · ◌虚线=历史路由</div>';
       var maxShow=Math.min(paths.length,20);
       for(var i=0;i<maxShow;i++){
         var p=paths[i];
         var icon=p.is_current?'●':'◌';
         var color=p.is_current?'#7c3aed':'#94a3b8';
-        var style=p.is_current?'font-weight:600':'';
         var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
         var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
         var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
-        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;'+style+'\" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
-          +'<span style=\"color:'+color+';min-width:14px;text-align:center\">'+icon+'</span>'
-          +'<span style=\"color:'+color+'\"'+'>'+p.path_str+'</span>'
-          +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
-          +'<span style=\"color:#94a3b8;font-size:9px;white-space:nowrap\">'+ts0+dur+'</span>'
-          +(p.is_current?'<span style=\"color:#16a34a;font-size:9px;font-weight:600\">当前</span>':'<span style=\"color:#94a3b8;font-size:9px\">历史</span>')
+        h+='<div class="path-row'+(p.is_current?' text-strong':'')+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
+          +'<span class="p-icon" style="color:'+color+'">'+icon+'</span>'
+          +'<span style="color:'+color+'">'+p.path_str+'</span>'
+          +'<span class="p-tag text-dim">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
+          +'<span class="p-tag text-dim">'+ts0+dur+'</span>'
+          +(p.is_current?'<span class="p-tag text-success text-strong">当前</span>':'<span class="p-tag text-dim">历史</span>')
           +'</div>';
       }
-      if(paths.length>maxShow) h+='<p style=\"color:#94a3b8;font-size:10px;text-align:center\">...还有'+(paths.length-maxShow)+'条路径</p>';
+      if(paths.length>maxShow) h+='<p class="text-dim t-10 text-center">...还有'+(paths.length-maxShow)+'条路径</p>';
     }
 
     // ── 下行探测 (Route Request) ──
     if(probes.length>0){
-      h+=sep+'<div style=\"font-size:11px;color:#64748b;margin-bottom:6px\">'
-        +'<span style=\"color:#3b82f6;font-weight:600\">↓ 下行探测 (Route Request)</span> '
+      h+=sep+'<div class="path-head">'
+        +'<span class="text-info text-strong">↓ 下行探测 (Route Request)</span> '
         +probes.length+'对</div>';
       var maxP=Math.min(probes.length,10);
       for(var i=0;i<maxP;i++){
         var pp=probes[i];
         var ts0=new Date(pp.first_ts*1000).toISOString().substr(11,8);
-        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:2px 0;font-family:monospace;font-size:11px\" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
-          +'<span style=\"color:#3b82f6;min-width:14px;text-align:center\">→</span>'
-          +'<span style=\"color:#3b82f6\">'+pp.path_str+'</span>'
-          +'<span style=\"color:#94a3b8;font-size:9px\">×'+pp.count+'次</span>'
-          +'<span style=\"color:#94a3b8;font-size:9px\">'+ts0+'</span>'
+        h+='<div class="path-row" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
+          +'<span class="p-icon text-info">→</span>'
+          +'<span class="text-info">'+pp.path_str+'</span>'
+          +'<span class="p-tag text-dim">×'+pp.count+'次</span>'
+          +'<span class="p-tag text-dim">'+ts0+'</span>'
           +'</div>';
       }
     }
 
     // ── 下行失败 (Network Status) ──
     if(failures.length>0){
-      h+=sep+'<div style=\"font-size:11px;color:#64748b;margin-bottom:6px\">'
-        +'<span style=\"color:#ef4444;font-weight:600\">✕ 下行失败 (Network Status)</span> '
+      h+=sep+'<div class="path-head">'
+        +'<span class="text-danger text-strong">✕ 下行失败 (Network Status)</span> '
         +failures.length+'处</div>';
       for(var i=0;i<failures.length;i++){
         var f=failures[i];
         var ts=new Date(f.timestamp*1000).toISOString().substr(11,8);
-        h+='<div style=\"display:flex;align-items:center;gap:4px;padding:2px 0;font-family:monospace;font-size:11px\">'
-          +'<span style=\"color:#ef4444;min-width:14px;text-align:center\">✕</span>'
-          +'<span style=\"color:#ef4444\">'+f.path_str+'</span>'
-          +'<span style=\"color:#ef4444;font-size:9px\">'+f.status_name+'</span>'
-          +'<span style=\"color:#94a3b8;font-size:9px\">'+ts+'</span>'
+        h+='<div class="path-row">'
+          +'<span class="p-icon text-danger">✕</span>'
+          +'<span class="text-danger">'+f.path_str+'</span>'
+          +'<span class="p-tag text-danger">'+f.status_name+'</span>'
+          +'<span class="p-tag text-dim">'+ts+'</span>'
           +'</div>';
       }
     }
@@ -574,21 +573,21 @@ reg('topo', function(){
   // ═══ 邻居关系面板 ═══
   function renderNeighborPanel(){
     var panel=document.getElementById('bp-neighbors');
-    var d=S.topo; if(!d){panel.innerHTML='<p style="color:#94a3b8">无拓扑数据</p>';return;}
+    var d=S.topo; if(!d){panel.innerHTML='<p class="text-dim">无拓扑数据</p>';return;}
     var nbt=d.neighbor_tables||{};
-    if(Object.keys(nbt).length===0){panel.innerHTML='<p style="color:#94a3b8;text-align:center;padding:12px">无 Link Status 数据</p>';return;}
+    if(Object.keys(nbt).length===0){panel.innerHTML='<p class="empty">无 Link Status 数据</p>';return;}
     // Build device dropdown sorted by neighbor count
     var devList=[]; for(var devStr in nbt){devList.push({aid:parseInt(devStr), count:Object.keys(nbt[devStr]).length});}
     devList.sort(function(a,b){return b.count-a.count;});
-    var h='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
-      +'<span style="font-size:11px;font-weight:600">设备:</span>'
-      +'<select id="nb-dev-sel" style="font-family:monospace;font-size:11px;max-width:180px" onchange="showNbTable()">'
+    var h='<div class="row">'
+      +'<span class="t-11 text-strong">设备:</span>'
+      +'<select id="nb-dev-sel" class="mono t-11 w-180" onchange="showNbTable()">'
       +'<option value="">-- 选择设备 ('+devList.length+' 个有LS) --</option>';
     for(var i=0;i<devList.length;i++){
       h+='<option value="'+devList[i].aid+'">0x'+devList[i].aid.toString(16).toUpperCase().padStart(4,'0')+' ('+devList[i].count+' 邻居)</option>';
     }
-    h+='</select><span style="font-size:10px;color:#64748b">共 '+devList.length+' 设备有Link Status数据</span></div>';
-    h+='<div id="nb-detail" style="font-size:11px;max-height:140px;overflow-y:auto"></div>';
+    h+='</select><span class="t-10 text-muted">共 '+devList.length+' 设备有Link Status数据</span></div>';
+    h+='<div id="nb-detail" class="t-11 scroll-y"></div>';
     panel.innerHTML=h;
     // Global function to show neighbor detail
     window.showNbTable=function(){
@@ -596,7 +595,7 @@ reg('topo', function(){
       var detail=document.getElementById('nb-detail');
       if(!aid||!nbt[aid]){detail.innerHTML='';return;}
       var nbs=nbt[aid]; var nbKeys=Object.keys(nbs);
-      if(nbKeys.length===0){detail.innerHTML='<p style="color:#94a3b8">该设备无邻居记录</p>';return;}
+      if(nbKeys.length===0){detail.innerHTML='<p class="text-dim">该设备无邻居记录</p>';return;}
       var th='<table class="tbl"><tr><th>邻居</th><th>In Cost</th><th>Out Cost</th><th>最后更新</th><th>次数</th></tr>';
       nbKeys.sort(function(a,b){return (nbs[b].out_cost||0)-(nbs[a].out_cost||0);});
       for(var i=0;i<nbKeys.length;i++){
@@ -605,12 +604,12 @@ reg('topo', function(){
         var icColor=ic<=1?'#16a34a':ic<=3?'#d97706':'#dc2626';
         var ocColor=oc<=1?'#16a34a':oc<=3?'#d97706':'#dc2626';
         var ts=new Date((nb.last_seen_ts||0)*1000).toISOString().substr(11,8);
-        th+='<tr style="cursor:pointer" onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';location.hash=\'tl\'">'
+        th+='<tr onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';location.hash=\'tl\'">'
           +'<td>0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'</td>'
-          +'<td style="color:'+icColor+';font-weight:600">'+ic+'</td>'
-          +'<td style="color:'+ocColor+';font-weight:600">'+oc+'</td>'
-          +'<td style="font-size:10px;color:#94a3b8">'+ts+'</td>'
-          +'<td style="font-size:10px">'+nb.count+'</td></tr>';
+          +'<td class="text-strong" style="color:'+icColor+'">'+ic+'</td>'
+          +'<td class="text-strong" style="color:'+ocColor+'">'+oc+'</td>'
+          +'<td class="t-10 text-dim">'+ts+'</td>'
+          +'<td class="t-10">'+nb.count+'</td></tr>';
       }
       th+='</table>';
       detail.innerHTML=th;

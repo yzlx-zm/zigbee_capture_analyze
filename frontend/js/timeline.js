@@ -15,52 +15,51 @@ reg('tl', function(){
   if(S.topoT0!=null){var d0=new Date(S.topoT0*1000);S.tlTs0H=String(d0.getUTCHours());S.tlTs0M=String(d0.getUTCMinutes());S.tlTs0S=String(d0.getUTCSeconds());S.tlHasSearched=true;}
   if(S.topoT1!=null){var d1=new Date(S.topoT1*1000);S.tlTs1H=String(d1.getUTCHours());S.tlTs1M=String(d1.getUTCMinutes());S.tlTs1S=String(d1.getUTCSeconds());S.tlHasSearched=true;}
 
-  document.getElementById('mc').style.padding='16px';
   // Build H/M/S dropdown helpers
-  function hmssel(id,val,opts){var h='<select id="'+id+'" style="font-size:10px;font-family:monospace;width:48px">';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
+  function hmssel(id,val,opts){var h='<select id="'+id+'" class="mono hm-sel">';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
   var hourOpts=[];for(var hi=0;hi<24;hi++)hourOpts.push(hi);
   var minSecOpts=[];for(var mi=0;mi<60;mi++)minSecOpts.push(mi);
 
   document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
     // Row 1: PAN + Node text inputs
-    +'<div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'
-    +'<span style="font-size:11px;font-weight:600">PAN:</span><input id="tl-pan" placeholder="FEED" style="width:90px;font-family:monospace;font-size:11px" value="'+S.tlPan+'">'
-    +'<span style="font-size:11px;font-weight:600">节点:</span><input id="tl-node" placeholder="0x0000 或 0000" style="width:130px;font-family:monospace;font-size:11px" value="'+S.tlNode+'">'
+    +'<div class="tl-bar">'
+    +'<span class="t-label">PAN:</span><input id="tl-pan" placeholder="FEED" class="mono w-90" value="'+S.tlPan+'">'
+    +'<span class="t-label">节点:</span><input id="tl-node" placeholder="0x0000 或 0000" class="mono w-130" value="'+S.tlNode+'">'
     +'</div>'
     // Row 2: Time dropdowns (start ~ end)
-    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'
-    +'<span style="font-size:11px;font-weight:600">时间:</span>'
-    +hmssel('tl-h0',S.tlTs0H,hourOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-m0',S.tlTs0M,minSecOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-s0',S.tlTs0S,minSecOpts)
-    +'<span style="font-size:10px;margin:0 4px">~</span>'
-    +hmssel('tl-h1',S.tlTs1H,hourOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-m1',S.tlTs1M,minSecOpts)+'<span style="font-size:10px">:</span>'+hmssel('tl-s1',S.tlTs1S,minSecOpts)
-    +'<button class="btn btn-o" id="tl-tclear" style="font-size:10px;margin-left:4px" title="清除时间过滤">✕</button>'
+    +'<div class="tl-bar">'
+    +'<span class="t-label">时间:</span>'
+    +hmssel('tl-h0',S.tlTs0H,hourOpts)+'<span class="hm-colon">:</span>'+hmssel('tl-m0',S.tlTs0M,minSecOpts)+'<span class="hm-colon">:</span>'+hmssel('tl-s0',S.tlTs0S,minSecOpts)
+    +'<span class="hm-colon">~</span>'
+    +hmssel('tl-h1',S.tlTs1H,hourOpts)+'<span class="hm-colon">:</span>'+hmssel('tl-m1',S.tlTs1M,minSecOpts)+'<span class="hm-colon">:</span>'+hmssel('tl-s1',S.tlTs1S,minSecOpts)
+    +'<button class="btn btn-o btn-s ml-1" id="tl-tclear" title="清除时间过滤">✕</button>'
     +'</div>'
     // Row 3: View button + status
-    +'<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
-    +'<select id="tl-type" style="font-size:10px;font-family:monospace"><option value="">全部类型</option></select>'
-    +'<button class="btn btn-p" id="tshow" style="font-size:11px">🔍 查看</button>'
-    +'<span id="tl-capture-info" style="font-size:10px;color:#94a3b8"></span>'
-    +'<span id="tl-stat" style="font-size:11px;color:#64748b;margin-left:auto"></span></div>'
+    +'<div class="tl-bar">'
+    +'<select id="tl-type" class="mono"><option value="">全部类型</option></select>'
+    +'<button class="btn btn-p" id="tshow">🔍 查看</button>'
+    +'<span id="tl-capture-info"></span>'
+    +'<span id="tl-stat"></span></div>'
     // Summary
-    +'<div id="tl-summary" style="display:none;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:4px;font-size:12px"></div>'
+    +'<div id="tl-summary"></div>'
     // ═══ Left-Right split ═══
-    +'<div style="display:flex;flex:1;overflow:hidden;height:calc(100vh - 320px)">'
+    +'<div class="tl-main">'
     // LEFT: packet table
-    +'<div style="flex:1;overflow:auto;border-top:1px solid #e2e8f0">'
+    +'<div class="tl-table-wrap">'
     +'<table class="tbl" id="tltbl"><thead><tr>'
     +'<th>时间</th><th>类型</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
-    +'</tr></thead><tbody id="tltb"><tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:40px">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
+    +'</tr></thead><tbody id="tltb"><tr><td colspan="6" class="tl-empty-cell">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
     +'</div>'
     // RIGHT: protocol detail panel
-    +'<div id="tl-detail" style="width:400px;flex-shrink:0;overflow:auto;border-left:2px solid #e2e8f0;background:#fafbfc;padding:12px;font-size:12px;line-height:1.5">'
-    +'<p style="color:#94a3b8;text-align:center;padding-top:60px">← 点击左侧包列表中的帧<br>查看协议详情</p>'
+    +'<div id="tl-detail">'
+    +'<p class="empty-tip">← 点击左侧包列表中的帧<br>查看协议详情</p>'
     +'</div>'
     +'</div>'
     // Pagination
-    +'<div id="tl-pager" style="display:none;align-items:center;gap:8px;padding:8px;font-size:12px;border-top:1px solid #e2e8f0">'
-    +'<button class="btn btn-o" id="tl-pp" style="font-size:10px">上一页</button><span id="tl-pi">-</span><button class="btn btn-o" id="tl-pn" style="font-size:10px">下一页</button>'
-    +'<span>跳至</span><input id="tl-pj" style="width:45px;font-size:10px"><span>页</span><button class="btn btn-o" id="tl-pgo" style="font-size:10px">Go</button>'
-    +'<span>每页</span><select id="tl-ps" style="font-size:10px"><option value="50">50</option><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div></div>';
+    +'<div id="tl-pager">'
+    +'<button class="btn btn-o btn-s" id="tl-pp">上一页</button><span id="tl-pi">-</span><button class="btn btn-o btn-s" id="tl-pn">下一页</button>'
+    +'<span>跳至</span><input id="tl-pj" class="w-45 t-10"><span>页</span><button class="btn btn-o btn-s" id="tl-pgo">Go</button>'
+    +'<span>每页</span><select id="tl-ps"><option value="50">50</option><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div></div>';
 
   var tlPage=1,tlLimit=200,tlTotal=0,tlCaptureStart=null,tlCaptureEnd=null;
 
@@ -161,15 +160,15 @@ reg('tl', function(){
         var isNwkCmdRow=(p.pkt_type==='Link Status'||p.pkt_type==='Route Request'||p.pkt_type==='Route Reply'||p.pkt_type==='Route Record'||p.pkt_type==='Network Status'||p.pkt_type==='Leave'||p.pkt_type.startsWith('NWK Cmd'));
         var decIcon='';
         if(isNwkCmdRow){
-          decIcon='<span style="color:#0891b2" title="NWK命令">📡</span>';
+          decIcon='<span class="ic-nwk" title="NWK命令">📡</span>';
         }else if(p.decrypted){
-          decIcon='<span style="color:#16a34a" title="已解密">✅</span>';
+          decIcon='<span class="ic-dec" title="已解密">✅</span>';
         }else{
-          decIcon='<span style="color:#94a3b8" title="加密">🔒</span>';
+          decIcon='<span class="ic-enc" title="加密">🔒</span>';
         }
         var stat=(p.status||'')+' '+decIcon;
         h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
-      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" style="color:#94a3b8;text-align:center;padding:20px">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span style="font-size:10px">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
+      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
         tr.addEventListener('click',function(){
@@ -186,13 +185,13 @@ reg('tl', function(){
   // Detail panel renderer
   function tlShowDetail(pid){
     var panel=document.getElementById('tl-detail');
-    panel.innerHTML='<p style="color:#94a3b8;text-align:center;padding-top:20px">加载中...</p>';
+    panel.innerHTML='<p class="text-dim text-center">加载中...</p>';
     A.get('/api/packets/'+pid).then(function(d){
       if(!d||!d.layers){
-        panel.innerHTML='<p style="color:#dc2626;text-align:center;padding-top:20px">无法加载帧详情</p>';
+        panel.innerHTML='<p class="text-danger text-center">无法加载帧详情</p>';
         return;
       }
-      var html='<div style="margin-bottom:4px;color:#64748b;font-size:10px">帧 #'+pid+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span style="color:#16a34a">已解密</span>':'<span style="color:#dc2626">加密</span>')+'</div>';
+      var html='<div class="frame-meta">帧 #'+pid+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
       var layers=d.layers;
       // MAC layer (wpan)
       if(layers.wpan){
@@ -332,15 +331,15 @@ reg('tl', function(){
               var pathNodes=[nwkSrc2].concat(relays).concat([nwkDst3]);
               var pathStr='';
               for(var pi=0;pi<pathNodes.length;pi++){
-                if(pi>0)pathStr+=' <span style=\"color:#7c3aed\">→</span> ';
+                if(pi>0)pathStr+=' <span class="path-arrow">→</span> ';
                 var pn=pathNodes[pi];
                 if(typeof pn==='string'&&pn.startsWith('0x'))pathStr+=pn;
                 else if(pn)pathStr+='0x'+parseInt(pn,16).toString(16).toUpperCase().padStart(4,'0');
               }
               if(pathStr){
-                var ph='<div style=\"margin-bottom:8px;border-left:3px solid #7c3aed;padding-left:8px\">';
-                ph+='<div style=\"font-weight:600;color:#7c3aed;margin-bottom:4px\">Record Path</div>';
-                ph+='<div style=\"font-family:monospace;font-size:12px;background:#f1f5f9;padding:4px 8px;border-radius:4px\">'+pathStr+'</div></div>';
+                var ph='<div class="path-block">';
+                ph+='<div class="path-title">Record Path</div>';
+                ph+='<div class="path-code">'+pathStr+'</div></div>';
                 html+=ph;
               }
             }
@@ -460,15 +459,16 @@ reg('tl', function(){
       }
       panel.innerHTML=html;
     }).catch(function(e){
-      panel.innerHTML='<p style="color:#dc2626;text-align:center;padding-top:20px">加载失败: '+e.message+'</p>';
+      panel.innerHTML='<p class="text-danger text-center">加载失败: '+e.message+'</p>';
     });
   }
   function _tlLayer(title, color, fields){
-    var h='<div style="margin-bottom:8px;border-left:3px solid '+color+';padding-left:8px">';
-    h+='<div style="font-weight:600;color:'+color+';margin-bottom:2px">'+title+'</div>';
+    // color = 协议层语义色 (数据驱动, 保留动态): MAC 橙 / NWK 蓝 / APS 紫 等
+    var h='<div class="layer" style="border-left-color:'+color+'">';
+    h+='<div class="frame-title" style="color:'+color+'">'+title+'</div>';
     for(var i=0;i<fields.length;i++){
       var desc=fields[i][2]||'';
-      h+='<div style="display:flex;font-size:11px;margin:1px 0"><span style="color:#64748b;width:105px;flex-shrink:0" title="'+desc+'">'+fields[i][0]+'</span><span style="font-family:monospace;word-break:break-all">'+fields[i][1]+'</span></div>';
+      h+='<div class="field-row"><span class="k" title="'+desc+'">'+fields[i][0]+'</span><span class="v">'+fields[i][1]+'</span></div>';
     }
     h+='</div>';
     return h;
@@ -521,10 +521,10 @@ reg('tl', function(){
     var fromStr=(typeof from==='string'&&from)?'0x'+parseInt(from,16).toString(16).toUpperCase().padStart(4,'0'):from;
     var toStr=(typeof to==='string'&&to)?'0x'+parseInt(to,16).toString(16).toUpperCase().padStart(4,'0'):to;
     if(!fromStr||!toStr||fromStr==='0x0000'&&toStr==='0x0000')return'';
-    var h='<div style=\"margin-bottom:8px;border-left:3px solid #7c3aed;padding-left:8px\">';
-    h+='<div style=\"font-weight:600;color:#7c3aed;margin-bottom:4px\">'+title+' Path</div>';
-    h+='<div style=\"font-family:monospace;font-size:12px;background:#f1f5f9;padding:4px 8px;border-radius:4px\">';
-    h+=fromStr+' <span style=\"color:#7c3aed\">→</span> '+toStr;
+    var h='<div class="path-block">';
+    h+='<div class="path-title">'+title+' Path</div>';
+    h+='<div class="path-code">';
+    h+=fromStr+' <span class="path-arrow">→</span> '+toStr;
     h+='</div></div>';
     return h;
   }
