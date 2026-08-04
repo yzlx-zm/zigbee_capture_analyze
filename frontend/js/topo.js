@@ -7,9 +7,14 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
+let playTO = null, silentHidden = false;   // 播放定时器 / 静默节点隐藏态 (模块级, 跨页面切换保留)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
 reg('topo', function(){
+  // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
+  if(cy){cy.destroy();cy=null;}
+  if(playTO){clearInterval(playTO);playTO=null;}
+  clearTimeout(tSliderTO);
   var h='<div class="page">'
     // ── 左侧边栏 ──
     +'<div id="tside">'
@@ -680,7 +685,6 @@ reg('topo', function(){
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
 
   // ═══ 静默节点显示/隐藏 (tshow-all, U7 修复死控件) — 静默 = 孤立节点 (degree 0, 非路径) ═══
-  var silentHidden=false;
   function applySilentHidden(){
     if(!cy) return;
     cy.nodes().forEach(function(n){
@@ -790,7 +794,6 @@ reg('topo', function(){
   document.getElementById('twin-size').addEventListener('change',setWindowFromSize);
 
   // ═══ 播放/暂停: 自动推进时间窗口 (U7) ═══
-  var playTO=null;
   window.togglePlay=function(){
     var btn=document.getElementById('tplay');
     if(playTO){clearInterval(playTO);playTO=null;btn.textContent='▶';btn.classList.remove('btn-p');return;}
