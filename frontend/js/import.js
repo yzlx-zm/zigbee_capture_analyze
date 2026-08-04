@@ -161,8 +161,10 @@ reg('import',function(){
     }
     btn.textContent='清除中...';btn.disabled=true;setProg('清除中...');
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');setProg('');
-      try{document.getElementById('sout').classList.add('hidden');}catch(e){}
+      S.topo=null;S.pkts=0;S.nodes=0;S.verifyPassed=null;sb('就绪');setProg('');
+      // sr() 曾设置 style.display='block' (inline), 类无法覆盖 — 必须用 style 隐藏
+      try{document.getElementById('sout').style.display='none';}catch(e){}
+      if(window._loadKeyPanel)window._loadKeyPanel();  // 密钥命中统计清零
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.classList.remove('btn-r');
     });
   });

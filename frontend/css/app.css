@@ -201,8 +201,10 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .key-hex { cursor: pointer; }                                  /* 点击展开/收起完整 Key */
 .key-hex:hover { color: var(--c-primary); }
 
-/* 11.2.1 导入流程反馈 (U6) */
-.prog { display: flex; align-items: center; gap: 6px; margin-top: var(--sp-2); padding: var(--sp-2);
+/* 11.2.1 导入流程反馈 (U6)
+   注意: .prog 不写 display — 显隐由 JS style.display 控制 (flex/none),
+   否则 display:flex 会覆盖 .hidden 的 display:none (同特异性后定义者胜), 页面初始就转圈 */
+.prog { align-items: center; gap: 6px; margin-top: var(--sp-2); padding: var(--sp-2);
   background: var(--c-info-bg); border-radius: var(--r-sm); font-size: var(--fs-sm); }
 .prog-err { background: var(--c-danger-bg); }
 .prog-err #imsg { color: var(--c-danger); }
