@@ -30,5 +30,5 @@ window.addEventListener('hashchange',rt);
 <script>
 reg('ai',function(){document.getElementById('mc').innerHTML='<div class="card"><h3>🤖 AI 分析</h3><p class="hint">后续版本实现</p></div>'});
 document.querySelectorAll('.nt a').forEach(function(t){t.addEventListener('click',function(e){e.preventDefault();location.hash=this.dataset.r})});
-A.get('/api/import/status').then(function(s){if(s.total)window.sb(s.total+'包 | '+s.nodes+'节点')}).catch(function(){});
+// 状态栏初始化移到 js/app.js (module 内执行, 避免 A 未定义的时序问题)
 </script></body></html>

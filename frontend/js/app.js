@@ -16,3 +16,6 @@ import './diag.js';
 
 // ── 初始路由 ──
 if (window.rt) window.rt();
+
+// ── 状态栏初始化 (module 内执行, window.A 已暴露) ──
+A.get('/api/import/status').then(function(s){if(s.total)sb(s.total+'包 | '+s.nodes+'节点')}).catch(function(){});
