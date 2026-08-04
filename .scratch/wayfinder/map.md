@@ -30,7 +30,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [前端 ES 模块化] — index.html 95 行 + 模块化 JS;L1 检测卡片 (含 L1-3 设备明细)
 - [场景体系全景调研](issues/00-场景体系全景调研.md) — taxonomy v1.0 已定义 8 大类 55 场景;验证状态总表见 docs/scenarios/OVERVIEW.md;838D 案例 = L3-5 源路由失效 (场景交叉)
 - [L1-4 检测闭环](issues/05-L1-4TC拒绝.md) — 文档 v1.2 (自审修正) + 检测器 R1/R2a/R2b/R3;素材实证: 运营期踢人路径 = **ZDO Mgmt Leave Req (0x0034) 指令可见** (leave_question ×12) + 设备广播 Leave 响应 (rejoin=0);R2b 高置信验证通过, R1/R2a/R3 待素材
-- [L3-5 检测闭环](issues/07-L3-5源路由失效.md) — 文档 v1.0 + 检测器 R1 (0x0B 轮次判定) / R2 (0x0C);838D 素材实证: 39 条 0x0B 全 src=1885→838D (13 轮/34s), **L1-3 交叉双报** (密钥循环 = 本场景表象);自愈观察 (MTORR 161 条未恢复);R2 待素材
+- [L3-5 检测闭环](issues/07-L3-5源路由失效.md) — 文档 v1.1 (自审修正) + 检测器 R1 (0x0B 轮次判定) / R2 (0x0C);838D 素材实证: 39 条 0x0B 全 src=1885→838D (7 轮/34s, 检测器实测), **L1-3 交叉双报** (密钥循环 = 本场景表象);路由活动未恢复 (Route Request ×161, MTORR 计数待解析);R2 待素材
 - [解析器字段扩展] — tshark/cubx 对齐补 nwk_cmd_id + Leave 标志 + Remove Device target (0x07) / Update Device status (0x06);tshark.py 此前缺 nwk_cmd_id 提取 (pcap 路径 L1-3 Leave 判定缺口, 已补齐)
 
 ## UI 工程模块 (2026-08-04 拆分)

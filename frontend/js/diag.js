@@ -20,8 +20,8 @@ function l1Card(scenario, title, verdict, confidence, bodyHtml) {
     + '<div class="body">' + bodyHtml + '</div></div>';
 }
 
-function devLine(dev, verdict, subRule, statsHtml, summary) {
-  var dc = vClass(verdict, 'L1');
+function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
+  var dc = vClass(verdict, hitPrefix || 'L1');
   return '<div class="dev"><b>0x' + dev.toString(16).toUpperCase().padStart(4, '0') + '</b>: '
     + '<span class="' + dc + '">' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '</span> '
     + '<span class="text-dim">' + statsHtml + '</span>'
@@ -115,7 +115,7 @@ reg('diag', function () {
         + ((l35.devices || []).length ? '<div class="divider">'
           + (l35.devices || []).map(function (d) {
               return devLine(d.device, d.verdict, d.sub_rule,
-                'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary);
+                'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary, 'L3-5');
             }).join('')
           + '</div>' : '');
       h += '<div class="card l1-sec">'

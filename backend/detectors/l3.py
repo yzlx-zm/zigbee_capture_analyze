@@ -77,7 +77,7 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         span = frames[-1]["ts"] - frames[0]["ts"]
         l1_cross = target in l1_hits
         t = targets.setdefault(target, {
-            "device": target, "hits": [], "self_heal_attempted": False,
+            "device": target, "hits": [],
         })
 
         rule = "R1" if code == NS_CODE_SOURCE_ROUTE_FAILURE else "R2"
@@ -161,11 +161,15 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         summary = "无 Network Status 0x0B/0x0C (需断链链路覆盖)"
 
     # 自愈迹象 (全素材级)
+    # ⚠️ 诚实标注: Route Request 总数含普通路由发现; MTORR (many-to-one 标志) 数量
+    # 未单独解析 (解析器未提取 route request options) — 不做 "含 MTORR" 断言
     self_heal = {
         "route_request_count": route_request_count,
         "route_record_count": route_record_count,
-        "note": (f"MTORR/Route Request ×{route_request_count} + Route Record ×{route_record_count} 存在"
-                 if route_request_count or route_record_count else "无 MTORR/Route Record (自愈机制未活动或未抓取)"),
+        "note": (f"Route Request ×{route_request_count} + Route Record ×{route_record_count} 存在"
+                 f" (MTORR 数量未解析, many-to-one 标志待提取 [待增强])"
+                 if route_request_count or route_record_count
+                 else "无 Route Request/Route Record (自愈机制未活动或未抓取)"),
     }
 
     return {
