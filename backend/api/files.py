@@ -148,7 +148,7 @@ async def import_clear():
 @router.post("/import/pcap")
 async def import_pcap(files: list[UploadFile] = File(...)):
     """上传 pcap 文件 (支持多文件), tshark 批量解析 + 合并"""
-    global _packets, _nodes, _file_type, _full_packets
+    global _packets, _nodes, _file_type, _full_packets, _verify_report
     from .. import tshark as _tshark
     import tempfile
 

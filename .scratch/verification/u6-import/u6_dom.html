@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Zigbee 拓扑分析</title>
+<link rel="stylesheet" href="css/app.css"></head>
+<body>
+<script src="lib/cytoscape.min.js"></script>
+<nav id="nb"><span class="logo">📡 Zigbee 拓扑分析</span><div class="nt">
+<a class="nt on" data-r="import" title="">导入</a><a class="nt" data-r="topo" title="">拓扑</a>
+<a class="nt" data-r="tl" title="">时间线</a><a class="nt" data-r="nodes" title="">节点</a>
+<a class="nt" data-r="diag" title="">诊断</a>
+<a class="nt" data-r="ai" title="">AI</a></div>
+<span id="sb">就绪</span></nav>
+<div id="mc"><div class="card"><h3>📂 数据导入</h3><div class="tabs"><button class="btn imp-tab on" data-tab="csv">📊 CSV 快速预览</button><button class="btn imp-tab" data-tab="pcap">📡 抓包导入</button></div><div id="imp-csv" class=""><p class="hint">Ubiqua File → Export → CSV</p><div class="file-drop" id="drop"><p>拖拽 .csv 文件到此处</p><input type="file" id="finp" accept=".csv" class="hidden"></div><button class="btn btn-o" id="lpath">或输入本地路径...</button></div><div id="imp-pcap" class="hidden"><p class="hint">Ubiqua File → Export → pcap</p><div class="file-drop" id="pdrop"><p>拖拽 .pcap / .cubx 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng,.cubx" multiple="" class="hidden"></div><button class="btn btn-o" id="plpath">或输入本地路径 (逗号分隔多个)...</button><div id="pkey-panel" class="card key-panel"><h4 id="pkey-toggle">🔑 密钥管理 ▸</h4><div id="pkey-body" class="t-11 hidden"></div></div></div><div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span></div></div><div class="card hidden" id="sout"><h3>📊 导入结果</h3><div id="sdiv"></div><button class="btn btn-p mt-2" id="gotopo">查看拓扑 →</button> <button class="btn btn-r mt-2" id="clr">清除数据</button></div></div>
+<script>
+// 路由引擎 (非模块 — inline 立即执行, 供后续 reg() 注册用)
+var R={}; function reg(n,h){R[n]=h}
+function rt(){var h=location.hash.slice(1)||'import';
+  document.getElementById('mc').classList.toggle('mc-flat',h==='topo');
+  document.querySelectorAll('.nt a').forEach(function(t){t.classList.toggle('on',t.dataset.r===h)});
+  if((window.S||{}).verifyPassed===false){
+    document.querySelectorAll('.nt a[data-r="topo"],.nt a[data-r="tl"],.nt a[data-r="nodes"]').forEach(function(t){t.style.opacity='0.4';t.title='数据校验未通过'});
+    if(h==='topo'||h==='tl'||h==='nodes'){document.getElementById('mc').innerHTML='<div class="card card-danger"><h3 class="text-danger">🚫 数据校验未通过</h3><p class="text-danger">导入数据与 pcap 文件不匹配，拓扑和时间线页已锁定。</p><p class="hint">请回到<a href="#import" class="text-info">导入页</a>检查校验报告并重新导入。</p></div>';return;}
+  }else{
+    document.querySelectorAll('.nt a').forEach(function(t){t.style.opacity='';t.title=''});
+  }
+  document.getElementById('mc').innerHTML='';if(R[h])R[h]();}
+window.addEventListener('hashchange',rt);
+</script>
+<script type="module" src="js/app.js"></script>
+<script>
+reg('ai',function(){document.getElementById('mc').innerHTML='<div class="card"><h3>🤖 AI 分析</h3><p class="hint">后续版本实现</p></div>'});
+document.querySelectorAll('.nt a').forEach(function(t){t.addEventListener('click',function(e){e.preventDefault();location.hash=this.dataset.r})});
+// 状态栏初始化移到 js/app.js (module 内执行, 避免 A 未定义的时序问题)
+</script>
+</body></html>

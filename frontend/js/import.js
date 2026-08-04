@@ -1,5 +1,5 @@
 // import.js — 导入页面模块 (ES module)
-import { S, A, sb, sr, setProg, doI, doPI } from './state.js';
+import { S, A, sb, sr, setProg, setErr, doI, doPI } from './state.js';
 
 reg('import',function(){
   if(!S.impTab)S.impTab='csv';
@@ -22,7 +22,7 @@ reg('import',function(){
         +'<div id="pkey-body" class="t-11 hidden"></div>'
       +'</div>'
     +'</div>'
-    +'<div id="prog" class="hidden"><p id="imsg" class="t-11"></p></div></div>';
+    +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span></div></div>';
   h+='<div class="card hidden" id="sout"><h3>📊 导入结果</h3><div id="sdiv"></div>'
     +'<button class="btn btn-p mt-2" id="gotopo">查看拓扑 →</button> '
     +'<button class="btn btn-r mt-2" id="clr">清除数据</button></div>';
@@ -42,6 +42,14 @@ reg('import',function(){
     });
   });
 
+  // ── 本地路径导入 (统一错误处理; 失败内联显示, 不弹 alert) ──
+  function importPath(url, paramName, p, fname){
+    setProg('导入中...');
+    var fd=new FormData();fd.append(paramName,p);
+    fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');if(d&&d.ok){sr(d,fname);}else{setErr((d&&d.error)||'导入失败');}})
+      .catch(function(e){setErr('网络错误: '+e.message);});
+  }
+
   // ── CSV tab ──
   var drop=document.getElementById('drop'),inp=document.getElementById('finp');
   drop.addEventListener('click',function(){inp.click()});
@@ -50,10 +58,7 @@ reg('import',function(){
   inp.addEventListener('change',function(){if(inp.files.length)doI(inp.files[0])});
   document.getElementById('lpath').addEventListener('click',function(){
     var p=prompt('CSV 文件路径:');if(!p)return;
-    setProg('导入 CSV...');
-    var fd=new FormData();fd.append('path',p);
-    fetch('/api/import/local',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop())})
-      .catch(function(e){alert('错误: '+e.message);setProg('')});
+    importPath('/api/import/local','path',p,p.split(/[\\\\/]/).pop());
   });
 
   // ── pcap tab ──
@@ -64,11 +69,8 @@ reg('import',function(){
   pinp.addEventListener('change',function(){if(pinp.files.length)doPI(pinp.files)});
   document.getElementById('plpath').addEventListener('click',function(){
     var p=prompt('pcap/cubx 文件路径 (逗号分隔多个):');if(!p)return;
-    setProg('导入中...');
     var isCubx=p.toLowerCase().endsWith('.cubx');
-    var fd=new FormData();
-    if(isCubx){fd.append('path',p);fetch('/api/import/local-cubx',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop());}).catch(function(e){alert('错误: '+e.message);setProg('')});}
-    else{fd.append('paths',p);fetch('/api/import/local-pcap',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');sr(d,p.split(/[\\\\/]/).pop());}).catch(function(e){alert('错误: '+e.message);setProg('')});}
+    importPath(isCubx?'/api/import/local-cubx':'/api/import/local-pcap',isCubx?'path':'paths',p,p.split(/[\\\\/]/).pop());
   });
 
   // Key panel toggle
@@ -80,38 +82,64 @@ reg('import',function(){
     if(show)loadKeyPanel();
   });
 
-  // loadKeyPanel (模块私有, 通过 window._loadKeyPanel 暴露)
+  // ── 密钥面板 ──
+  function normHex(raw){return (raw||'').replace(/[:\s-]/g,'').replace(/^0x/i,'').toUpperCase();}
+  function showKeyErr(msg){var el=document.getElementById('pk-err');if(el){el.textContent=msg;el.classList.remove('hidden');}}
+  function clearKeyErr(){var el=document.getElementById('pk-err');if(el){el.textContent='';el.classList.add('hidden');}}
   function loadKeyPanel(){
     A.get('/api/keys').then(function(d){
       var keys=d.keys||[],stats=d.stats;
       var h='';
-      if(stats){h+='<div class="text-muted">📊 解密: '+stats.decrypted+'/'+stats.total_data_frames+' 帧 ('+(stats.decrypt_rate*100).toFixed(0)+'%)</div>';}
+      if(stats){var mt=stats.matched_keys||[];
+        h+='<div class="text-muted">📊 解密: '+stats.decrypted+'/'+stats.total_data_frames+' 帧 ('+(stats.decrypt_rate*100).toFixed(0)+'%)'
+          +(mt.length?' <span class="badge badge-decrypted">'+mt.length+' 个 Key 命中</span>':'')
+          +'</div>';}
       h+='<table class="tbl"><tr><th>Key</th><th>标签</th><th>状态</th><th></th></tr>';
       for(var i=0;i<keys.length;i++){
         var k=keys[i];
-        var matched=stats&&stats.matched_keys&&stats.matched_keys.some(function(m){return m.label===k.label});
-        var status=matched?'<span class="text-success">✓ 命中</span>':'<span class="text-dim">✗ 未命中</span>';
+        var mk=stats&&stats.matched_keys&&stats.matched_keys.filter(function(m){return m.label===k.label})[0];
+        var status=mk?'<span class="text-success">✓ 命中'+(mk.frame_count?' ('+mk.frame_count+'帧)':'')+'</span>':'<span class="text-dim">✗ 未命中</span>';
         var del=k.is_preset?'':'<button class="btn btn-o btn-s text-danger-strong" data-kl="'+k.label+'">✕</button>';
-        h+='<tr><td class="mono t-10">'+k.hex.substring(0,16)+'...</td><td>'+k.label+(k.is_preset?' (预设)':'')+'</td><td>'+status+'</td><td>'+del+'</td></tr>';
+        var full=k.hex;
+        var disp=full.length>16?full.substring(0,16)+'…':full;
+        h+='<tr><td class="mono t-10 key-hex" title="点击展开/收起" data-full="'+full+'" data-short="'+disp+'">'+disp+'</td>'
+          +'<td>'+k.label+(k.is_preset?' <span class="badge">预设</span>':'')+'</td>'
+          +'<td>'+status+'</td><td>'+del+'</td></tr>';
       }
       h+='</table>';
       h+='<div class="key-add-row"><input id="pk-hex" placeholder="粘贴 hex Key (FC:90:D2:...)" class="grow t-10 mono"><input id="pk-label" placeholder="标签" class="w-80 t-10"><button class="btn btn-p btn-s" id="pk-add">添加</button></div>';
+      h+='<div id="pk-err" class="t-11 text-danger hidden"></div>';
       document.getElementById('pkey-body').innerHTML=h;
-      document.getElementById('pk-add').addEventListener('click',function(){
-        var hex=document.getElementById('pk-hex').value.trim();
-        var label=document.getElementById('pk-label').value.trim()||('Key'+Date.now());
-        if(!hex)return;
-        A.post('/api/keys',{key:hex,label:label}).then(function(r){
-          if(r.ok){loadKeyPanel();}else{alert(r.error||'添加失败');}
+      document.getElementById('pk-add').addEventListener('click',addKey);
+      ['pk-hex','pk-label'].forEach(function(id){
+        document.getElementById(id).addEventListener('keydown',function(e){if(e.key==='Enter')addKey();});
+      });
+      document.querySelectorAll('#pkey-body .key-hex').forEach(function(td){
+        td.addEventListener('click',function(){
+          var short=this.dataset.short;
+          this.textContent=(this.textContent===short)?this.dataset.full:short;
         });
       });
       document.querySelectorAll('[data-kl]').forEach(function(btn){
         btn.addEventListener('click',function(){
           var kl=this.dataset.kl;
-          fetch('/api/keys/'+kl,{method:'DELETE'}).then(function(){loadKeyPanel();});
+          fetch('/api/keys/'+kl,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+            if(d&&d.ok){loadKeyPanel();}else{showKeyErr((d&&d.error)||'删除失败');}
+          }).catch(function(e){showKeyErr('网络错误: '+e.message)});
         });
       });
     });
+  }
+  function addKey(){
+    clearKeyErr();
+    var hex=document.getElementById('pk-hex').value.trim();
+    var label=document.getElementById('pk-label').value.trim()||('Key'+Date.now());
+    var clean=normHex(hex);
+    if(!/^[0-9A-F]{32}$/.test(clean)){showKeyErr('Key 必须是 16 字节 (32 位 hex), 当前: '+clean.length+' 位');return;}
+    A.post('/api/keys',{key:clean,label:label}).then(function(r){
+      if(r.ok){document.getElementById('pk-hex').value='';document.getElementById('pk-label').value='';loadKeyPanel();}
+      else{showKeyErr(r.error||'添加失败');}
+    }).catch(function(e){showKeyErr('网络错误: '+e.message);});
   }
   window._loadKeyPanel=loadKeyPanel;
 
@@ -121,26 +149,24 @@ reg('import',function(){
     var btn=this;
     if(btn.dataset.confirming!=='1'){
       btn.dataset.confirming='1';
-      btn.textContent='再次点击确认清除';
       btn.classList.add('btn-r');
-      setTimeout(function(){btn.dataset.confirming='';btn.textContent='清除数据';btn.classList.remove('btn-r');},3000);
+      btn.textContent='再次点击确认清除 (3s)';
+      var n=2;
+      var t=setInterval(function(){
+        btn.textContent='再次点击确认清除 ('+n+'s)';
+        n--;
+        if(n<0){clearInterval(t);btn.dataset.confirming='';btn.textContent='清除数据';btn.classList.remove('btn-r');}
+      },1000);
       return;
     }
-    btn.textContent='清除中...';btn.disabled=true;
+    btn.textContent='清除中...';btn.disabled=true;setProg('清除中...');
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
-      S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');
+      S.topo=null;S.pkts=0;S.nodes=0;sb('就绪');setProg('');
       try{document.getElementById('sout').classList.add('hidden');}catch(e){}
       btn.dataset.confirming='';btn.textContent='清除数据';btn.disabled=false;btn.classList.remove('btn-r');
     });
   });
-  A.get('/api/import/verify').then(function(v){S.verifyPassed=v.passed;
-    if(v.passed!==null&&document.getElementById('sout')){
-      var vh='<div class="alert '+(v.passed?'alert-ok':'alert-bad')+'">';
-      vh+='<div class="alert-title">'+(v.passed?'✅ 数据校验通过':'❌ 数据校验失败')+'</div>';
-      if(v.checks){for(var ck in v.checks){var c=v.checks[ck];vh+='<br>'+ (c.passed?'✅':'❌')+' '+c.label;}}
-      vh+='</div>';
-      document.getElementById('sdiv').innerHTML+=vh;
-    }
-  });
+  // 校验状态兜底 (刷新后导航锁定用) — 渲染已由 sr() 统一负责, 避免重复
+  A.get('/api/import/verify').then(function(v){S.verifyPassed=v&&v.passed;}).catch(function(){});
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });

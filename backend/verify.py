@@ -114,8 +114,8 @@ def _check_type_distribution(pcap_paths: list[str], packets: list[dict], tshark:
 
     check = {
         "label": "帧类型覆盖",
-        "expected": f"≥99% 分类率",
-        "actual": f"{((total-unknown)/total*100):.1f}% ({total-unknown}/{total})",
+        "expected": "≥99% 分类率",
+        "actual": f"{((total-unknown)/total*100):.1f}% ({total-unknown}/{total})" if total else "N/A (0 帧)",
         "top_types": dict(sorted(imported_types.items(), key=lambda x: -x[1])[:8]),
         "passed": passed,
     }
