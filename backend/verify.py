@@ -18,43 +18,42 @@ def run_verification(
     pcap_paths: list[str],
     imported_packets: list[dict],
     tshark_path: Optional[str] = None,
+    progress_cb=None,
 ) -> dict:
-    """执行全维度校验, 返回校验报告"""
+    """执行全维度校验, 返回校验报告.
+
+    progress_cb(idx, total, label): 每项校验开始前回调 (后台任务进度上报用).
+    """
     tshark = tshark_path or _tshark.find_tshark()
     if not tshark:
         return {"ok": False, "passed": False, "error": "tshark.exe 未找到, 无法执行校验"}
 
     report: dict = {"ok": True, "passed": True, "checks": {}, "detail": {}}
 
-    # 1. 帧总数校验 (capinfos)
-    _check_frame_count(pcap_paths, imported_packets, report)
-
-    # 2. 时间范围校验 (capinfos)
-    _check_time_range(pcap_paths, imported_packets, report)
-
-    # 3. 帧类型分布校验 (tshark)
-    _check_type_distribution(pcap_paths, imported_packets, tshark, report)
-
-    # 4. 解密统计校验 (tshark)
-    _check_decryption(pcap_paths, imported_packets, tshark, report)
-
-    # 5. Cluster 分布校验 (tshark)
-    _check_cluster_distribution(pcap_paths, imported_packets, tshark, report)
-
-    # 6. 抽样逐字段校验 (tshark)
-    _check_sample_frames(pcap_paths, imported_packets, tshark, report)
+    checks = [
+        ("NWK帧数", _check_frame_count),
+        ("时间范围", _check_time_range),
+        ("帧类型分布", _check_type_distribution),
+        ("解密帧数", _check_decryption),
+        ("Cluster 分布", _check_cluster_distribution),
+        ("抽样对比", _check_sample_frames),
+    ]
+    for idx, (label, fn) in enumerate(checks):
+        if progress_cb:
+            progress_cb(idx, len(checks), label)
+        fn(pcap_paths, imported_packets, tshark, report)
 
     # 汇总
     report["passed"] = all(c.get("passed", False) for c in report["checks"].values())
     return report
 
 
-def _check_frame_count(pcap_paths: list[str], packets: list[dict], report: dict):
+def _check_frame_count(pcap_paths: list[str], packets: list[dict], tshark: str, report: dict):
     """tshark NWK 帧数 vs 导入帧数"""
     imported = len(packets)
     tshark_total = 0
     for p in pcap_paths:
-        tshark_total += _tshark_nwk_count(p, _tshark.find_tshark() or "")
+        tshark_total += _tshark_nwk_count(p, tshark)
 
     check = {
         "label": "NWK帧数",
@@ -68,7 +67,7 @@ def _check_frame_count(pcap_paths: list[str], packets: list[dict], report: dict)
         report["detail"]["frame_count"] = f"tshark NWK帧数: {tshark_total}, 导入: {imported}"
 
 
-def _check_time_range(pcap_paths: list[str], packets: list[dict], report: dict):
+def _check_time_range(pcap_paths: list[str], packets: list[dict], tshark: str, report: dict):
     """tshark 首尾帧时间戳 vs 导入时间范围"""
     if not packets:
         check = {"label": "时间范围", "expected": "N/A", "actual": "N/A", "passed": False}
@@ -76,7 +75,6 @@ def _check_time_range(pcap_paths: list[str], packets: list[dict], report: dict):
         report["ok"] = False
         return
 
-    tshark = _tshark.find_tshark() or ""
     imported_start = packets[0]["ts"]
     imported_end = packets[-1]["ts"]
 

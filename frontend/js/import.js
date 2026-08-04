@@ -1,5 +1,5 @@
 // import.js — 导入页面模块 (ES module)
-import { S, A, sb, sr, setProg, setErr, doI, doPI } from './state.js';
+import { S, A, sb, sr, setProg, setErr, doI, doPI, pollImport } from './state.js';
 
 reg('import',function(){
   if(!S.impTab)S.impTab='csv';
@@ -22,7 +22,7 @@ reg('import',function(){
         +'<div id="pkey-body" class="t-11 hidden"></div>'
       +'</div>'
     +'</div>'
-    +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span></div></div>';
+    +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span><div class="bar" id="pbar"><div class="bar-fill" id="pfill"></div></div></div></div>';
   h+='<div class="card hidden" id="sout"><h3>📊 导入结果</h3><div id="sdiv"></div>'
     +'<button class="btn btn-p mt-2" id="gotopo">查看拓扑 →</button> '
     +'<button class="btn btn-r mt-2" id="clr">清除数据</button></div>';
@@ -42,12 +42,14 @@ reg('import',function(){
     });
   });
 
-  // ── 本地路径导入 (统一错误处理; 失败内联显示, 不弹 alert) ──
+  // ── 本地路径导入 (后台任务 + 轮询真实进度; 失败内联显示, 不弹 alert) ──
   function importPath(url, paramName, p, fname){
-    setProg('导入中...');
+    setProg('提交中...', 1);
     var fd=new FormData();fd.append(paramName,p);
-    fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){setProg('');if(d&&d.ok){sr(d,fname);}else{setErr((d&&d.error)||'导入失败');}})
-      .catch(function(e){setErr('网络错误: '+e.message);});
+    fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
+      if(d&&d.ok&&d.task_id){pollImport(d.task_id,fname);}
+      else{setProg('');setErr((d&&d.error)||'导入失败');}
+    }).catch(function(e){setErr('网络错误: '+e.message);});
   }
 
   // ── CSV tab ──
