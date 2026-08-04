@@ -29,31 +29,49 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
   document.getElementById('sdiv').innerHTML=h;
   S.pkts=d.packets||0;S.nodes=d.nodes||0;sb(S.pkts+'包 | '+S.nodes+'节点');
   A.get('/api/topology/graph').then(function(td){S.topo=td});}
-export function doI(file){setProg('上传中...',2);
-  var fd=new FormData();fd.append('files',file);
-  fetch('/api/import/files',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
-    if(d&&d.ok&&d.task_id){pollImport(d.task_id,file.name||'');}
+// XHR 上传 (可上报真实上传进度 0-10%), 完成后转任务轮询
+function uploadXHR(url, fd, fname, onDone){
+  var xhr=new XMLHttpRequest();
+  xhr.open('POST',url);
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){
+      var up=Math.round(e.loaded/e.total*100);
+      setProg('上传中 ('+up+'%)',Math.round(up*0.1));  // 上传占 0-10%
+    }
+  };
+  xhr.onload=function(){
+    var d;
+    try{d=JSON.parse(xhr.responseText);}catch(e){setErr('响应解析失败');return;}
+    if(d&&d.ok&&d.task_id){setProg('解析中...',10);pollImport(d.task_id,fname,onDone);}
     else{setProg('');setErr((d&&d.error)||'导入失败');}
-  }).catch(function(e){setErr('网络错误: '+e.message);});}
-export function doPI(files){setProg('上传中...',2);
+  };
+  xhr.onerror=function(){setErr('网络错误: 上传失败');};
+  xhr.send(fd);
+}
+export function doI(file){setProg('上传中...',1);
+  var fd=new FormData();fd.append('files',file);
+  uploadXHR('/api/import/files',fd,file.name||'');}
+export function doPI(files){setProg('上传中...',1);
   var fd=new FormData(); var cubx=0; var fnames=[];
   for(var i=0;i<files.length;i++){fd.append('files',files[i]);
     var n=files[i].name||'';fnames.push(n);if(n.toLowerCase().endsWith('.cubx'))cubx=1;}
   var url=cubx?'/api/import/cubx':'/api/import/pcap';
-  fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
-    if(d&&d.ok&&d.task_id){pollImport(d.task_id,fnames.join(', '),function(){if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();});}
-    else{setProg('');setErr((d&&d.error)||'导入失败');}
-  }).catch(function(e){setErr('网络错误: '+e.message);});}
+  uploadXHR(url,fd,fnames.join(', '),function(){if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();});}
 export function pollImport(tid,fname,onDone){
-  var tries=0;
-  var timer=setInterval(function(){
+  var tries=0, done=false, timer=null;
+  function finish(){if(timer){clearInterval(timer);timer=null;}}
+  function tick(){
+    if(done)return;
     tries++;
-    if(tries>750){clearInterval(timer);setErr('导入超时 (5 分钟), 请重试');return;}  // 750×400ms
+    if(tries>1000){done=true;finish();setErr('导入超时 (5 分钟), 请重试');return;}  // 1000×300ms
     A.get('/api/import/progress?task_id='+tid).then(function(p){
-      if(p&&p.status==='done'){clearInterval(timer);if(p.result){setProg('');sr(p.result,fname);if(onDone)onDone();}else{setErr('导入完成但结果缺失, 请刷新页面');}}
-      else if(p&&p.status==='error'){clearInterval(timer);setErr(p.error||'导入失败');}
+      if(done)return;
+      if(p&&p.status==='done'){done=true;finish();if(p.result){setProg('');sr(p.result,fname);if(onDone)onDone();}else{setErr('导入完成但结果缺失, 请刷新页面');}}
+      else if(p&&p.status==='error'){done=true;finish();setErr(p.error||'导入失败');}
       else if(p&&p.status==='running'){setProg((p.stage||'解析中')+' ('+p.percent+'%)',p.percent);}
     }).catch(function(){});
-  },400);
+  }
+  tick();                       // 立即首查 (任务快时也能抓到解析阶段)
+  timer=setInterval(tick,300);
 }
 export function fmtTs(ts){var d=new Date(ts*1000);return d.getUTCHours().toString().padStart(2,'0')+':'+d.getUTCMinutes().toString().padStart(2,'0')+':'+d.getUTCSeconds().toString().padStart(2,'0');}

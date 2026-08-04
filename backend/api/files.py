@@ -245,7 +245,7 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
     from .. import tshark as _tshark
     try:
         # 导入前透明同步 Ubiqua Network Key (不可达则静默跳过)
-        _task_update(task_id, stage="同步 Ubiqua Key", percent=8)
+        _task_update(task_id, stage="同步 Ubiqua Key", percent=10)
         _last_ubiqua_sync = _sync_ubiqua_keys()
 
         # tshark 解析 (按文件推进)
@@ -255,7 +255,7 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
             pkts = _tshark.parse_packets([p])
             _packets.extend(pkts)
             _task_update(task_id, stage=f"tshark 解析 ({i + 1}/{total})",
-                         percent=12 + int((i + 1) / total * 28))
+                         percent=15 + int((i + 1) / total * 25))
         if not _packets:
             raise RuntimeError("无有效数据 (可能不是 Zigbee 抓包)")
         _packets.sort(key=lambda p: p["ts"])
@@ -264,7 +264,7 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
         _pcap_paths = [os.path.abspath(p) for p in tmp_paths]
 
         # 全量帧 (含 MAC 命令帧/Beacon) — L1 检测需要
-        _task_update(task_id, stage="解析 MAC 帧", percent=42)
+        _task_update(task_id, stage="解析 MAC 帧", percent=45)
         try:
             _full_packets = []
             tshark_path = _tshark.find_tshark()
@@ -310,7 +310,7 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
     global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths
     from .. import tshark as _tshark
     try:
-        _task_update(task_id, stage="同步 Ubiqua Key", percent=8)
+        _task_update(task_id, stage="同步 Ubiqua Key", percent=10)
         _last_ubiqua_sync = _sync_ubiqua_keys()
 
         _packets = []
@@ -319,13 +319,13 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
             pkts = _tshark.parse_packets([p])
             _packets.extend(pkts)
             _task_update(task_id, stage=f"tshark 解析 ({i + 1}/{total})",
-                         percent=12 + int((i + 1) / total * 28))
+                         percent=15 + int((i + 1) / total * 25))
         _packets.sort(key=lambda p: p["ts"])
         _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
         _pcap_paths = path_list
 
-        _task_update(task_id, stage="解析 MAC 帧", percent=42)
+        _task_update(task_id, stage="解析 MAC 帧", percent=45)
         try:
             _full_packets = []
             tshark_path = _tshark.find_tshark()
