@@ -50,3 +50,14 @@ scan-embedded-project → Q&A需求对齐 → grill-embedded-design → to-dev-t
 - `docs/diagnosis_playbook.md` — 5 大类 19 子场景诊断手册 (686 行)
 - `docs/decryption_setup.md` — 解密流程
 - `docs/acceptance_criteria.md` — 验收标准
+- `docs/scenarios/OVERVIEW.md` — 55 场景验证状态总表 (wayfinder ticket 00 产出)
+
+## Wayfinder 多会话协作 (2026-08-04 起)
+
+本工程采用 **wayfinder 地图模式** 管理多会话开发进度。**任何新会话开工前必须先读:**
+
+1. `.scratch/wayfinder/README.md` — 会话使用流程 (读图→认领→解决→更新)
+2. `.scratch/wayfinder/map.md` — 进度地图 (Decisions so far / 迷雾 / 范围)
+3. `memory/zigbee_l1_scenario_engine.md` — 场景检测引擎记忆 (用户记忆目录)
+
+**铁律**: 一次会话只解一个 ticket;不妄自揣测,不懂问用户;判定规则成立即可。
