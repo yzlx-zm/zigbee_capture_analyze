@@ -104,8 +104,31 @@ reg('diag', function () {
       + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4)
       + '</div></div>';
 
-    document.getElementById('mc').innerHTML = h;
-    renderOffline();
+    // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效) ──
+    A.get('/api/diag/l3').then(function (l3d) {
+      var l35 = l3d && !l3d.error ? (l3d.l3_5 || {}) : {};
+      var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
+        + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
+        + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
+        + '<span class="text-muted">' + (l35.summary || '') + '</span>'
+        + (l35.self_heal ? '<br><span class="text-dim">自愈: ' + l35.self_heal.note + '</span>' : '')
+        + ((l35.devices || []).length ? '<div class="divider">'
+          + (l35.devices || []).map(function (d) {
+              return devLine(d.device, d.verdict, d.sub_rule,
+                'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary);
+            }).join('')
+          + '</div>' : '');
+      h += '<div class="card l1-sec">'
+        + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
+        + '<div class="l1-cards">'
+        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5)
+        + '</div></div>';
+      document.getElementById('mc').innerHTML = h;
+      renderOffline();
+    }).catch(function () {
+      document.getElementById('mc').innerHTML = h;
+      renderOffline();
+    });
   }).catch(function () {
     // L1 失败不阻塞离线诊断
     document.getElementById('mc').innerHTML = h;

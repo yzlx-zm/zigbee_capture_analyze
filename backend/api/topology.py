@@ -104,6 +104,21 @@ async def diag_l1():
     return l1_detector.detect(full)
 
 
+@router.get("/diag/l3")
+async def diag_l3():
+    """L3 运营期检测: L3-5 源路由/MTORR 失效 (Network Status 0x0B/0x0C).
+
+    与 L1 检测合并计算交叉提示 (838D 案例: L1-3 密钥循环 = L3-5 根因的表象).
+    """
+    from ..detectors import l1 as l1_detector
+    from ..detectors import l3 as l3_detector
+    full = get_full_packets()
+    if not full:
+        return {"error": "无数据 (需导入 .cubx 文件)"}
+    l1_result = l1_detector.detect(full)
+    return l3_detector.detect(full, l1_result=l1_result)
+
+
 @router.get("/nodes")
 async def node_list(search: str = Query(default=""), pan: str = Query(default="")):
     nodes = get_nodes()

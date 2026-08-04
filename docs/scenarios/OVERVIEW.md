@@ -36,7 +36,7 @@
 | L3-2 | 命令送达未执行 | ⬜ | ZCL Default Response |
 | L3-3 | 状态上报滞后 | ⬜ | Write→Report 间隔 |
 | L3-4 | 绑定/组播未达 | ⬜ | Bind Response / MTORR |
-| **L3-5** | **源路由/MTORR 失效** | 📝 **部分验证** | **NWK 错误码 0x0B/0x0C — 838D 真实素材已确认此场景!** |
+| **L3-5** | **源路由/MTORR 失效** | 📝 **检测器就绪 (R1 素材验证通过)** | **Network Status 0x0B/0x0C 轮次判定 (R1 高置信验证: 838D 39 条 0x0B; R2/0x0C 待素材)** |
 | L3-6 | 路由校验失败 | ⬜ | 0x0A + Route Req 频率 |
 | L3-7 | 路由路径震荡 | ⬜ | Route Record relay 变化 |
 | L3-8 | 目标不可达/地址未分配 | ⬜ | 0x07/0x08/0x0E/0x10 |

@@ -89,6 +89,14 @@
 
 **数据手册引用**：Zigbee Specification r22 §3.6.3.3.1
 
+**0x0B Source Route Failure / 0x0C MTORR Failure（2026-08-04 补充，L3-5 场景）**：
+- **0x0B** = 源路由单播（concentrator 下行）在断链处失败；**仅 concentrator 模式**（MTORR 上行 + 源路由下行）发生；断链**前一跳**生成 route error 并沿 MTORR 路径回传 concentrator（message.h 官方）
+- **0x0C** = 上行 MTORR 单播断链（concentrator 收到的上行失败）
+- **3 连发 = 预期行为**：APS retry 的每个失败重试生成一条新 route error → 连续 3 条 = 单次失败重试；≥2 轮（间隔 <0.5s 分轮）才算持续故障（L3-5 判定阈值，838D 素材 39 条 = 13 轮实证）
+- 素材实证：0x0B 的 src = 断链前一跳（838D 素材 39 条全 src=0x1885 中继，target=0x838D）
+
+**区分于**：0x0A Validate Route（传统表路由失败，L3-6）
+
 ---
 
 ## 入网生命周期 (Network Lifecycle)
