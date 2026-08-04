@@ -41,6 +41,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [U1 视觉设计系统](issues/U1-视觉设计系统.md) — 设计系统建成: 13 组 token + 状态色体系 + 组件/工具类, CSS 全抽 `frontend/css/app.css` (index.html 内嵌 style 清零), JS inline 样式清零 (仅动态数据色保留); 孤儿类补齐 (.btn-s/.imp-tab/.badge 等); 截图见 .scratch/verification/u1-design-system/; 素材验证通过 (340 包)
 - [U6 导入页优化](issues/U6-导入页优化.md) — 三方向落地: 流程反馈 (spin/busy 禁用/内联错误替代 alert) + 密钥面板 (hex 预校验/内联错误/key 展开/命中帧数 badge) + 校验报告 (修复双份渲染, details 可展开); 顺带修复 2 个后端 bug: import_pcap 缺 global _verify_report (上传 pcap verify=None) + verify.py 空包除零; CDP 交互验证 22/22
 - [U7 拓扑页优化](issues/U7-拓扑页优化.md) — 形状分类 (协调器六边/路由菱形/终端圆/未知三角) + 死控件修复 (taddr 定位 / 静默节点切换) + 播放按钮 + 时间刻度条 + 图实例复用 (时间过滤不再重建, 性能提升); 截图见 .scratch/verification/u7-topo/
+- [U3 节点页补齐](issues/U3-节点页补齐.md) — 行内展开详情 (首末时间/帧类型计数/EUI64/LQI-RSSI 统计/邻居表+不对称标记) + 设备类型列 + 🎯 定位按钮; 后端 /api/nodes 加 detail (EUI64/LQI-RSSI 仅 cubx); seen 计数单遍 O(pkts); CDP 17/17; 截图见 .scratch/verification/u3-nodes/; CSV 路径未实测
 
 ## Not yet specified
 
@@ -49,7 +50,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - L1-3 规则 A1/A2/B1 的故障帧形态 — 等用户素材后验证
 - L1-4 规则 R1/R2a (0x07 显式拒绝/踢人) 与 R3 (静默拒绝) — 等复现素材 (网关白名单 deny / 删除设备操作)
 - L3-5 规则 R2 (0x0C MTORR 上行失败) — 需断链链路上行抓包
-- UI 优先级 — 由用户定 (U3 节点页 / U4 联动 / U5 时间线 等; U1/U6 已完成 2026-08-04)
+- UI 优先级 — 由用户定 (U4 联动 / U5 时间线 等; U1/U3/U6/U7 已完成 2026-08-04)
 
 ## Out of scope
 

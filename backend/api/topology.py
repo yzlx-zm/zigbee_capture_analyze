@@ -119,10 +119,60 @@ async def diag_l3():
     return l3_detector.detect(full, l1_result=l1_result)
 
 
+def _metric_stats(vals: list) -> dict | None:
+    """LQI/RSSI 统计 {min, avg, max}; 无数据 (CSV 导入无此字段) 返回 None."""
+    if not vals:
+        return None
+    return {"min": min(vals), "avg": round(sum(vals) / len(vals)), "max": max(vals)}
+
+
 @router.get("/nodes")
 async def node_list(search: str = Query(default=""), pan: str = Query(default="")):
+    """节点列表 + 每节点详情 (U3: 首末时间/类型计数/EUI64/LQI-RSSI/邻居表).
+
+    - EUI64/LQI/RSSI 仅 cubx 导入有 (nwk_src64/lqi/rssi 字段), CSV 返回 None
+    - 邻居表复用 _build_phase3_supplements (Link Status 累积, 含不对称标记)
+    """
+    pkts = get_packets()
     nodes = get_nodes()
     pan_int = int(pan, 16) if pan else None
+
+    # 单遍扫描: seen/首末 ts/类型计数/LQI/RSSI/EUI64 (与旧 per-node sum 语义一致, O(pkts))
+    stats: dict[int, dict] = {}
+    for p in pkts:
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
+        ts = p.get("ts") or 0
+        t = p.get("pkt_type") or "Unknown"
+        for aid in (p.get("mac_src"), p.get("mac_dst"), p.get("nwk_src"), p.get("nwk_dst")):
+            if not topo.is_unicast(aid):
+                continue
+            s = stats.get(aid)
+            if s is None:
+                s = {"seen": 0, "first": None, "last": None,
+                     "type_counts": {}, "lqis": [], "rssis": [], "eui64": None}
+                stats[aid] = s
+            s["seen"] += 1
+            if s["first"] is None or ts < s["first"]:
+                s["first"] = ts
+            if s["last"] is None or ts > s["last"]:
+                s["last"] = ts
+            s["type_counts"][t] = s["type_counts"].get(t, 0) + 1
+            if p.get("lqi") is not None:
+                s["lqis"].append(p["lqi"])
+            if p.get("rssi") is not None:
+                s["rssis"].append(p["rssi"])
+            # EUI64 只取节点自己作为源地址的帧 (nwk_src64 优先, 其次 mac_src64)
+            if s["eui64"] is None:
+                if aid == p.get("nwk_src") and p.get("nwk_src64"):
+                    s["eui64"] = p["nwk_src64"]
+                elif aid == p.get("mac_src") and p.get("mac_src64"):
+                    s["eui64"] = p["mac_src64"]
+
+    # 邻居表 + 不对称链路 (Phase 3 已验证逻辑, 含缓存)
+    ls_tables, asym = _build_phase3_supplements(pkts, pan_int)
+    asym_levels = {frozenset((a["a"], a["b"])): a["level"] for a in asym}
+
     result = []
     for aid, n in sorted(nodes.items()):
         label = f"0x{aid:04X}"
@@ -134,17 +184,29 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
         if pan_int is not None:
             if n["pan"] != pan_int and aid != 0:
                 continue
-        # seen count: per-PAN if filter is set
-        if pan_int is not None:
-            pkts = get_packets()
-            nd_seen = sum(1 for p in pkts if (p["nwk_src"]==aid or p["nwk_dst"]==aid or p["mac_src"]==aid or p["mac_dst"]==aid) and ((p["pan_src"]==pan_int or p["pan_dst"]==pan_int)))
-        else:
-            nd_seen = n["seen"]
+        st = stats.get(aid)
+        neighbors = [
+            {"addr": na, "label": f"0x{na:04X}",
+             "in_cost": v["in_cost"], "out_cost": v["out_cost"],
+             "count": v["count"], "last_seen": v["last_seen_ts"],
+             "asym": asym_levels.get(frozenset((aid, na)))}
+            for na, v in sorted(ls_tables.get(aid, {}).items())
+        ]
         result.append({
             "aid": aid, "label": label,
-            "seen": nd_seen, "pan": n["pan"] if not pan_int else pan_int,
+            "seen": st["seen"] if st else 0,
+            "pan": n["pan"] if not pan_int else pan_int,
             "is_coord": aid == 0,
             "type_list": n["type_list"][:8],
             "device_type": n.get("device_type", "unknown"),
+            "detail": {
+                "first_ts": st["first"] if st else None,
+                "last_ts": st["last"] if st else None,
+                "type_counts": st["type_counts"] if st else {},
+                "eui64": st["eui64"] if st else None,
+                "lqi": _metric_stats(st["lqis"]) if st else None,
+                "rssi": _metric_stats(st["rssis"]) if st else None,
+                "neighbors": neighbors,
+            },
         })
     return result
