@@ -96,11 +96,20 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         })
 
         rule = "R1" if code == NS_CODE_SOURCE_ROUTE_FAILURE else "R2"
+        # ⚠️ 2026-08-05: 0x0C 的 dest 字段决定失败方向 (Network Status = [src][dst][code][dest]):
+        #   dest=0x0000 → 发往协调器的上行失败; dest=其他 → 发往该设备的下行失败
+        # (用户指出 v1 结论"0x0C=上行"过于简化, G32 素材实证: dest=0xBE5A/0xEE48 下行为主)
+        direction = None
+        if code == NS_CODE_MANY_TO_ONE_ROUTE_FAILURE:
+            direction = "up" if target == 0x0000 else "down"
+        elif code == NS_CODE_SOURCE_ROUTE_FAILURE:
+            direction = "down"
         if rounds >= MIN_ROUNDS:
             t["hits"].append({
                 "code": code,
                 "count": n, "rounds": rounds, "span_s": round(span, 1),
                 "src": sorted(srcs), "rule": rule,
+                "direction": direction,
                 "l1_3_cross": l1_cross,
                 "confidence": "高" if code == NS_CODE_SOURCE_ROUTE_FAILURE else "中",
             })
@@ -108,6 +117,7 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
             t["hits"].append({
                 "code": code, "count": n, "rounds": rounds, "span_s": round(span, 1),
                 "src": sorted(srcs), "rule": None,
+                "direction": direction,
                 "l1_3_cross": l1_cross,
                 "confidence": None,  # 单轮 = 官方预期行为, 不判定
             })
@@ -122,8 +132,16 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                       "密钥循环可能是本场景根因的表象 (838D 案例)" if any(h["l1_3_cross"] for h in hits) else "")
         if hits:
             conf = "高" if any(h["confidence"] == "高" for h in hits) else "中"
+            def _dir_text(h):
+                d = h.get("direction")
+                if d == "up":
+                    return "上行失败"
+                if d == "down":
+                    return "下行失败"
+                return ""
             detail = "; ".join(
-                f"code=0x{h['code']:02X} ×{h['count']} ({h['rounds']}轮/{h['span_s']}s, src={[hex(s or 0) for s in h['src']]})"
+                f"code=0x{h['code']:02X} ×{h['count']} ({h['rounds']}轮/{h['span_s']}s, "
+                f"{_dir_text(h)}, src={[hex(s or 0) for s in h['src']]})"
                 for h in hits)
             results.append({
                 "device": target, "verdict": "L3-5_HIT", "sub_rule": sub_rules,
@@ -132,6 +150,7 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                 "route_error_count": sum(h["count"] for h in t["hits"]),
                 "rounds": sum(h["rounds"] for h in hits),
                 "src": sorted({s for h in t["hits"] for s in (h["src"] or [])}),
+                "_hits": t["hits"],  # 结论方向判定用 (生成后 pop)
             })
             # 证据: 命中组的 Network Status 帧 (供人工复核)
             for (code, tg), frames in groups.items():
@@ -207,16 +226,29 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                 parts.append(f"0x{r['device']:04X} 下行链路持续失败 (断链前一跳 {srcs or '?'}, "
                              f"{r.get('rounds')} 轮)")
             elif "R2" in rule:
-                parts.append(f"0x{r['device']:04X} 上行链路持续失败 (MTORR, 断链前一跳 {srcs or '?'}, "
-                             f"{r.get('rounds')} 轮)")
+                # ⚠️ 0x0C 方向由 dest 决定 (up=发往协调器失败 / down=发往该设备失败)
+                dirs = [h.get("direction") for h in r.get("_hits", [])]
+                up = "up" in dirs
+                dn = "down" in dirs
+                if up and dn:
+                    parts.append(f"0x{r['device']:04X} 路由双向持续失败 (MTORR, 断链前一跳 {srcs or '?'}, "
+                                 f"{r.get('rounds')} 轮)")
+                elif dn:
+                    parts.append(f"0x{r['device']:04X} 下行链路持续失败 (MTORR, 断链前一跳 {srcs or '?'}, "
+                                 f"{r.get('rounds')} 轮)")
+                else:
+                    parts.append(f"0x{r['device']:04X} 上行链路持续失败 (MTORR, 断链前一跳 {srcs or '?'}, "
+                                 f"{r.get('rounds')} 轮)")
             else:
                 parts.append(f"0x{r['device']:04X} 路由持续失败 (断链前一跳 {srcs or '?'}, "
                              f"{r.get('rounds')} 轮)")
-        conclusion = "; ".join(parts) + " — 链路方向见规则 (R1 下行 / R2 上行)"
+        conclusion = "; ".join(parts) + " — 方向: R1 下行 / R2 由 dest 决定 (0x0000=上行, 其他=下行)"
         if any(r["confidence"] == "高" for r in hits):
             conclusion += " (高置信)"
         else:
             conclusion += " (中置信)"
+        for r in hits:
+            r.pop("_hits", None)  # 内部字段不进 API 响应
     elif healthies:
         conclusion = "未发现持续的路由失败 (下行链路正常)"
     else:
