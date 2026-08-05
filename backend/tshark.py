@@ -9,6 +9,18 @@ from typing import Optional
 
 from . import zcl_defs
 
+# ZDP 集群名称表 (与 cubx_reader.ZDP_CLUSTER_NAMES 对齐 — 双路径契约一致)
+ZDP_CLUSTER_NAMES = {
+    0x0000: "ZDP: NWK Addr Req", 0x0001: "ZDP: IEEE Addr Req",
+    0x0002: "ZDP: Node Desc Req", 0x0003: "ZDP: Power Desc Req",
+    0x0004: "ZDP: Simple Desc Req", 0x0005: "ZDP: Active EP Req",
+    0x0006: "ZDP: Match Desc Req", 0x0010: "ZDP: End Dev Announce",
+    0x0013: "ZDP: Device Announce", 0x0031: "ZDP: Mgmt LQI Req",
+    0x0032: "ZDP: Mgmt Routing Req",
+    0x8000: "ZDP: NWK Addr Resp", 0x8001: "ZDP: IEEE Addr Resp",
+    0x8002: "ZDP: Node Desc Resp", 0x8005: "ZDP: Active EP Resp",
+}
+
 # ── tshark 路径查找 ──
 
 _KNOWN_TSHARK_PATHS: list[str] = [
@@ -153,7 +165,7 @@ def parse_mac_frames(tshark_path: str, pcap_path: str) -> list[dict]:
             "mac_beacon_permit": None,
             "mac_src": _h(wpan.get("wpan.src16", "")),
             "mac_dst": _h(wpan.get("wpan.dst16", "")),
-            "mac_seq": _h(wpan.get("wpan.seq_no", "")),
+            "mac_seq": _num(wpan.get("wpan.seq_no", "")),
             "pan_src": _h(wpan.get("wpan.src_pan", "")),
             "pan_dst": _h(wpan.get("wpan.dst_pan", "")),
             "pkt_type": "MAC Cmd" if ft == 3 else "Beacon",
@@ -244,17 +256,20 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     mac_dst = _h(wpan.get("wpan.dst16", ""))
     mac_dst_pan = _h(wpan.get("wpan.dst_pan", ""))
     mac_src_pan = _h(wpan.get("wpan.src_pan", "")) or mac_dst_pan
-    mac_seq = int(wpan.get("wpan.seq_no", "0"), 16) if wpan.get("wpan.seq_no") else None
+    mac_seq = _num(wpan.get("wpan.seq_no", ""))
     fcs_ok = wpan.get("wpan.fcs_ok", "0") == "1"
 
     # NWK 层
     nwk = layers.get("zbee_nwk", {})
+    # 安全位用 tshark 官方 fcf_tree 解析结果 (zbee_nwk.security) — 不自行按位运算:
+    # 曾误用 (fcf>>7)&1 提取 multicast 位 → nwk_security 全 False;
+    # 位序随 tshark 版本/字节序解释有差异, fcf_tree 是 dissector 已解析的权威值
     nwk_fcf = int(nwk.get("zbee_nwk.fcf", "0"), 16) if nwk.get("zbee_nwk.fcf") else 0
-    nwk_secure = (nwk_fcf >> 7) & 0x01
+    nwk_secure = 1 if nwk.get("zbee_nwk.fcf_tree", {}).get("zbee_nwk.security", "0") == "1" else 0
     nwk_src = _h(nwk.get("zbee_nwk.src", ""))
     nwk_dst = _h(nwk.get("zbee_nwk.dst", ""))
-    nwk_radius = int(nwk.get("zbee_nwk.radius", "0"), 16) if nwk.get("zbee_nwk.radius") else None
-    nwk_seq = int(nwk.get("zbee_nwk.seqno", ""), 16) if nwk.get("zbee_nwk.seqno") else None
+    nwk_radius = _num(nwk.get("zbee_nwk.radius", ""))
+    nwk_seq = _num(nwk.get("zbee_nwk.seqno", ""))
     nwk_src64 = _hex_colon(nwk.get("zbee_nwk.src64", ""))
 
     # ── NWK 命令数据提取 (Link Status 邻居表 / Route Record 中继路径) ──
@@ -289,8 +304,26 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "Route Request": 1, "Route Reply": 2, "Network Status": 3,
         "Leave": 4, "Route Record": 5, "Rejoin Request": 6,
         "Rejoin Response": 7, "Link Status": 8,
+        "Network Report": 9, "Network Update": 10,
+        "End Device Timeout Request": 11, "End Device Timeout Response": 12,
     }
     nwk_cmd_id = NWK_CMD_IDS.get(cmd_name) if cmd_name else None
+    # MTORR: Route Request 的 many-to-one 标志 (2026-08-05, 自愈分析需要)
+    # 与 cubx_reader nwk_route_request_mto 对齐 (options bit3 行为实证)
+    nwk_route_request_mto = None
+    if cmd_name == "Route Request" and isinstance(cmd_data, dict):
+        mto_raw = str(cmd_data.get("zbee_nwk.cmd.route.opts.many2one", ""))
+        if mto_raw in ("1", "True", "true"):
+            nwk_route_request_mto = 1
+        elif mto_raw in ("0", "False", "false"):
+            nwk_route_request_mto = 0
+    # Network Status (0x03): 状态码 + 目标短地址 (L3 检测 0x0B Source Route Failure 需要).
+    # 目标字段名随 tshark 版本变化: zbee_nwk.cmd.route.dest (实测 4.6) / zbee_nwk.cmd.status.target
+    nwk_status_code = nwk_status_target = None
+    if cmd_name == "Network Status" and isinstance(cmd_data, dict):
+        nwk_status_code = _h(cmd_data.get("zbee_nwk.cmd.status", ""))
+        tgt_raw = cmd_data.get("zbee_nwk.cmd.route.dest") or cmd_data.get("zbee_nwk.cmd.status.target")
+        nwk_status_target = _h(tgt_raw)
     nwk_leave_rejoin = nwk_leave_request = nwk_leave_children = None
     if cmd_name == "Leave" and isinstance(cmd_data, dict):
         # 官方字段: zbee_nwk.cmd.leave.rejoin (0x20) / request (0x40) / children (0x80)
@@ -320,12 +353,16 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
 
     # 安全头
     sec = nwk.get("ZigBee Security Header", {})
-    sec_level_raw = sec.get("zbee.sec.sec_level", "")
+    # sec_level 在 field_tree 子 dict (实测 JSON: zbee.sec.field_tree.zbee.sec.sec_level)
+    sec_level_raw = sec.get("zbee.sec.field_tree", {}).get("zbee.sec.sec_level", "")
     sec_level = int(sec_level_raw, 16) if sec_level_raw else None
     sec_frame_counter = int(sec.get("zbee.sec.counter", "0")) if sec.get("zbee.sec.counter") else None
     sec_key = _hex_colon(sec.get("zbee.sec.key", ""))
     sec_key_label = sec.get("zbee.sec.decryption_key", "")
     sec_mic = _hex_colon(sec.get("zbee.sec.mic", ""))
+    # nwk_src64 缺失时从安全头补 (对齐 cubx: 安全头含源 EUI64, zbee.sec.src64)
+    if nwk_src64 is None:
+        nwk_src64 = _hex_colon(sec.get("zbee.sec.src64", ""))
 
     # APS 层
     aps = layers.get("zbee_aps", {})
@@ -334,44 +371,59 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     aps_cluster = aps_cluster_zcl if aps_cluster_zcl is not None else aps_cluster_zdp
     aps_profile = _h(aps.get("zbee_aps.profile", ""))
     aps_counter = int(aps.get("zbee_aps.counter", "0")) if aps.get("zbee_aps.counter") else None
-    aps_src_ep = int(aps.get("zbee_aps.src", ""), 16) if aps.get("zbee_aps.src") else None
-    aps_dst_ep = int(aps.get("zbee_aps.dst", ""), 16) if aps.get("zbee_aps.dst") else None
-    # APS 命令帧 (L1-3 密钥分发检测): 命令 ID + TransportKey key_type
-    # 字段官方名: zbee_aps.cmd.id / zbee_aps.cmd.key_type (与 cubx_reader aps_cmd_* 对齐)
-    aps_cmd_id = _h(aps.get("zbee_aps.cmd.id", ""))
-    aps_cmd_key_type = _h(aps.get("zbee_aps.cmd.key_type", ""))
-    # L1-4: Remove Device (0x07) target EUI64 / Update Device (0x06) status
-    # 字段官方名: zbee_aps.cmd.device (被移除/更新的设备 EUI64) / zbee_aps.cmd.update_status
+    aps_src_ep = _num(aps.get("zbee_aps.src", ""))
+    aps_dst_ep = _num(aps.get("zbee_aps.dst", ""))
+    # APS 命令帧 (L1-3 密钥分发检测): 命令 ID + key_type 在 "Command Frame: X" 子 dict —
+    # 曾从顶层 zbee_aps.cmd.id 读 → 恒 None, 密钥流程 5 帧 (0x05/0x08/0x0F/0x10)
+    # 在 pcap 路径全部漏检 (素材实测: JSON 结构为 'Command Frame: Transport Key': {...})
+    aps_cmd_id = None
+    aps_cmd_key_type = None
     aps_cmd_remove_target = None
     aps_cmd_update_status = None
-    if aps_cmd_id == 0x07:
-        aps_cmd_remove_target = _hex_colon(aps.get("zbee_aps.cmd.device", ""))
-    elif aps_cmd_id == 0x06:
-        aps_cmd_update_status = _h(aps.get("zbee_aps.cmd.update_status", ""))
+    for akey in aps:
+        if akey.startswith("Command Frame:"):
+            aps_cmd = aps[akey]
+            if isinstance(aps_cmd, dict):
+                aps_cmd_id = _h(aps_cmd.get("zbee_aps.cmd.id", ""))
+                aps_cmd_key_type = _h(aps_cmd.get("zbee_aps.cmd.key_type", ""))
+                # L1-4: Remove Device (0x07) target EUI64 / Update Device (0x06) status
+                # 字段官方名: zbee_aps.cmd.device / zbee_aps.cmd.update_status
+                if aps_cmd_id == 0x07:
+                    aps_cmd_remove_target = _hex_colon(aps_cmd.get("zbee_aps.cmd.device", ""))
+                elif aps_cmd_id == 0x06:
+                    aps_cmd_update_status = _h(aps_cmd.get("zbee_aps.cmd.update_status", ""))
+            break
 
     # ZCL 层
     zcl = layers.get("zbee_zcl", {})
     zcl_cmd_id = _h(zcl.get("zbee_zcl.cmd.id", ""))
-    zcl_seq = int(zcl.get("zbee_zcl.cmd.tsn", ""), 16) if zcl.get("zbee_zcl.cmd.tsn") else None
+    zcl_seq = _num(zcl.get("zbee_zcl.cmd.tsn", ""))
     zcl_dir = _zcl_direction(zcl)
 
-    # 解密判断 — APS 层存在(有Counter等字段)即表示 NWK payload 已解密
-    decrypted = bool(aps_counter is not None or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster"))
+    # 解密判断 — 加密帧 (nwk_secure) 且 APS 层可见 (有 Counter/cluster 字段) 才算解密成功.
+    # 曾无 nwk_secure 条件: 非加密明文 APS 帧被误判 decrypted=True (cubx 语义: 解密成功才 True)
+    decrypted = bool(nwk_secure and (aps_counter is not None
+                                     or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster")))
 
     # 包类型 — 检查 ZDP/NWK/MAC 逐层确定
     pkt_type = _pkt_type(mac_frame_type, nwk, aps, decrypted)
 
     return {
         "ts": ts, "ch": 0,
+        "lqi": None, "rssi": None,   # pcap 无 LQI/RSSI 数据源 (cubx 有) — 占位保持字段全集一致
         "packet_id": packet_id,
         "pkt_type": _pkt_type(mac_frame_type, nwk, aps, decrypted),
         "pan_src": mac_src_pan, "pan_dst": mac_dst_pan,
         "mac_src": mac_src, "mac_dst": mac_dst, "mac_seq": mac_seq,
         "nwk_src": nwk_src, "nwk_dst": nwk_dst, "nwk_seq": nwk_seq,
-        "security": "Decrypted" if decrypted else "Encrypted",
+        # security 语义与 cubx 对齐: 非加密帧 = "" (曾恒 "Encrypted" 导致拓扑误判加密)
+        "security": "Decrypted" if decrypted else ("Encrypted" if nwk_secure else ""),
         "status": "Decrypted" if decrypted else ("Encrypted" if nwk_secure else ""),
+        # MAC 命令/Beacon 字段占位 (主路径 -Y zbee_nwk 不含 MAC 帧, 见 parse_mac_frames)
+        "mac_cmd_id": None, "mac_src64": None, "mac_dst64": None,
+        "mac_cmd_payload": None, "mac_beacon_pan": None, "mac_beacon_permit": None,
         "aps_cluster": aps_cluster,
-        "aps_cluster_name": zcl_defs.get_cluster_name(aps_cluster),
+        "aps_cluster_name": _aps_cluster_name(aps_profile, aps_cluster),
         "aps_profile": aps_profile,
         "aps_counter": aps_counter,
         "aps_src_ep": aps_src_ep, "aps_dst_ep": aps_dst_ep,
@@ -380,6 +432,9 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_cmd_remove_target": aps_cmd_remove_target,
         "aps_cmd_update_status": aps_cmd_update_status,
         "nwk_cmd_id": nwk_cmd_id,
+        "nwk_route_request_mto": nwk_route_request_mto,
+        "nwk_status_code": nwk_status_code,       # Network Status 错误码 (0x0B=Source Route Failure)
+        "nwk_status_target": nwk_status_target,   # Network Status 目标短地址
         "nwk_leave_rejoin": nwk_leave_rejoin,
         "nwk_leave_request": nwk_leave_request,
         "nwk_leave_children": nwk_leave_children,
@@ -412,6 +467,27 @@ def _h(val: str) -> int | None:
     return int(val, 16) if val else None
 
 
+def _num(val: str) -> int | None:
+    """tshark JSON 数值字段: '0x2d' → 45 (hex 带前缀), '45' → 45 (十进制).
+
+    tshark 4.6 对 seq/radius/EP 等数值字段输出十进制字符串 ('238'),
+    地址/标识字段输出 0x 前缀 ('0x0019') — 数值字段用本函数, 兼容两种格式.
+    """
+    val = val.strip()
+    if not val:
+        return None
+    return int(val, 16) if val.startswith("0x") else int(val, 10)
+
+
+def _aps_cluster_name(profile: int | None, cluster: int | None) -> str | None:
+    """集群名称: ZDP (profile 0x0000) 用 ZDP 表, 其余用 zcl_defs — 与 cubx_reader 对齐."""
+    if cluster is None:
+        return None
+    if profile == 0x0000:
+        return ZDP_CLUSTER_NAMES.get(cluster, "ZDP Cmd")
+    return zcl_defs.get_cluster_name(cluster)
+
+
 def _hex_colon(val: str) -> str | None:
     """'b4:e3:f9:ff:...' → 'b4e3f9ff...'"""
     val = val.strip().replace(":", "")
@@ -419,7 +495,12 @@ def _hex_colon(val: str) -> str | None:
 
 
 def _zcl_direction(zcl: dict) -> str | None:
-    fcf = zcl.get("Frame Control Field", {})
+    # key 带后缀如 "Frame Control Field: Profile-wide (0x10)" — 前缀匹配
+    fcf = None
+    for k in zcl:
+        if k.startswith("Frame Control Field"):
+            fcf = zcl[k]
+            break
     if isinstance(fcf, dict):
         d = fcf.get("zbee_zcl.dir", "")
     else:
@@ -442,17 +523,10 @@ def _pkt_type(mac_ft: int, nwk: dict, aps: dict | None = None, decrypted: bool =
         if is_aps_ack:
             return "APS Ack"
         if aps and aps.get("zbee_aps.profile") == "0x0000":
-            zdp_cluster = aps.get("zbee_aps.zdp_cluster", "")
-            zdp_names = {
-                "0x0000": "ZDP: NWK Addr Req", "0x0001": "ZDP: IEEE Addr Req",
-                "0x0002": "ZDP: Node Desc Req", "0x0003": "ZDP: Power Desc Req",
-                "0x0004": "ZDP: Simple Desc Req", "0x0005": "ZDP: Active EP Req",
-                "0x0006": "ZDP: Match Desc Req", "0x0010": "ZDP: End Dev Announce",
-                "0x0013": "ZDP: Device Announce", "0x0031": "ZDP: Mgmt LQI Req",
-                "0x0032": "ZDP: Mgmt Routing Req",
-                "0x8002": "ZDP: Node Desc Resp", "0x8005": "ZDP: Active EP Resp",
-            }
-            return zdp_names.get(zdp_cluster, "ZDP Cmd") if zdp_cluster else "ZDP"
+            zdp_cluster = _h(aps.get("zbee_aps.zdp_cluster", ""))
+            if zdp_cluster is not None:
+                return ZDP_CLUSTER_NAMES.get(zdp_cluster, "ZDP Cmd")
+            return "ZDP"
         if nwk:
             # Check for named NWK command frame in tshark JSON
             for key in nwk:

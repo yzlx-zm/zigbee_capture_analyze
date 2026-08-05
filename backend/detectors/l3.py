@@ -72,6 +72,10 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
 
     # 2. MTORR/Route Record 自愈观察 (全素材统计)
     route_request_count = sum(1 for p in packets if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_REQUEST)
+    # MTORR 真实计数: Route Request many-to-one 标志 (2026-08-05 提取, 位定义行为实证)
+    mtorr_count = sum(1 for p in packets
+                      if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_REQUEST
+                      and p.get("nwk_route_request_mto") == 1)
     route_record_count = sum(1 for p in packets if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_RECORD)
 
     # 2b. Network Status 全码统计 (0x00-0x13, 2026-08-05 需求: 全错误码记录)
@@ -215,14 +219,12 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         confidence = "低"
         summary = "无 Network Status 0x0B/0x0C (需断链链路覆盖)"
 
-    # 自愈迹象 (全素材级)
-    # ⚠️ 诚实标注: Route Request 总数含普通路由发现; MTORR (many-to-one 标志) 数量
-    # 未单独解析 (解析器未提取 route request options) — 不做 "含 MTORR" 断言
+    # 自愈迹象 (全素材级, 2026-08-05: MTORR 真实计数, many-to-one 标志已提取)
     self_heal = {
         "route_request_count": route_request_count,
+        "mtorr_count": mtorr_count,
         "route_record_count": route_record_count,
-        "note": (f"Route Request ×{route_request_count} + Route Record ×{route_record_count} 存在"
-                 f" (MTORR 数量未解析, many-to-one 标志待提取 [待增强])"
+        "note": (f"MTORR ×{mtorr_count} (Route Request 共 {route_request_count}) + Route Record ×{route_record_count} 存在"
                  if route_request_count or route_record_count
                  else "无 Route Request/Route Record (自愈机制未活动或未抓取)"),
     }

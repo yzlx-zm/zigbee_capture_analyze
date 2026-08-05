@@ -25,6 +25,7 @@ from scapy.layers.zigbee import (
 )
 
 from . import key_store as _ks
+from . import zcl_defs
 
 conf.dot15d4_protocol = "zigbee"
 
@@ -86,8 +87,11 @@ def _decrypt_security_blob(
     extended_nonce: bool,
     key_type: int,
     candidates: Iterable[KeyRecord],
-) -> tuple[bytes, str]:
-    """Decrypt one Zigbee auxiliary-security payload using ENC-MIC-32."""
+) -> tuple[bytes, str, bytes]:
+    """Decrypt one Zigbee auxiliary-security payload using ENC-MIC-32.
+
+    返回 (明文, key label, key 值) — key 值用于填充 sec_key 字段 (对齐 tshark zbee.sec.key).
+    """
     if not extended_nonce:
         raise ValueError("security header has no extended nonce/source EUI")
     aux_length = 1 + 4 + 8 + (1 if key_type == 1 else 0)
@@ -103,14 +107,14 @@ def _decrypt_security_blob(
         cipher = AES.new(record.value, AES.MODE_CCM, nonce=nonce, mac_len=4)
         cipher.update(prefix + patched_auxiliary)
         try:
-            return cipher.decrypt_and_verify(ciphertext, mic), record.label
+            return cipher.decrypt_and_verify(ciphertext, mic), record.label, record.value
         except ValueError:
             continue
     raise ValueError("MIC verification failed for all stored keys")
 
 
 def _decrypt_nwk(nwk: ZigbeeNWK, network_keys: Sequence[KeyRecord],
-                 link_keys: Sequence[KeyRecord]) -> tuple[bytes, str]:
+                 link_keys: Sequence[KeyRecord]) -> tuple[bytes, str, bytes]:
     sec = nwk[ZigbeeSecurityHeader]
     sec_bytes = bytes(sec)
     nwk_bytes = bytes(nwk)
@@ -126,7 +130,7 @@ def _decrypt_aps(
     aps: ZigbeeAppDataPayload,
     network_keys: Sequence[KeyRecord],
     link_keys: Sequence[KeyRecord],
-) -> tuple[bytes, str]:
+) -> tuple[bytes, str, bytes]:
     sec = aps[ZigbeeSecurityHeader]
     sec_bytes = bytes(sec)
     aps_bytes = bytes(aps)
@@ -197,9 +201,11 @@ NWK_COMMAND_NAMES = {
 
 ZDP_CLUSTER_NAMES = {
     0x0000: "ZDP: NWK Addr Req", 0x0001: "ZDP: IEEE Addr Req",
-    0x0002: "ZDP: Node Desc Req", 0x0004: "ZDP: Simple Desc Req",
-    0x0005: "ZDP: Active EP Req", 0x0010: "ZDP: End Dev Announce",
+    0x0002: "ZDP: Node Desc Req", 0x0003: "ZDP: Power Desc Req",
+    0x0004: "ZDP: Simple Desc Req", 0x0005: "ZDP: Active EP Req",
+    0x0006: "ZDP: Match Desc Req", 0x0010: "ZDP: End Dev Announce",
     0x0013: "ZDP: Device Announce", 0x0031: "ZDP: Mgmt LQI Req",
+    0x0032: "ZDP: Mgmt Routing Req",
     0x8000: "ZDP: NWK Addr Resp", 0x8001: "ZDP: IEEE Addr Resp",
     0x8002: "ZDP: Node Desc Resp", 0x8005: "ZDP: Active EP Resp",
 }
@@ -345,6 +351,13 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "nwk_status_target": None,   # Network Status 目标短地址
         "aps_cmd_id": None,          # APS 命令 ID (0x05=TransportKey, 0x08=RequestKey, 0x0F=VerifyKey, 0x10=Confirm)
         "aps_cmd_key_type": None,    # TransportKey 的 key_type (0x01=NWK Key, 0x04=TC Link Key)
+        "aps_cmd_remove_target": None,   # Remove Device (0x07) 目标 EUI64 (L1-4 踢人检测)
+        "aps_cmd_update_status": None,   # Update Device (0x06) 状态 (1=UNSECURED_JOIN, 2=DEVICE_LEFT)
+        "nwk_leave_rejoin": None,        # Leave options bit5=rejoin
+        "nwk_leave_request": None,       # Leave options bit6=request
+        "nwk_leave_children": None,      # Leave options bit7=children
+        "zcl_direction": None,           # ZCL 方向 (0=Client→Server, 1=Server→Client)
+        "zcl_seq": None,                 # ZCL 事务序列号
         "raw_layers": {},
     }
 
@@ -362,7 +375,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         return _h(v) if v is not None else None
 
     result["mac_frame_type"] = mac_frame_type
-    result["mac_seq"] = _h(getattr(mac, "seqnum", None))
+    # mac 是 Dot15d4Data/Dot15d4Cmd 子类 (scapy 2.7), 无 seqnum 字段 — getattr 会链式
+    # 穿透到 ZigbeeNWK 层读到 NWK seq (曾导致 mac_seq 系统性等于 nwk_seq).
+    # 从 pkt (Dot15d4FCS) 读真实 MAC seq (素材实证: pkt.seqnum=238 vs tshark wpan.seq_no=238).
+    result["mac_seq"] = _h(getattr(pkt, "seqnum", None))
     result["mac_dst"] = _addr(getattr(mac, "dest_addr", None))
     result["mac_src"] = _addr(getattr(mac, "src_addr", None))
     result["pan_dst"] = _pan_field("dest_panid")
@@ -390,6 +406,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 
     # NWK layer
     if not pkt.haslayer(ZigbeeNWK):
+        # MAC 帧 (Beacon/命令/ACK): 无 NWK 层, 直接按 MAC 层判定包类型
+        # (修复: 此前提前 return, pkt_type 停留 "Unknown")
+        result["pkt_type"] = _pkt_type(mac_frame_type, None, None, False, None)
         return result
 
     nwk = pkt[ZigbeeNWK]
@@ -405,18 +424,29 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     plaintext = bytes(nwk.payload)
 
     # NWK decryption
+    sec = None
     if nwk_secure:
+        # 安全头信息 (sec_level/fc/mic) 解密成败都提取 — 对齐 tshark 从 JSON 安全头取值
         try:
-            plaintext, key_label = _decrypt_nwk(nwk, network_keys, link_keys)
+            sec = nwk[ZigbeeSecurityHeader]
+        except Exception:
+            sec = None
+        if sec is not None:
+            # scapy 字段名 nwk_seclevel (非 sec_level — 曾导致恒 None)
+            result["sec_level"] = _h(getattr(sec, "nwk_seclevel", None))
+            result["sec_frame_counter"] = _h(getattr(sec, "fc", None))
+            sec_bytes = bytes(sec)
+            if len(sec_bytes) >= 4:
+                result["sec_mic"] = sec_bytes[-4:].hex()
+        try:
+            plaintext, key_label, key_value = _decrypt_nwk(nwk, network_keys, link_keys)
             result["decrypted"] = True
             result["security"] = "Decrypted"
             result["status"] = "Decrypted"
-            sec = nwk[ZigbeeSecurityHeader]
-            result["sec_level"] = _h(getattr(sec, "sec_level", None))
             result["sec_key_label"] = key_label
-            result["sec_frame_counter"] = _h(getattr(sec, "fc", None))
+            result["sec_key"] = key_value.hex() if key_value else None
             # extract source EUI64 from security header for mapping
-            if bool(sec.extended_nonce) and result["nwk_src64"] is None:
+            if sec is not None and bool(sec.extended_nonce) and result["nwk_src64"] is None:
                 result["nwk_src64"] = _format_eui(getattr(sec, "source", None))
         except Exception:
             result["security"] = "Encrypted"
@@ -429,7 +459,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     if int(nwk.frametype) == 1:
         nwk_cmd_id = _parse_nwk_command_id(plaintext)
         result["nwk_cmd_id"] = nwk_cmd_id
-        if nwk_cmd_id == 8:  # Link Status
+        if nwk_cmd_id == 1 and len(plaintext) >= 2:  # Route Request
+            # options bit3 (0x08) = many-to-one (MTORR) — 行为实证 (838D 素材 121/161)
+            result["nwk_route_request_mto"] = (plaintext[1] >> 3) & 1
+        elif nwk_cmd_id == 8:  # Link Status
             result["link_status_neighbors"] = _parse_link_status(plaintext)
         elif nwk_cmd_id == 5:  # Route Record
             result["route_record_relays"] = _parse_route_record(plaintext)
@@ -462,22 +495,32 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         # 改用 ZigbeeSecurityHeader 子层判定 (FCF security 位已解析为子层).
         if aps.haslayer(ZigbeeSecurityHeader):
             try:
-                aps_plaintext, key_label = _decrypt_aps(aps, network_keys, link_keys)
+                aps_plaintext, key_label, key_value = _decrypt_aps(aps, network_keys, link_keys)
                 result["decrypted"] = True
                 result["security"] = "Decrypted"
                 result["status"] = "Decrypted"
                 result["sec_key_label"] = key_label
+                result["sec_key"] = key_value.hex() if key_value else None
                 aps_plain = aps_plaintext
             except Exception:
                 aps_plain = None
         else:
             aps_plain = bytes(aps.payload)
 
-        result["aps_cluster"] = _h(getattr(aps, "cluster", None))
-        result["aps_profile"] = _h(getattr(aps, "profile", None))
-        result["aps_counter"] = _h(getattr(aps, "counter", None))
-        result["aps_src_ep"] = _h(getattr(aps, "src_endpoint", None))
-        result["aps_dst_ep"] = _h(getattr(aps, "dst_endpoint", None))
+        # APS 字段只在明文可得时提取 — 解密失败时 scapy 会从密文误解析出假 cluster/profile
+        # (曾输出垃圾值, tshark 对这些帧正确置 None)
+        if aps_plain is not None:
+            result["aps_cluster"] = _h(getattr(aps, "cluster", None))
+            result["aps_profile"] = _h(getattr(aps, "profile", None))
+            # 集群名称: ZDP (profile 0x0000) 用 ZDP 表, 其余用 zcl_defs — 对齐 tshark 输出
+            if result["aps_cluster"] is not None:
+                if result["aps_profile"] == 0x0000:
+                    result["aps_cluster_name"] = ZDP_CLUSTER_NAMES.get(result["aps_cluster"], "ZDP Cmd")
+                else:
+                    result["aps_cluster_name"] = zcl_defs.get_cluster_name(result["aps_cluster"])
+            result["aps_counter"] = _h(getattr(aps, "counter", None))
+            result["aps_src_ep"] = _h(getattr(aps, "src_endpoint", None))
+            result["aps_dst_ep"] = _h(getattr(aps, "dst_endpoint", None))
 
         # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
         if aps_ftype == 2:
@@ -488,16 +531,40 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         # 直接读明文 payload 字节 — 官方结构 (zigbee_packet_types.h):
         #   [0]=command_id, [1]=key_type (仅 TransportKey 0x05 有)
         if aps_ftype == 1 and aps_plain:
-            result["aps_cmd_id"] = aps_plain[0]
-            if aps_plain[0] == 0x05 and len(aps_plain) >= 2:  # Transport Key
+            cid = aps_plain[0]
+            result["aps_cmd_id"] = cid
+            # key_type 位置按命令结构 (对齐 tshark zbee_aps.cmd.key_type):
+            # 0x05/0x08/0x0F: [cmd(1)][key_type(1)]; 0x10 Confirm: [cmd(1)][status(1)][key_type(1)]
+            if cid in (0x05, 0x08, 0x0F) and len(aps_plain) >= 2:
                 result["aps_cmd_key_type"] = aps_plain[1]
-            elif aps_plain[0] == 0x07 and len(aps_plain) >= 9:  # Remove Device
+            elif cid == 0x10 and len(aps_plain) >= 3:
+                result["aps_cmd_key_type"] = aps_plain[2]
+            elif cid == 0x07 and len(aps_plain) >= 9:  # Remove Device
                 # payload: [cmd_id(1)][target EUI64(8 LE)] — L1-4 踢人检测
                 result["aps_cmd_remove_target"] = _format_eui(
                     int.from_bytes(aps_plain[1:9], "little"))
             elif aps_plain[0] == 0x06 and len(aps_plain) >= 2:  # Update Device
                 # payload: [cmd_id(1)][status(1)] — 1=UNSECURED_JOIN, 2=DEVICE_LEFT
                 result["aps_cmd_update_status"] = aps_plain[1]
+
+        # ZCL 层 (profile != 0x0000 的 APS data 帧): 手动解析 ZCL header — 对齐 tshark.
+        # 官方结构 (ZCL spec): fcf(1) [+manufacturer code 2B if fcf bit2] + tsn(1) + cmd_id(1)
+        # fcf bit1 = direction (0=Client→Server, 1=Server→Client)
+        if (result["aps_profile"] not in (None, 0x0000) and aps_plain
+                and len(aps_plain) >= 3):
+            zcl_fcf = aps_plain[0]
+            zcl_off = 1
+            if zcl_fcf & 0x04:  # manufacturer specific → 额外 2 字节厂商码
+                zcl_off += 2
+            if len(aps_plain) > zcl_off:
+                result["zcl_seq"] = aps_plain[zcl_off]
+                if zcl_off + 1 < len(aps_plain):
+                    result["zcl_cmd_id"] = aps_plain[zcl_off + 1]
+                result["zcl_direction"] = (
+                    "Server→Client" if (zcl_fcf >> 1) & 1 else "Client→Server")
+                if result["zcl_cmd_id"] is not None:
+                    result["zcl_cmd_name"] = zcl_defs.get_command_name(
+                        result["aps_cluster"], result["zcl_cmd_id"])
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":
