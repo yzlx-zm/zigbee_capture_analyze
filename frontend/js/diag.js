@@ -58,6 +58,7 @@ var PLAIN_TITLES = {
   'L1-2': '设备入网失败或被拒',
   'L1-3': '密钥分发或验证出问题',
   'L1-4': '设备被网关拒绝或踢出',
+  'L2-1': '终端频繁离线',
   'L3-5': '设备收不到网关下发',
   'OFF': '设备离网',
 };
@@ -174,6 +175,23 @@ reg('diag', function () {
       + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4, l4.conclusion, l4.evidence, l4.evidence_total)
       + '</div></div>';
 
+    // ── L2 在线维持检测区 (L2-1 终端频繁离线) ──
+    A.get('/api/diag/l2').then(function (l2d) {
+      var l21 = l2d && !l2d.error ? (l2d.l2_1 || {}) : {};
+      var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
+        + '<span class="text-muted">' + (l21.summary || '') + '</span>'
+        + ((l21.devices || []).length ? '<div class="divider">'
+          + (l21.devices || []).map(function (d) {
+              return devLine(d.device, d.verdict, d.sub_rule,
+                'poll' + (d.poll_count || 0), d.summary, 'L2-1');
+            }).join('')
+          + '</div>' : '');
+      h += '<div class="card l1-sec">'
+        + '<h3>📡 L2 在线维持检测 <span class="conf">(文档→测试→工具)</span></h3>'
+        + '<div class="l1-cards">'
+        + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
+        + '</div></div>';
+
     // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效) ──
     A.get('/api/diag/l3').then(function (l3d) {
       var l35 = l3d && !l3d.error ? (l3d.l3_5 || {}) : {};
@@ -199,11 +217,16 @@ reg('diag', function () {
         { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
         { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
         { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
+        { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion },
         { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
       ]);
       renderH();
       renderOffline();
     }).catch(function () {
+      renderH();
+      renderOffline();
+    });
+    }).catch(function () {  // L2 失败不阻塞
       renderH();
       renderOffline();
     });

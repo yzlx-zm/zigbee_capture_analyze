@@ -21,7 +21,7 @@
 
 | ID | 场景 | 状态 | 现有检测能力 |
 |----|------|------|-------------|
-| L2-1 | 终端设备频繁离线 | ⬜ | DataRequest 轮询 + Leave/Rejoin 检测 |
+| L2-1 | 终端设备频繁离线 | 📝 检测器就绪 (R2b 素材验证通过) | DataRequest 轮询间隔 (R1 待素材) + Leave/Rejoin 循环 (R2a/R2b) + poll 无响应 (R3 待素材) |
 | L2-2 | 父节点 Child Table 老化 | ⬜ | poll 间隔统计 |
 | L2-3 | Orphan/Rejoin 循环 | ⬜ | Rejoin Req 检测 + 0x09 错误码 |
 | L2-4 | 路由器掉线→子设备连锁离线 | ⬜ | Leave (RemoveChildren) + Link Status 邻居消失 |

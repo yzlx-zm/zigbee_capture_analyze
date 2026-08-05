@@ -116,6 +116,19 @@ async def diag_l1():
     return l1_detector.detect(full)
 
 
+@router.get("/diag/l2")
+async def diag_l2():
+    """L2 在线维持检测: L2-1 终端频繁离线 (poll 间隔超时 / Leave-Rejoin 循环).
+
+    需要含 MAC 帧的素材 (DataRequest 提取).
+    """
+    from ..detectors import l2 as l2_detector
+    full = get_full_packets()
+    if not full:
+        return {"error": "无数据 (需导入 .cubx 文件)"}
+    return l2_detector.detect(full)
+
+
 @router.get("/diag/l3")
 async def diag_l3():
     """L3 运营期检测: L3-5 源路由/MTORR 失效 (Network Status 0x0B/0x0C).
