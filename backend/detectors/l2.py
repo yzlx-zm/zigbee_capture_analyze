@@ -13,10 +13,18 @@ from collections import defaultdict
 MAC_DATA_REQUEST = 4          # MAC 命令 cmd_id=0x04 (SED 轮询)
 MAC_ACK_FRAME_TYPE = 2        # MAC 帧类型=2 (Acknowledgement)
 NWK_CMD_LEAVE = 4
-END_DEVICE_POLL_TIMEOUT_S = 320.0   # EMBER_END_DEVICE_POLL_TIMEOUT 默认 5×2⁶
+# ⚠️ 2026-08-05 自审修正: 320s 是旧 SDK (R21 前) 默认, 当前默认 256 分钟!
+# 官方: EmberZNet 6.5.0 RN "default has been changed to the 256 Minute default from R21";
+# 本地 SDK: #define EMBER_END_DEVICE_POLL_TIMEOUT MINUTES_256
+# 配置范围: SECONDS_10 ~ MINUTES_16384 (配置项, 无线上协商机制) — 判定需注意配置差异
+END_DEVICE_POLL_TIMEOUT_S = 15360.0  # 256 分钟 (R21 默认, 保守)
 R2_ROUND_GAP_S = 5.0                # R2b 轮窗口 (跨 >5s = 新轮)
 R2_MIN_ROUNDS = 2                   # ≥2 轮才判定循环
-MAX_MISSED_POLLS = 3                # R3: 连续无 ACK 阈值 [待校准, 官方无默认值]
+# R3: 连续无 ACK 阈值 — 官方源码确认 (end-device-support-config.h):
+#   #define EMBER_AF_PLUGIN_END_DEVICE_SUPPORT_MAX_MISSED_POLLS 3
+MAX_MISSED_POLLS = 3
+# 健康参照: LONG_POLL 默认 300s (end-device-support-config.h) — 判定阈值必须 > 父节点 Poll Timeout,
+# 而 Poll Timeout 是配置项; R1 命中需 poll 间隔超过配置值, 检测器用 256min 保守默认 [待素材校准]
 
 # ── 结论/证据输出 (诊断页人工复核, 2026-08-05 需求) ──
 EVIDENCE_MAX = 15
