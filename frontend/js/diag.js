@@ -66,7 +66,7 @@ var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L
 function summaryCard(checks) {
   // checks: [{scenario, verdict, conclusion}]
   var probs = (checks || []).filter(function (c) {
-    return c.verdict && c.verdict.indexOf('_HIT') === 0;
+    return c.verdict && c.verdict.indexOf('_HIT') !== -1;
   });
   var unknown = (checks || []).filter(function (c) {
     return c.verdict === 'INCONCLUSIVE';
@@ -96,7 +96,13 @@ reg('diag', function () {
   document.getElementById('mc').style.padding = '16px';
   var h = '<div class="card"><h3>🩺 网络诊断</h3>'
     + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>'
-    + '<div id="diag-summary"></div>';
+    + '<!--DIAG-SUMMARY-->';
+  // ⚠️ 2026-08-05 修复: 摘要区被 innerHTML 重建覆盖 (先填旧 DOM 再整体重渲)
+  // 改用注释占位 + 统一渲染, 摘要 HTML 每次渲染前注入
+  var summaryHtml = '';
+  function renderH() {
+    document.getElementById('mc').innerHTML = h.replace('<!--DIAG-SUMMARY-->', summaryHtml);
+  }
 
   // ── L1 入网检测区 (文档→测试→工具工作流验证) ──
   A.get('/api/diag/l1').then(function (l1d) {
@@ -104,7 +110,7 @@ reg('diag', function () {
       h += '<div class="card card-danger">'
         + '<h3 class="text-danger">L1 入网检测</h3>'
         + '<p class="hint">' + l1d.error + ' (L1 检测需要 .cubx 或含 MAC 帧的 pcap)</p></div>';
-      document.getElementById('mc').innerHTML = h;
+      renderH();
       renderOffline();
       return;
     }
@@ -187,23 +193,23 @@ reg('diag', function () {
         + '<div class="l1-cards">'
         + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + '</div></div>';
-      // 顶部诊断摘要 (通俗结论, 数据齐后填充)
-      document.getElementById('diag-summary').innerHTML = summaryCard([
+      // 顶部诊断摘要 (通俗结论, 数据齐后注入 h)
+      summaryHtml = summaryCard([
         { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion },
         { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
         { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
         { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
         { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
       ]);
-      document.getElementById('mc').innerHTML = h;
+      renderH();
       renderOffline();
     }).catch(function () {
-      document.getElementById('mc').innerHTML = h;
+      renderH();
       renderOffline();
     });
   }).catch(function () {
     // L1 失败不阻塞离线诊断
-    document.getElementById('mc').innerHTML = h;
+    renderH();
     renderOffline();
   });
 
@@ -266,9 +272,9 @@ reg('diag', function () {
           h += '</div>';
         }
       }
-      document.getElementById('mc').innerHTML = h;
+      renderH();
     }).catch(function (e) {
-      document.getElementById('mc').innerHTML = h + '<div class="card text-danger">诊断数据加载失败: ' + e.message + '</div>';
+      renderH(); document.getElementById('mc').innerHTML += '<div class="card text-danger">诊断数据加载失败: ' + e.message + '</div>';
     });
   }
 });
