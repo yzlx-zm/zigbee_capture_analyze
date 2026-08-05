@@ -878,4 +878,7 @@ async def packet_detail(pkt_id: int):
         "decrypted": p.get("decrypted", False),
         "security": p.get("security", ""),
         "layers": layers,  # 完整 tshark JSON 层树 (cubx 路径为 fallback 构造)
+        # ZCL 按簇正确解析的命令名 (前端详情 ZCL 层优先使用, 避免前端混合表误标)
+        "zcl_cmd_name": p.get("zcl_cmd_name"),
+        "aps_cluster_name": p.get("aps_cluster_name"),
     }

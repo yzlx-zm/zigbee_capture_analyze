@@ -188,13 +188,13 @@ reg('tl', function(){
         }else if(p.pkt_type==='Network Status'){
           evBadge='<span class="badge-ev badge-nstat" title="网络状态命令 (NWK 0x03), 详见右侧详情">⚠️ 状态</span>';
         }
-        // ZCL 命令级显示 (U5): 解密 Data 帧类型列显示实际命令 (如 "Report Attributes"),
-        // 而非笼统的 "Data"; 过滤仍按 pkt_type=Data (后端), 仅展示增强
+        // ZCL 命令级显示 (U5): 解密 Data 帧类型列直接显示实际命令 (如 "Down / Close"),
+        // 去掉笼统的 "Data"; 过滤仍按 pkt_type=Data (后端), 仅展示增强
         var typeDisp=p.pkt_type;
         if(p.decrypted&&p.zcl_cmd_name){
-          typeDisp='Data · <span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
+          typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
         }else if(p.decrypted&&p.aps_cluster_name){
-          typeDisp='Data · <span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
+          typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
         }
         var decIcon='';
         if(isNwkCmdRow){
@@ -487,8 +487,11 @@ reg('tl', function(){
           var dir='?';
           if(typeof fcf==='object'&&fcf['zbee_zcl.dir']==='1')dir='Server→Client';
           else if(typeof fcf==='object'&&fcf['zbee_zcl.dir']==='0')dir='Client→Server';
+          // ⚠️ 修复 (U5): 优先用后端按簇解析的命令名 (zcl_defs), 前端混合表兜底 —
+          // 此前 0x01 在 Window Covering 簇被误标为 "OTA: Query Next Image"
+          var zclCmd=d.zcl_cmd_name||_tlZclCmd(zcl);
           html+=_tlLayer('ZCL', '#7c3aed', [
-            ['Command', _tlZclCmd(zcl)],
+            ['Command', zclCmd],
             ['Direction', dir],
             ['Seq#', zcl['zbee_zcl.cmd.tsn']||'?'],
           ]);
