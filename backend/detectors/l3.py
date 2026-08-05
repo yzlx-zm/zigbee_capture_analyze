@@ -74,6 +74,17 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
     route_request_count = sum(1 for p in packets if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_REQUEST)
     route_record_count = sum(1 for p in packets if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_RECORD)
 
+    # 2b. Network Status 全码统计 (0x00-0x13, 2026-08-05 需求: 全错误码记录)
+    # 含 0x0B/0x0C 之外的码 (0x06 等) — 诊断页显示分布, 异常码后续按需补规则
+    ns_codes: dict[int, int] = defaultdict(int)
+    ns_by_code_src: dict[int, set] = defaultdict(set)
+    for p in packets:
+        if p.get("nwk_cmd_id") == NWK_CMD_NETWORK_STATUS:
+            c = p.get("nwk_status_code")
+            if c is not None:
+                ns_codes[c] += 1
+                ns_by_code_src[c].add(p.get("nwk_src"))
+
     # 3. L1-3 交叉索引: target 设备是否 L1-3_HIT
     l1_hits = set()
     if l1_result:
@@ -269,6 +280,9 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         "mto_route_failure_count": sum(1 for (c, _), v in groups.items()
                                        if c == NS_CODE_MANY_TO_ONE_ROUTE_FAILURE for _ in v),
         "self_heal": self_heal,
+        "network_status_codes": {f"0x{c:02X}": n for c, n in sorted(ns_codes.items())},
+        "network_status_src": {f"0x{c:02X}": sorted({_addr4(s) for s in srcs})
+                               for c, srcs in sorted(ns_by_code_src.items())},
         "devices": results,
     }
 

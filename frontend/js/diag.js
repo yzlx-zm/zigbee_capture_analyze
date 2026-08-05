@@ -199,6 +199,7 @@ reg('diag', function () {
         + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
         + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
         + '<span class="text-muted">' + (l35.summary || '') + '</span>'
+        + (l35.network_status_codes ? '<br><span class="text-dim">全码分布: ' + Object.keys(l35.network_status_codes).map(function (c) { return c + '×' + l35.network_status_codes[c]; }).join(' ') + '</span>' : '')
         + (l35.self_heal ? '<br><span class="text-dim">自愈: ' + l35.self_heal.note + '</span>' : '')
         + ((l35.devices || []).length ? '<div class="divider">'
           + (l35.devices || []).map(function (d) {
