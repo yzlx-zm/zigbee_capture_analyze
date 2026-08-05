@@ -2,7 +2,7 @@
 // ES module: <script type="module"> 加载, import/export 原生隔离
 export const A={get:u=>fetch(u).then(r=>r.json()),post:(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json())};
 export const S={pkts:0,nodes:0,topo:null,topoPan:null,topoAddr:null,topoT0:null,topoT1:null};
-export function sb(m){document.getElementById('sb').textContent=m||'就绪'}
+export function sb(m){var el=document.getElementById('sb');if(!el)return;el.textContent=m||'就绪';delete el.dataset.task;}
 export function setProg(msg,pct){var el=document.getElementById('prog');if(el){el.style.display=msg?'flex':'none';if(msg)el.classList.remove('prog-err');}var im=document.getElementById('imsg');if(im)im.textContent=msg||'';var bar=document.getElementById('pbar');if(bar){bar.style.display=(msg&&pct!=null)?'block':'none';}var fill=document.getElementById('pfill');if(fill){fill.style.width=(pct==null?0:pct)+'%';}var mc=document.getElementById('mc');if(mc)mc.classList.toggle('busy',!!msg);}
 export function setErr(msg){var el=document.getElementById('prog');if(el){el.style.display='flex';el.classList.add('prog-err');}var im=document.getElementById('imsg');if(im)im.textContent='❌ '+(msg||'导入失败');var mc=document.getElementById('mc');if(mc)mc.classList.remove('busy');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -57,21 +57,58 @@ export function doPI(files){setProg('上传中...',1);
     var n=files[i].name||'';fnames.push(n);if(n.toLowerCase().endsWith('.cubx'))cubx=1;}
   var url=cubx?'/api/import/cubx':'/api/import/pcap';
   uploadXHR(url,fd,fnames.join(', '),function(){if(!cubx&&window._loadKeyPanel)window._loadKeyPanel();});}
+// ── 全局导入任务监视器 (2026-08-05, grilling 确认方案) ──
+// 轮询与页面 DOM 解耦: 模块级单例, 页面切换 (#mc 重建) 不销毁轮询。
+// 顶栏 #sb 显示任务状态: ⟳ 阶段 45% (run) / ✅ 完成·点击查看 (done) / ❌ 失败·点击查看 (err);
+// done/err 且不在导入页时, 点击 #sb 跳回导入页 (import/last 自动恢复结果, err 用延迟 setErr 恢复详情)。
+// 在导入页时仍驱动页内进度条/busy/结果渲染 (与 U6 行为一致)。
+var _ptid=null,_pfname='',_ponDone=null,_pdone=false,_ptimer=null,_plastErr='',_ptries=0;
+function onImportPage(){var h=location.hash.slice(1)||'import';return h==='import';}
+function stopPoll(){if(_ptimer){clearInterval(_ptimer);_ptimer=null;}}
+function sbTask(label,cls){sb(label);var el=document.getElementById('sb');if(el)el.dataset.task=cls;}
 export function pollImport(tid,fname,onDone){
-  var tries=0, done=false, timer=null;
-  function finish(){if(timer){clearInterval(timer);timer=null;}}
-  function tick(){
-    if(done)return;
-    tries++;
-    if(tries>1000){done=true;finish();setErr('导入超时 (5 分钟), 请重试');return;}  // 1000×300ms
-    A.get('/api/import/progress?task_id='+tid).then(function(p){
-      if(done)return;
-      if(p&&p.status==='done'){done=true;finish();if(p.result){setProg('');sr(p.result,fname);if(onDone)onDone();}else{setErr('导入完成但结果缺失, 请刷新页面');}}
-      else if(p&&p.status==='error'){done=true;finish();setErr(p.error||'导入失败');}
-      else if(p&&p.status==='running'){setProg((p.stage||'解析中')+' ('+p.percent+'%)',p.percent);}
-    }).catch(function(){});
-  }
-  tick();                       // 立即首查 (任务快时也能抓到解析阶段)
-  timer=setInterval(tick,300);
+  stopPoll();                    // 新任务顶掉旧轮询 (后端并发防护下不会同时有两个)
+  _ptid=tid;_pfname=fname;_ponDone=onDone;_pdone=false;_plastErr='';_ptries=0;
+  tick();                        // 立即首查 (任务快时也能抓到解析阶段)
+  _ptimer=setInterval(tick,300);
 }
+function tick(){
+  if(_pdone||!_ptid)return;
+  if(++_ptries>1000){            // 5 分钟超时兜底 (任务表容量清理后 progress=unknown 时防无限轮询)
+    _pdone=true;stopPoll();
+    if(onImportPage())setErr('导入超时 (5 分钟), 请重试');
+    else sbTask('❌ 导入超时, 请重试','err');
+    return;
+  }
+  A.get('/api/import/progress?task_id='+_ptid).then(function(p){
+    if(_pdone||!_ptid)return;
+    if(p&&p.status==='done'){
+      _pdone=true;stopPoll();
+      if(p.result){
+        if(onImportPage()){setProg('');sr(p.result,_pfname);if(_ponDone)_ponDone();}  // sr 内 sb() 覆盖为统计
+        else sbTask('✅ 完成 · 点击查看','done');                                       // 非导入页仅提示, 不刷新
+      }else{
+        if(onImportPage())setErr('导入完成但结果缺失, 请刷新页面');
+        else sbTask('❌ 完成但结果缺失','err');
+      }
+    }else if(p&&p.status==='error'){
+      _pdone=true;stopPoll();
+      if(onImportPage())setErr(p.error||'导入失败');
+      else{_plastErr=p.error||'导入失败';sbTask('❌ 失败 · 点击查看','err');}
+    }else if(p&&p.status==='running'){
+      var st=p.stage||'解析中',pct=p.percent||0;
+      sbTask('⟳ '+st+' '+(pct!=null?pct+'%':''),'run');
+      if(onImportPage())setProg(st+' ('+pct+'%)',pct);   // 切回导入页时进度条由 tick 恢复
+    }
+  }).catch(function(){});       // 网络抖动静默, 下个 tick 重试
+}
+// 顶栏 #sb 点击 → 跳回导入页 (仅任务已终态且不在导入页时)
+document.addEventListener('click',function(e){
+  var t=e.target;
+  if(t&&t.id==='sb'&&_pdone&&!onImportPage()){
+    var err=_plastErr;
+    if(err)setTimeout(function(){setErr(err);},120);     // 等 rt() 重建导入页 DOM 后恢复错误详情
+    location.hash='import';
+  }
+});
 export function fmtTs(ts){var d=new Date(ts*1000);return d.getUTCHours().toString().padStart(2,'0')+':'+d.getUTCMinutes().toString().padStart(2,'0')+':'+d.getUTCSeconds().toString().padStart(2,'0');}
