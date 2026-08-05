@@ -692,17 +692,143 @@ async def packet_types():
                       for k, v in sorted(types.items(), key=lambda x: -x[1])]}
 
 
+def _fallback_layers(p: dict) -> dict:
+    """cubx 路径 raw_layers 为空 → 从平铺字段构造简化层树 (时间线详情面板兼容).
+
+    ⚠️ U5 修复: cubx 解析器 (scapy) 输出平铺字段, 不生成 tshark 风格 raw_layers 层树,
+    此前 cubx 素材的帧详情只有头部 (MAC/NWK/APS 全空)。本函数在 API 层做展示兼容,
+    不改解析器 (P5 字段缺口工单流边界外)。字段名对齐前端 tlShowDetail 的取值。
+    """
+    from ..cubx_reader import NWK_COMMAND_NAMES
+    layers: dict = {}
+
+    # ── MAC (wpan) ──
+    if (p.get("mac_src") is not None or p.get("mac_dst") is not None
+            or p.get("pan_src") is not None or p.get("mac_seq") is not None):
+        wpan: dict = {}
+        if p.get("mac_fcs_ok") is not None:
+            wpan["wpan.fcs_ok"] = "1" if p["mac_fcs_ok"] else "0"
+        mft = (p.get("mac_frame_type") or 1) & 0x07
+        wpan["wpan.fcf"] = f"0x{mft:04X}"
+        if p.get("mac_seq") is not None:
+            wpan["wpan.seq_no"] = str(p["mac_seq"])
+        if p.get("pan_dst") is not None:
+            wpan["wpan.dst_pan"] = f"{p['pan_dst']:04x}"
+        if p.get("mac_dst") is not None:
+            wpan["wpan.dst16"] = f"{p['mac_dst']:04x}"
+        if p.get("mac_src") is not None:
+            wpan["wpan.src16"] = f"{p['mac_src']:04x}"
+        layers["wpan"] = wpan
+
+    # ── NWK ──
+    if p.get("nwk_src") is not None or p.get("nwk_dst") is not None or p.get("nwk_security"):
+        nwk: dict = {}
+        if p.get("nwk_dst") is not None:
+            nwk["zbee_nwk.dst"] = f"0x{p['nwk_dst']:04X}"
+        if p.get("nwk_src") is not None:
+            nwk["zbee_nwk.src"] = f"0x{p['nwk_src']:04X}"
+        if p.get("nwk_radius") is not None:
+            nwk["zbee_nwk.radius"] = str(p["nwk_radius"])
+        if p.get("nwk_seq") is not None:
+            nwk["zbee_nwk.seqno"] = str(p["nwk_seq"])
+        nwk["zbee_nwk.fcf_tree"] = {"zbee_nwk.security": "1" if p.get("nwk_security") else "0"}
+        # NWK 命令 → "Command Frame: <名>" 子树 (前端 isNwkCmd 检测 + 命令明细渲染)
+        cmd_id = p.get("nwk_cmd_id")
+        cmd_name = NWK_COMMAND_NAMES.get(cmd_id) if cmd_id is not None else None
+        if cmd_name and p.get("pkt_type") == cmd_name:
+            cmd_tree = _fallback_nwk_cmd_tree(cmd_name, p)
+            if cmd_tree:
+                nwk[f"Command Frame: {cmd_name}"] = cmd_tree
+        layers["zbee_nwk"] = nwk
+
+    # ── Security Header (NWK 安全帧) ──
+    sec_fields: dict = {}
+    if p.get("sec_level") is not None:
+        sec_fields["zbee.sec.sec_level"] = str(p["sec_level"])
+    if p.get("sec_frame_counter") is not None:
+        sec_fields["zbee.sec.counter"] = str(p["sec_frame_counter"])
+    if p.get("sec_mic"):
+        sec_fields["zbee.sec.mic"] = p["sec_mic"]
+    if p.get("sec_key_label"):
+        sec_fields["zbee.sec.decryption_key"] = p["sec_key_label"]
+    if sec_fields:
+        sec_fields["zbee.sec.field"] = "1"  # 前端以该字段存在与否决定是否渲染安全头
+        layers["ZigBee Security Header"] = sec_fields
+
+    # ── APS (Data 帧) ──
+    if p.get("aps_cluster") is not None or p.get("aps_profile") is not None:
+        aps: dict = {}
+        if p.get("aps_profile") is not None:
+            aps["zbee_aps.profile"] = f"0x{p['aps_profile']:04X}"
+        if p.get("aps_cluster") is not None:
+            aps["zbee_aps.cluster"] = f"0x{p['aps_cluster']:04X}"
+            if p.get("aps_profile") == 0x0000:
+                aps["zbee_aps.zdp_cluster"] = f"0x{p['aps_cluster']:04X}"
+        if p.get("aps_src_ep") is not None:
+            aps["zbee_aps.src"] = str(p["aps_src_ep"])
+        if p.get("aps_dst_ep") is not None:
+            aps["zbee_aps.dst"] = str(p["aps_dst_ep"])
+        if p.get("aps_counter") is not None:
+            aps["zbee_aps.counter"] = str(p["aps_counter"])
+        layers["zbee_aps"] = aps
+
+    # ── ZCL ──
+    if p.get("zcl_cmd_id") is not None:
+        zcl: dict = {"zbee_zcl.cmd.id": f"0x{p['zcl_cmd_id']:02X}"}
+        if p.get("zcl_seq") is not None:
+            zcl["zbee_zcl.cmd.tsn"] = str(p["zcl_seq"])
+        if p.get("zcl_direction") is not None:
+            zcl["Frame Control Field"] = {"zbee_zcl.dir": str(p["zcl_direction"])}
+        layers["zbee_zcl"] = zcl
+
+    return layers
+
+
+def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
+    """平铺字段 → Command Frame 子树 (对齐 tshark zbee_nwk.cmd.* 字段名, 前端按名取值)."""
+    if cmd_name == "Link Status" and p.get("link_status_neighbors"):
+        tree: dict = {}
+        for i, nb in enumerate(p["link_status_neighbors"], 1):
+            tree[f"Link {i}"] = {
+                "zbee_nwk.cmd.link.address": f"0x{nb['addr']:04X}",
+                "zbee_nwk.cmd.link.incoming_cost": str(nb["in_cost"]),
+                "zbee_nwk.cmd.link.outgoing_cost": str(nb["out_cost"]),
+            }
+        return tree or None
+    if cmd_name == "Network Status" and p.get("nwk_status_code") is not None:
+        tree = {"zbee_nwk.cmd.status": f"0x{p['nwk_status_code']:02X}"}
+        if p.get("nwk_status_target") is not None:
+            tree["zbee_nwk.cmd.route.dest"] = f"0x{p['nwk_status_target']:04X}"
+        return tree
+    if cmd_name == "Leave":
+        return {
+            "zbee_nwk.cmd.leave.rejoin": "1" if p.get("nwk_leave_rejoin") else "0",
+            "zbee_nwk.cmd.leave.request": "1" if p.get("nwk_leave_request") else "0",
+            "zbee_nwk.cmd.leave.children": "1" if p.get("nwk_leave_children") else "0",
+        }
+    if cmd_name == "Route Record" and p.get("route_record_relays"):
+        rr = p["route_record_relays"]
+        tree = {"zbee_nwk.cmd.relay_count": str(rr.get("count", 0))}
+        for i, addr in enumerate(rr.get("relays", []), 1):
+            tree[f"zbee_nwk.cmd.relay_device_{i}"] = f"0x{addr:04X}"
+        return tree
+    return None
+
+
 @router.get("/packets/{pkt_id}")
 async def packet_detail(pkt_id: int):
     """单帧协议树 — 返回 raw_layers 完整 JSON"""
     if pkt_id < 0 or pkt_id >= len(_packets):
         return JSONResponse({"error": f"包 ID {pkt_id} 不存在 (共 {len(_packets)} 帧)"}, 404)
     p = _packets[pkt_id]
+    layers = p.get("raw_layers") or {}
+    if not layers:
+        layers = _fallback_layers(p)  # cubx 路径 raw_layers 为空 → 平铺字段构造 (U5)
     return {
         "id": pkt_id,
         "ts": p["ts"],
         "pkt_type": p.get("pkt_type", ""),
         "decrypted": p.get("decrypted", False),
         "security": p.get("security", ""),
-        "layers": p.get("raw_layers"),  # 完整 tshark JSON 层树
+        "layers": layers,  # 完整 tshark JSON 层树 (cubx 路径为 fallback 构造)
     }
