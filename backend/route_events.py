@@ -242,8 +242,13 @@ def extract_leave_events(packets: list[dict]) -> list[RouteEvent]:
             continue
         src = p.get("nwk_src")
         dst = p.get("nwk_dst")
-        if src is None or dst is None:
+        if src is None:
             continue
+        # ⚠️ 2026-08-05 修复: 部分设备自发 Leave 帧 cubx 解析 nwk_dst=None (解析缺口待查),
+        # 此前被丢弃 → 离线诊断漏报设备离网 (中继包 6 条: B75C/F67F/737D/838D)。
+        # 设备离网信号以 src 为准, dst 宽容按广播语义处理。
+        if dst is None:
+            dst = 0xFFFD  # Leave Announcement 广播语义 (宽容, 待查 cubx_reader 缺口)
         # Leave 标志: 兼容 tshark (raw_layers Command Frame 树) 与 cubx (平铺 nwk_leave_*)
         # ⚠️ 2026-08-05 修复: 此前仅 tshark 路径可用, cubx 素材 Leave 事件全丢 → 离线诊断失效
         nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
@@ -611,8 +616,13 @@ def aggregate_offline_diagnosis(
         }
 
     # 按设备分组 Leave 事件
+    # ⚠️ 2026-08-05 修复: 排除 src=0x0000 (TC/协调器) — TC 的 Leave 帧全是管理指令
+    # (TC→设备 单播, 如中继包 TC→0x737D ×336), 不是 TC 自己离开; 误归导致
+    # 协调器被报为"17 波主动暂离" (用户实测发现)
     device_leaves: dict[int, list[RouteEvent]] = {}
     for e in leave_events:
+        if e.src == 0x0000:
+            continue
         device_leaves.setdefault(e.src, []).append(e)
 
     devices = []

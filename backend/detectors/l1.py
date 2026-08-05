@@ -601,7 +601,9 @@ def detect_l1_4(packets: list[dict]) -> dict:
             elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE:
                 if nsrc == dev:
                     ev["leave_any"].append(p)
-                    if ndst == BROADCAST_ADDR:
+                    # ⚠️ 2026-08-05: 部分设备自发 Leave 帧 cubx 解析 nwk_dst=None
+                    # (解析缺口待查) — 设备自发 Leave 广播语义, 宽容计入
+                    if ndst == BROADCAST_ADDR or ndst is None:
                         ev["leave_broadcast"].append(p)
         dev_result = _judge_l1_4_device(dev, ev, remove_events, mgmt_leave_events)
         results.append(dev_result)
@@ -744,7 +746,10 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict],
     # ── 排除 ──
     if not lany:
         return healthy("已入网且无 Leave — TC 允许入网 (排除 L1-4)")
-    return inconclusive("已入网设备广播 Leave 但 rejoin 标志为可重入 (rejoin=1, 设备暂离非被踢)", "低")
+    rejoin_set = [p.get("nwk_leave_rejoin") for p in lb if p.get("nwk_leave_rejoin") is not None]
+    if rejoin_set and all(r == 1 for r in rejoin_set):
+        return inconclusive("已入网设备广播 Leave 但 rejoin=1 (设备暂离, 非永久离开)", "低")
+    return inconclusive("已入网设备有 Leave 但未匹配踢人模式 (标志/方向不可读)", "低")
 
 
 # ── 入口 ──
