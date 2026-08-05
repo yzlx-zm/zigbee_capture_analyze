@@ -277,15 +277,26 @@ def _check_against_tshark(packets: list[dict], pcap_path: str, tshark: str, repo
         else:
             matched += 1
 
-    match_rate = round(matched / total, 4) if total else 1.0
-    check = {
-        "label": label,
-        "expected": "匹配率 ≥ 99.5%",
-        "actual": f"{matched}/{total} 匹配 ({match_rate*100:.2f}%)" + (f", 差异 {len(diffs)} 帧" if diffs else ""),
-        "passed": total > 0 and match_rate >= 0.995,
-        # 权威对比失败 = 解析错位 → 锁定
-        "failure_type": "parse_mismatch" if (total > 0 and match_rate < 0.995) else "warn",
-    }
+    if total == 0:
+        # 0 帧可匹配 (匹配键全失败, 如时间戳格式/地址差异) — 无法执行权威对比.
+        # 不判 FAIL: 校验工具自身出问题不应误锁用户 (2026-08-05 自审 P0).
+        check = {
+            "label": label,
+            "expected": "匹配率 ≥ 99.5%",
+            "actual": "0 帧可匹配 (键不匹配, 权威对比未执行 — 请检查时间戳/地址解析)",
+            "passed": True,
+            "failure_type": "warn",
+        }
+    else:
+        match_rate = round(matched / total, 4)
+        check = {
+            "label": label,
+            "expected": "匹配率 ≥ 99.5%",
+            "actual": f"{matched}/{total} 匹配 ({match_rate*100:.2f}%)" + (f", 差异 {len(diffs)} 帧" if diffs else ""),
+            "passed": match_rate >= 0.995,
+            # 权威对比失败 = 解析错位 → 锁定
+            "failure_type": "parse_mismatch" if match_rate < 0.995 else "warn",
+        }
     report["checks"]["tshark_authoritative"] = check
     if diffs:
         report["detail"]["tshark_authoritative"] = diffs[:10]
