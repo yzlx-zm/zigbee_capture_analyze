@@ -92,7 +92,37 @@
 
 ---
 
-## 三、使用说明
+## 三、解析器工程 (抓包数据处理与 Python 解析层) 提示词
+
+### ① 解析器工程通用模板
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+按 wayfinder 协作流程开工, 本次专注解析器工程模块:
+1. 读 CLAUDE.md + .scratch/wayfinder/README.md + map.md (看解析器工程章节)
+2. 读 docs/parser_overview.md (解析器工程全景: 7 模块/已知问题/上下游)
+3. 列出 .scratch/wayfinder/issues/ 下 P 开头且未认领的 ticket
+   (P1 双路径字段契约对齐 / P2 素材回归测试 / P3 大包性能 / P4 解密覆盖 / P5 字段缺口工单流)
+4. 挑一个未认领的, 加 Assignee 认领, 向我确认后开始 (一次一个)
+5. 完成后: ticket Resolution → map.md → git commit + push
+```
+
+### ② 指定解析器 ticket 模板
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+按 wayfinder 协作流程, 认领并解决解析器 ticket:
+.scratch/wayfinder/issues/P2-素材回归测试体系.md
+
+先读 CLAUDE.md + wayfinder README + map.md + docs/parser_overview.md,
+认领后向我确认方案, 再实施。完成后更新 ticket + map.md + git 提交推送。
+```
+
+---
+
+## 四、使用说明
 
 ### Ticket 编号对照
 
