@@ -12,7 +12,7 @@ import './topo.js';
 import './import.js';
 import './timeline.js';
 import './nodes.js';
-import './diag.js';
+import './diag.js?v=20260805';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
 
 // ── 初始路由 ──
 if (window.rt) window.rt();
