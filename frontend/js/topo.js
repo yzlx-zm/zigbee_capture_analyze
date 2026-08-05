@@ -7,7 +7,7 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let playTO = null, silentHidden = false;   // 播放定时器 / 静默节点隐藏态 (模块级, 跨页面切换保留)
+let playTO = null, silentHidden = false, neighborHidden = false;   // 播放/静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
@@ -37,6 +37,7 @@ reg('topo', function(){
     +'<button class="btn btn-o btn-s" id="tfit">⊞ 适应</button>'
     +'<button class="btn btn-o btn-s" id="tlay" title="切换布局">📐 层次</button>'
     +'<button class="btn btn-o btn-s" id="tshow-all" title="显示/隐藏静默节点">👁 静默节点</button>'
+    +'<button class="btn btn-o btn-s" id="tnb-toggle" title="显示/隐藏邻居边">📡 邻居边</button>'
     +'<button class="btn btn-o btn-s" id="thl-clear" title="清除高亮">🔆 清除高亮</button>'
     +'<span class="toolbar-sep">|</span>'
     +'<button class="btn btn-o btn-s" id="tlegend" title="显示/隐藏图例">📖 图例</button>'
@@ -349,6 +350,7 @@ reg('topo', function(){
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
+    cy.on('mousemove',function(e){ if(tooltip.style.display==='block') updateTooltipPos(e); });  // tooltip 跟随鼠标移动
 
     // Click → 跳转时间线
     cy.on('tap','node',function(e){var n=e.target;var aid=n.data('aid');S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl';});
@@ -381,6 +383,7 @@ reg('topo', function(){
       document.getElementById('tlay').textContent='▦ 固定列';
     })();
     applySilentHidden();   // 数据刷新后恢复静默节点隐藏状态
+    applyNeighborHidden(); // 数据刷新后恢复邻居边隐藏状态
   }
 
   // ═══ 布局引擎 ═══
@@ -702,6 +705,18 @@ reg('topo', function(){
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
   });
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
+
+  // ═══ 邻居边显示/隐藏 (tnb-toggle, C2 开关) ═══
+  function applyNeighborHidden(){
+    if(!cy) return;
+    cy.edges('[edge_type="neighbor"]').forEach(function(e){e.style('display',neighborHidden?'none':'element');});
+  }
+  document.getElementById('tnb-toggle').addEventListener('click',function(){
+    if(!cy) return;
+    neighborHidden=!neighborHidden;
+    applyNeighborHidden();
+    this.classList.toggle('on',neighborHidden);
+  });
 
   // ═══ 静默节点显示/隐藏 (tshow-all, U7 修复死控件) — 静默 = 孤立节点 (degree 0, 非路径) ═══
   function applySilentHidden(){
