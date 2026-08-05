@@ -388,13 +388,17 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
         total = len(tmp_paths)
         for i, tp in enumerate(tmp_paths):
             # 全量解析 (含 MAC 帧) — L1 检测需要 Beacon/Assoc 帧
-            pkts, added, total_keys = _cubx.parse_cubx(tp, include_mac_frames=True)
+            # parse_cubx 大文件可达数十秒, 传 progress_cb 按包上报真实进度 (10-90%)
+            def _cb(done: int, total_rows: int, i: int = i, total: int = total) -> None:
+                base = 10 + int(i / total * 80)
+                span = max(int(1 / total * 80), 1)
+                _task_update(task_id, stage=f"cubx 解析 ({i + 1}/{total})",
+                             percent=min(base + int(done / total_rows * span), 10 + int((i + 1) / total * 80)))
+            pkts, added, total_keys = _cubx.parse_cubx(tp, include_mac_frames=True, progress_cb=_cb)
             all_full.extend(pkts)
             # _packets 只保留 NWK 帧 (与 tshark 对齐, 避免 verify 帧数不匹配)
             all_pkts.extend(p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None)
             _last_ubiqua_sync = {"synced": added, "total_keys": total_keys}
-            _task_update(task_id, stage=f"cubx 解析 ({i + 1}/{total})",
-                         percent=10 + int((i + 1) / total * 80))
         if not all_pkts:
             raise RuntimeError("无有效数据")
 
@@ -424,7 +428,10 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
     from .. import cubx_reader as _cubx
     _task_update(task_id, stage="cubx 解析", percent=30)
     try:
-        pkts, added, total = _cubx.parse_cubx(path, include_mac_frames=True)
+        def _cb(done: int, total_rows: int) -> None:
+            _task_update(task_id, stage="cubx 解析",
+                         percent=30 + int(done / total_rows * 60))
+        pkts, added, total = _cubx.parse_cubx(path, include_mac_frames=True, progress_cb=_cb)
     except Exception as e:
         raise RuntimeError(str(e)) from e
     _last_ubiqua_sync = {"synced": added, "total_keys": total}

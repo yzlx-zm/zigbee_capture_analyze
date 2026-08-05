@@ -12,7 +12,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Iterable
+from typing import Callable, Optional, Sequence, Iterable
 
 from Crypto.Cipher import AES
 from scapy.all import Dot15d4FCS, conf
@@ -510,7 +510,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 # ── Public API ──
 
 
-def parse_cubx(path: str, include_mac_frames: bool = False) -> tuple[list[dict], int, int]:
+def parse_cubx(path: str, include_mac_frames: bool = False,
+               progress_cb: Callable[[int, int], None] | None = None,
+               ) -> tuple[list[dict], int, int]:
     """解析 .cubx 文件 → (包列表, key新增数, key去重总数).
 
     Key 自动同步到 zigbee_pc_keys (去重, 幂等).
@@ -518,6 +520,8 @@ def parse_cubx(path: str, include_mac_frames: bool = False) -> tuple[list[dict],
 
     include_mac_frames=True: 额外保留 MAC 命令帧和 Beacon (L1-1/L1-2 入网检测需要,
     默认 False 与 tshark -Y zbee_nwk 对齐只保留 NWK 帧).
+    progress_cb(done, total): 可选进度回调, 逐包解密循环中按块上报 (大文件解析可达
+    数十秒, 调用方需借此显示真实进度, 否则进度条会静止在 0%).
     """
     cubx_path = Path(path).expanduser().resolve()
     if not cubx_path.is_file():
@@ -537,7 +541,8 @@ def parse_cubx(path: str, include_mac_frames: bool = False) -> tuple[list[dict],
             "SELECT Id, Raw, Timestamp, Channel, LQI, RSSI FROM Packets ORDER BY Id"
         ).fetchall()
         packets: list[dict] = []
-        for row in rows:
+        total_rows = len(rows)
+        for idx, row in enumerate(rows):
             pkt_id, raw, ts, ch, lqi, rssi = row
             pkt = _raw_to_dict(
                 bytes(raw), int(pkt_id), float(ts),
@@ -549,6 +554,9 @@ def parse_cubx(path: str, include_mac_frames: bool = False) -> tuple[list[dict],
             is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None)
             if is_nwk or (include_mac_frames and is_mac_relevant):
                 packets.append(pkt)
+            # 进度上报 (每 500 包 + 末包, 避免每包回调开销)
+            if progress_cb and (idx % 500 == 499 or idx == total_rows - 1):
+                progress_cb(idx + 1, total_rows)
 
         packets.sort(key=lambda p: p["ts"])
         return packets, sync_result["added"], sync_result["total"]

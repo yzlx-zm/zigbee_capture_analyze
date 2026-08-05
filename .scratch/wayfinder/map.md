@@ -39,7 +39,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 **Tickets**: U1 视觉设计系统 / U2=02 拓扑时间控制 / U3 节点页补齐 / U4 页面联动 / U5 时间线优化 / U6 导入页优化 / U7 拓扑页优化
 **已完成切片**: 诊断页 L1-1/2/3/4 卡片统一模板 + 视觉规范初版 (提交 24aa25f)
 - [U1 视觉设计系统](issues/U1-视觉设计系统.md) — 设计系统建成: 13 组 token + 状态色体系 + 组件/工具类, CSS 全抽 `frontend/css/app.css` (index.html 内嵌 style 清零), JS inline 样式清零 (仅动态数据色保留); 孤儿类补齐 (.btn-s/.imp-tab/.badge 等); 截图见 .scratch/verification/u1-design-system/; 素材验证通过 (340 包)
-- [U6 导入页优化](issues/U6-导入页优化.md) — 三方向落地: 流程反馈 (spin/busy 禁用/内联错误替代 alert) + 密钥面板 (hex 预校验/内联错误/key 展开/命中帧数 badge) + 校验报告 (修复双份渲染, details 可展开); 顺带修复 2 个后端 bug: import_pcap 缺 global _verify_report (上传 pcap verify=None) + verify.py 空包除零; CDP 交互验证 22/22
+- [U6 导入页优化](issues/U6-导入页优化.md) — 三方向落地 (流程反馈/密钥面板/校验报告) + **真实导入进度条**: 6 端点后台任务化 (POST→task_id + /import/progress 轮询), XHR 上传真实进度 (修 0% 静止), pollImport 立即首查+300ms+5min 兜底; **cubx 卡 0 修复 (08-05)**: parse_cubx 加 progress_cb 按包上报 (30MB 实测 0%→10%→90% 平滑推进); 顺带修复 import_pcap 缺 global _verify_report + verify.py 空包除零; CDP 验证 22/22 + 进度轨迹实测
 - [U7 拓扑页优化](issues/U7-拓扑页优化.md) — 形状分类 (协调器六边/路由菱形/终端圆/未知三角) + 死控件修复 (taddr 定位 / 静默节点切换) + 播放按钮 + 时间刻度条 + 图实例复用 (时间过滤不再重建, 性能提升); 截图见 .scratch/verification/u7-topo/
 - [U3 节点页补齐](issues/U3-节点页补齐.md) — 行内展开详情 (首末时间/帧类型计数/EUI64/LQI-RSSI 统计/邻居表+不对称标记) + 设备类型列 + 🎯 定位按钮; 后端 /api/nodes 加 detail (EUI64/LQI-RSSI 仅 cubx); seen 计数单遍 O(pkts); CDP 17/17; 截图见 .scratch/verification/u3-nodes/; CSV 路径未实测
 
