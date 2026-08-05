@@ -29,6 +29,26 @@
 | `test2-ubiqua-export.cubx` | 1.3MB | test2 导出 (大量琥珀色终端节点问题) | ⏳ 早期问题素材 |
 | `test2-ubiqua-export.pcap` / `test2-export.pcap` / `test3-ubiqua-export.pcap` | ~1MB | test2/test3 pcap 版 | ⏳ 早期问题素材 |
 
+## 待补充问题包清单 (2026-08-05 建立, 用户逐步补充)
+
+> 统一标记所有检测层的素材缺口。用户补充后: 素材入台账对应区 + 标记 ✅ 验证 → 从本清单移除。
+> 补充素材请放: `C:\Users\Administrator\Desktop\zigbee_capture\` (cubx 优先, 含 MAC 帧)。
+
+| # | 场景/规则 | 素材要求 (具体) | 验证用途 |
+|---|----------|----------------|----------|
+| 1 | L1-3-A1 | TC 未分发 NWK Key 的入网失败 (TC 无设备 link key / 密钥配置错误) — **从 Assoc 前开始抓, Assoc 后留 ≥2s** | 验证"TC 没发 TransportKey"故障帧序列 |
+| 2 | L1-3-A2 | TransportKey 发出但设备解不出 (install code / 预配置 link key 不一致) — 同上抓包条件 | 验证"发了解不出"故障帧序列 |
+| 3 | L1-3-B1 | RequestKey 无响应 (TC 策略 DENY key 请求) — 入网后密钥阶段抓包 | 验证"请求密钥无响应"帧序列 |
+| 4 | L1-4-R1 | 网关白名单 deny 的入网拒绝 (设备 Assoc 成功但被 Remove Device 0x07) — 从 Assoc 前开始抓 | 验证 0x07 入网拒绝 (目前 0x07 素材 0 条) |
+| 5 | L1-4-R2a | 网关"删除设备"操作 (已入网设备被 0x07 踢) — 操作前后各抓 ≥10s | 验证 0x07 运营期踢人 |
+| 6 | L1-4-R3 | TC ignore 策略的静默拒绝 (无 0x07/无 TransportKey, 设备 2s 后消失) | 验证静默拒绝路径 (与 L1-3-A1 双报仲裁) |
+| 7 | L2-1-R1 | 终端 poll 间隔超父节点超时被移除 — **抓包时长 ≥ 超时窗口** (默认 256min, 可配短些复现) + sniffer 在 poll 链路 | 验证 poll 超时→aged out 帧序列 |
+| 8 | L2-1-R2a | 终端**自发**反复掉线重入 (rejoin=1 Leave + Rejoin) — 覆盖 ≥2 轮循环 | 验证自发重入循环 (现只有 TC 指令形态 R2b) |
+| 9 | L2-1-R3 | 终端 poll 连续无 ACK ≥3 次后自行 rejoin — poll 链路抓包 | 验证 poll 无响应路径 |
+| 10 | L3-5-R2 | 上行 MTORR 断链 (Network Status 0x0C) — sniffer 在断链链路 | 验证 0x0C 上行失败 (现只有 0x0B 下行) |
+| 11 | 1885→838D 复测 | 现场重抓 1885 拓扑 (验证下行断链是否仍存在) — 需现场环境 | L3-5 现场验证 + 断链根因 |
+| 12 | test2 琥珀终端 | **已有素材待分析**: test2-ubiqua-export.cubx (大量琥珀色终端节点问题) — 可能覆盖 L2 系列 | 分析确认是否 L2-1/L2-2/L2-6 素材 |
+
 ## 使用约定
 
 - **判定规则成立即可**: 具体计数允许素材差异浮动 (用户决策, 2026-08-01)
