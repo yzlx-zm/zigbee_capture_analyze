@@ -220,13 +220,30 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         summary = "无 Network Status 0x0B/0x0C (需断链链路覆盖)"
 
     # 自愈迹象 (全素材级, 2026-08-05: MTORR 真实计数, many-to-one 标志已提取)
+    # MTORR 频率: 健康默认 60s 周期 (Concentrator 插件); 实测 G32 两包 3.4-7.2s —
+    # 高频 = 配置过短或隐含路由问题持续触发重建 [观察信号, 需配置信息佐证]
+    mtorr_interval_s = None
+    if mtorr_count >= 2:
+        mto_ts = sorted(p["ts"] for p in packets
+                        if p.get("nwk_cmd_id") == NWK_CMD_ROUTE_REQUEST
+                        and p.get("nwk_route_request_mto") == 1)
+        if len(mto_ts) >= 2:
+            mtorr_interval_s = round((mto_ts[-1] - mto_ts[0]) / (len(mto_ts) - 1), 1)
+    if mtorr_interval_s is not None:
+        mto_txt = (f"MTORR ×{mtorr_count} (Route Request 共 {route_request_count}, "
+                   f"平均 {mtorr_interval_s}s/次)")
+    else:
+        mto_txt = f"MTORR ×{mtorr_count} (Route Request 共 {route_request_count})"
+    if route_request_count or route_record_count:
+        note = f"{mto_txt} + Route Record ×{route_record_count} 存在"
+    else:
+        note = "无 Route Request/Route Record (自愈机制未活动或未抓取)"
     self_heal = {
         "route_request_count": route_request_count,
         "mtorr_count": mtorr_count,
+        "mtorr_interval_s": mtorr_interval_s,
         "route_record_count": route_record_count,
-        "note": (f"MTORR ×{mtorr_count} (Route Request 共 {route_request_count}) + Route Record ×{route_record_count} 存在"
-                 if route_request_count or route_record_count
-                 else "无 Route Request/Route Record (自愈机制未活动或未抓取)"),
+        "note": note,
     }
 
     # 结论 (简短易懂, 诚实)
