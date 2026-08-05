@@ -8,6 +8,7 @@ let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
 let playTO = null, silentHidden = false;   // 播放定时器 / 静默节点隐藏态 (模块级, 跨页面切换保留)
+let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
 reg('topo', function(){
@@ -38,13 +39,22 @@ reg('topo', function(){
     +'<button class="btn btn-o btn-s" id="tshow-all" title="显示/隐藏静默节点">👁 静默节点</button>'
     +'<button class="btn btn-o btn-s" id="thl-clear" title="清除高亮">🔆 清除高亮</button>'
     +'<span class="toolbar-sep">|</span>'
-    +'<span class="legend">图例:'
-    +'<span class="dot coord"></span>Coord'
-    +'<span class="dot router"></span>Router'
-    +'<span class="dot enddev"></span>EndDev'
-    +'<span class="dot unknown square"></span>Unknown'
-    +'<span class="legend-tip">边:绿&gt;80% 黄&gt;50% 红 | 紫色虚线=路由路径 | 灰色点=静默节点</span>'
-    +'</span>'
+    +'<button class="btn btn-o btn-s" id="tlegend" title="显示/隐藏图例">📖 图例</button>'
+    // 图例浮层 (C1: 折叠收纳, 点击切换)
+    +'<div class="legend-pop hidden" id="legend-pop">'
+      +'<div class="lp-title">节点形状</div>'
+      +'<div class="lp-row"><span class="dot coord"></span> 协调器</div>'
+      +'<div class="lp-row"><span class="dot router"></span> 路由器</div>'
+      +'<div class="lp-row"><span class="dot enddev"></span> 终端设备</div>'
+      +'<div class="lp-row"><span class="dot unknown square"></span> 未知设备</div>'
+      +'<div class="lp-title mt-1">链路</div>'
+      +'<div class="lp-row"><span class="edge-demo traffic"></span> 数据流 (通信)</div>'
+      +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
+      +'<div class="lp-row"><span class="edge-demo neighbor"></span> 邻居关系 (Link Status)</div>'
+      +'<div class="lp-title mt-1">状态</div>'
+      +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
+      +'<div class="lp-row"><span class="dot hl"></span> 高亮节点</div>'
+    +'</div>'
     +'</div>'
     // ── 时间控制条: 单滑块(窗口中心) + 窗口大小 ──
     +'<div class="timebar">'
@@ -53,7 +63,7 @@ reg('topo', function(){
     +'<option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option><option value="9999" selected>全部</option></select>'
     +'<button class="btn btn-o btn-s" id="tstep-bwd" title="前移">◀</button>'
     +'<button class="btn btn-o btn-s" id="tplay" title="播放/暂停 (自动推进窗口)">▶</button>'
-    +'<input type="range" id="tsl" min="0" max="1000" value="500" oninput="onTimeSlide()">'
+    +'<input type="range" id="tsl" min="0" max="1000" value="500" oninput="onTimeSlide()" onchange="onTimeSlideEnd()">'
     +'<button class="btn btn-o btn-s" id="tstep-fwd" title="后移">▶</button>'
     +'<span id="ttime-label">--:--:-- ~ --:--:--</span>'
     +'<div class="time-scale">'
@@ -166,13 +176,36 @@ reg('topo', function(){
     });
   }
 
+  // ═══ 空态引导 (A1): 按原因区分三层, 带操作按钮 ═══
+  function showEmptyGuide(){
+    var g=document.getElementById('cy-graph'); if(!g) return;
+    // 保留 off-frame/off-label (后续 renderGraph 依赖)
+    var off=document.getElementById('off-frame'), ol=document.getElementById('off-label');
+    g.innerHTML='';
+    if(off) g.appendChild(off);
+    if(ol) g.appendChild(ol);
+    var reason='', btn='';
+    if(!dataTotal){
+      reason='还没有导入抓包数据 — 拓扑图需要先导入 .cubx/.pcap 素材';
+      btn='<button class="btn btn-p btn-s" onclick="location.hash=\'import\'">去导入 →</button>';
+    }else if(S.topoPan||S.topoT0!=null||S.topoT1!=null){
+      reason='当前被过滤条件筛空 — PAN: '+(S.topoPan||'全部')+' | 时间窗口: '+(S.topoT0!=null?'过滤中':'全部');
+      btn='<button class="btn btn-o btn-s" onclick="document.getElementById(\'trst\').click()">重置过滤</button>';
+    }else{
+      reason='素材存在 ('+dataTotal+' 帧), 但未推导出拓扑节点 — 拓扑依赖 Route Record / Link Status 等路由事件帧';
+    }
+    var div=document.createElement('div');div.className='empty-guide';
+    div.innerHTML='<div class="empty-guide-icon">📭</div><div>'+reason+'</div><div class="mt-2">'+btn+'</div>';
+    g.appendChild(div);
+  }
+
   // ═══ Cytoscape 力导向图 (路径着色 + 流量背景) ═══
 
   function renderGraph(d){
     if(!d) return;
     var nbt=d.neighbor_tables||{};
     var ns=d.nodes||[];
-    if(ns.length===0){if(cy){cy.destroy();cy=null;}document.getElementById('tinfo').textContent='该PAN无节点数据';return;}
+    if(ns.length===0){if(cy){cy.destroy();cy=null;}document.getElementById('tinfo').textContent='无拓扑数据';showEmptyGuide();return;}
     if(ns.length<10){curLayout=1;} // 小PAN默认力导, 固定列无意义
     var es=d.edges||[];
     var rps=d.route_paths||[];
@@ -233,6 +266,29 @@ reg('topo', function(){
       }
     }
 
+    // ── 边: 邻居关系 (Link Status) — 物理层 (C2) ──
+    // 只画无 traffic 边的邻居对; two-way (out_cost>0) 点线, one-way 虚线+箭头; 密度保护 (>8 邻居不画, tooltip 显示数量)
+    var denseNbs={};
+    for(var nai in nbt){ if(Object.keys(nbt[nai]||{}).length>8) denseNbs[nai]=true; }
+    var nbPairs={};
+    for(var nai in nbt){
+      for(var nbi in (nbt[nai]||{})){
+        if(denseNbs[nai]||denseNbs[nbi]) continue;
+        var na2=parseInt(nai), nb2=parseInt(nbi);
+        if(!cyNodeIds[''+na2]||!cyNodeIds[''+nb2]) continue;
+        var pk2=Math.min(na2,nb2)+'-'+Math.max(na2,nb2);
+        if(nbPairs[pk2]||trafficSeen[pk2]) continue;   // 与 traffic 边去重
+        nbPairs[pk2]=true;
+        var ninfo=nbt[nai][nbi];
+        var twoWay=(ninfo.out_cost||0)>0;   // MCP: two-way = 非零出站成本
+        cyEdges.push({
+          data:{id:'nb-'+pk2, source:''+na2, target:''+nb2, edge_type:'neighbor',
+                in_cost:ninfo.in_cost, out_cost:ninfo.out_cost, last_seen:ninfo.last_seen_ts, count:ninfo.count},
+          classes:'neighbor-edge'+(twoWay?'':' one-way')
+        });
+      }
+    }
+
     // 保存用户缩放状态
     var userZoom=null, userPan=null;
     if(cy){userZoom=cy.zoom();userPan=cy.pan();}
@@ -276,6 +332,9 @@ reg('topo', function(){
         // 高亮/淡出
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
+        // 邻居边 (C2): 物理层 — two-way 点线 / one-way 虚线+箭头 (方向=有出站成本侧)
+        {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#94a3b8','width':1,'opacity':0.35}},
+        {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#94a3b8','arrow-scale':0.5,'opacity':0.25}},
       ],
         wheelSensitivity:0.3,
       });
@@ -286,7 +345,7 @@ reg('topo', function(){
 
       cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
@@ -363,10 +422,25 @@ reg('topo', function(){
       var posMap={};
       // left: off-path均分多列(~12节点/列)
       var offAll=[]; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
-      var offCols=Math.max(3,Math.ceil(offAll.length/12)); if(offCols<1)offCols=1;
-      var offPerCol=Math.ceil(offAll.length/offCols);
+      // C3: off-path 节点按邻居连通分量分组 (物理层聚类), 组内连续排布
+      var offGroups=[], offSeen={};
+      for(var oi=0;oi<offAll.length;oi++){
+        var on=offAll[oi]; if(offSeen[on.id()]) continue;
+        var comp=[], q=[on.id()]; offSeen[on.id()]=true;
+        while(q.length){
+          var cid=q.shift(), cn=cy.getElementById(cid); if(!cn||!cn.nonempty()) continue;
+          comp.push(cn);
+          var nbInfo=nbt[cid]||{};
+          for(var nbi in nbInfo){var nid=''+nbi; if(!offSeen[nid]){var nn=cy.getElementById(nid);if(nn.nonempty()&&!nn.data('on_path')){offSeen[nid]=true;q.push(nid);}}}
+          cn.connectedEdges('[edge_type="traffic"]').forEach(function(e){var oid=(e.source().id()===cid)?e.target().id():e.source().id();if(!offSeen[oid]){var nn2=cy.getElementById(oid);if(nn2.nonempty()&&!nn2.data('on_path')){offSeen[oid]=true;q.push(oid);}}});
+        }
+        if(comp.length) offGroups.push(comp);
+      }
+      var offOrdered=[]; for(var ogi=0;ogi<offGroups.length;ogi++){for(var ogj=0;ogj<offGroups[ogi].length;ogj++)offOrdered.push(offGroups[ogi][ogj]);}
+      var offCols=Math.max(3,Math.ceil(offOrdered.length/12)); if(offCols<1)offCols=1;
+      var offPerCol=Math.ceil(offOrdered.length/offCols);
       var offStartX=-(offCols+2)*200;
-      for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol);var ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){posMap[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
+      for(var c=0;c<offCols;c++){var chunk=offOrdered.slice(c*offPerCol,(c+1)*offPerCol);var ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){posMap[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
       // coordinator
       posMap['0']={x:-200,y:0};
       // right: path columns (depth 1..pathMax)
@@ -677,6 +751,13 @@ reg('topo', function(){
     updateTimeLabel();
     loadData('',function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} try{clearHighlight();}catch(e){}});
   });
+  // ═══ 图例浮层 (C1) ═══
+  document.getElementById('tlegend').addEventListener('click',function(e){
+    e.stopPropagation();
+    document.getElementById('legend-pop').classList.toggle('hidden');
+  });
+  document.addEventListener('click',function(){var p=document.getElementById('legend-pop');if(p&&!p.classList.contains('hidden'))p.classList.add('hidden');});
+
   document.getElementById('tfit').addEventListener('click',function(){if(cy){cy.zoom(1);cy.pan({x:0,y:0});cy.fit(undefined,30);}});
   document.getElementById('tlay').addEventListener('click',function(){
     curLayout=(curLayout+1)%2; runLayout();
@@ -751,10 +832,27 @@ reg('topo', function(){
     },300);
   }
 
-  window.onTimeSlide=function(){
+  // ── 滑块预览遮罩 (D1) ──
+  function showPreviewMask(){
+    var g=document.getElementById('cy-graph'); if(!g) return;
+    var m=document.getElementById('time-mask');
+    if(!m){m=document.createElement('div');m.id='time-mask';m.className='time-mask';g.appendChild(m);}
+    var tw=getTimeWindow();
+    if(tw.t0==null){m.style.display='none';return;}
+    m.style.display='block';
+    m.textContent='⏱ 预览: '+fmtTs(tw.t0)+' ~ '+fmtTs(tw.t1);
+  }
+  function hidePreviewMask(){var m=document.getElementById('time-mask');if(m)m.style.display='none';}
+
+  window.onTimeSlide=function(){   // oninput: 拖动中 — 标签/刻度条/预览遮罩实时, 图不刷新
     var v=parseInt(document.getElementById('tsl').value);
     tCenter=sliderToTs(v);
+    updateTimeLabel();
+    showPreviewMask();
+  };
+  window.onTimeSlideEnd=function(){  // change: 松手 — 触发图刷新
     applyTimeFilter();
+    hidePreviewMask();
   };
 
   function stepWindow(dir){
@@ -815,6 +913,7 @@ reg('topo', function(){
   // 获取抓包时间范围 + 时间线过滤约束
   var tlT0=null, tlT1=null;
   A.get('/api/import/status').then(function(s){
+    dataTotal=s.total||0;
     tsStart=s.ts_start;tsEnd=s.ts_end;
     // 时间线过滤存在时, 以时间线范围为准
     if(S.topoT0!=null&&S.topoT1!=null){tlT0=S.topoT0;tlT1=S.topoT1;tsStart=S.topoT0;tsEnd=S.topoT1;}

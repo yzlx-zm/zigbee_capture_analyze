@@ -10,22 +10,34 @@ router = APIRouter()
 _events_timeline: rev.RouteEventTimeline | None = None
 _events_packet_count: int = 0  # 用于检测 packets 是否变化
 _cache_ls_tables: dict | None = None  # Link Status 邻居表缓存
+_cache_ls_key: tuple | None = None    # 邻居表缓存键 (包数, pan, t0, t1)
 _cache_asym: list | None = None       # 不对称链路缓存
 
 
-def _build_phase3_supplements(pkts: list[dict], pan: int | None) -> tuple[dict, list]:
-    """构建 Link Status 邻居表 + 不对称链路 (复用 topology.py 已验证逻辑)."""
-    global _cache_ls_tables, _cache_asym, _events_packet_count
-    # 简单缓存: packets 未变化时复用
-    if _cache_ls_tables is not None and len(pkts) == _events_packet_count:
+def _build_phase3_supplements(pkts: list[dict], pan: int | None,
+                              t0: float | None = None, t1: float | None = None) -> tuple[dict, list]:
+    """构建 Link Status 邻居表 + 不对称链路 (复用 topology.py 已验证逻辑).
+
+    支持时间窗口: 邻居表 = 窗口内 Link Status 帧累积 (物理层随时间演变).
+    """
+    global _cache_ls_tables, _cache_asym, _events_packet_count, _cache_ls_key
+    # 缓存键含时间窗口 (不同窗口不同邻居表)
+    key = (len(pkts), pan, t0, t1)
+    if _cache_ls_tables is not None and key == _cache_ls_key:
         return _cache_ls_tables, _cache_asym or []
     # PAN 过滤
     if pan is not None:
         ls_pkts = [p for p in pkts if (p.get("pan_src") or p.get("pan_dst")) == pan]
     else:
         ls_pkts = pkts
+    # 时间过滤
+    if t0 is not None:
+        ls_pkts = [p for p in ls_pkts if p.get("ts", 0) >= t0]
+    if t1 is not None:
+        ls_pkts = [p for p in ls_pkts if p.get("ts", 0) <= t1]
     _cache_ls_tables = topo._build_neighbor_tables(ls_pkts)
     _cache_asym = topo._detect_asymmetric(_cache_ls_tables)
+    _cache_ls_key = key
     return _cache_ls_tables, _cache_asym
 
 
@@ -69,7 +81,7 @@ async def topology_from_events(pan: str = Query(default=""),
         return {"nodes": [], "edges": [], "coord": None}
     pan_int = int(pan, 16) if pan else None
     timeline = _ensure_events_timeline()
-    ls_tables, asym = _build_phase3_supplements(pkts, pan_int)
+    ls_tables, asym = _build_phase3_supplements(pkts, pan_int, time_start, time_end)
     return rev.derive_topology(timeline, nodes, pan=pan_int,
                                t0=time_start, t1=time_end,
                                link_status_tables=ls_tables,
