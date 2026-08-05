@@ -9,6 +9,21 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+# ── 结论/证据输出 (诊断页人工复核, 2026-08-05 需求) ──
+EVIDENCE_MAX = 15
+
+
+def _ev(ts, pid, type_, detail) -> dict:
+    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+
+
+def _cut(items: list) -> tuple[list, int]:
+    return items[:EVIDENCE_MAX], len(items)
+
+
+def _addr4(v) -> str:
+    return f"0x{v:04X}" if v is not None else "?"
+
 # ── NWK 命令 / 错误码 (官方 stack-info.h) ──
 NWK_CMD_NETWORK_STATUS = 3
 NWK_CMD_ROUTE_REQUEST = 1
@@ -98,6 +113,7 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
             })
 
     # 5. 汇总
+    evidence = []  # 人工复核证据帧 (命中组的 Network Status)
     results = []
     for target, t in sorted(targets.items()):
         hits = [h for h in t["hits"] if h["rule"]]
@@ -115,7 +131,16 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                 "summary": f"源路由/MTORR 失效: {detail}{cross_hint}",
                 "route_error_count": sum(h["count"] for h in t["hits"]),
                 "rounds": sum(h["rounds"] for h in hits),
+                "src": sorted({s for h in t["hits"] for s in (h["src"] or [])}),
             })
+            # 证据: 命中组的 Network Status 帧 (供人工复核)
+            for (code, tg), frames in groups.items():
+                if tg == target and code in (NS_CODE_SOURCE_ROUTE_FAILURE,
+                                             NS_CODE_MANY_TO_ONE_ROUTE_FAILURE):
+                    for p in frames[:3]:
+                        evidence.append(_ev(
+                            p["ts"], p.get("packet_id"), "Network Status",
+                            f"code=0x{code:02X} {_addr4(p.get('nwk_src'))} → target={_addr4(tg)}"))
         elif t["hits"]:
             # 全部单轮 → 瞬态 (健康)
             n = sum(h["count"] for h in t["hits"])
@@ -172,11 +197,32 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                  else "无 Route Request/Route Record (自愈机制未活动或未抓取)"),
     }
 
+    # 结论 (简短易懂, 诚实)
+    if hits:
+        parts = []
+        for r in hits:
+            srcs = ", ".join(_addr4(s) for s in (r.get("src") or []))
+            parts.append(f"0x{r['device']:04X} 下行链路持续失败 (断链前一跳 {srcs or '?'}, "
+                         f"{r.get('rounds')} 轮)")
+        conclusion = "; ".join(parts) + " — 设备收不到网关下发 (上行正常)"
+        if any(r["confidence"] == "高" for r in hits):
+            conclusion += " (高置信)"
+        else:
+            conclusion += " (中置信)"
+    elif healthies:
+        conclusion = "未发现持续的路由失败 (下行链路正常)"
+    else:
+        conclusion = "无法判定路由状态: 无 Network Status 0x0B/0x0C (数据不足或未覆盖断链链路)"
+
+    evidence, evidence_total = _cut(evidence)
     return {
         "scenario": "L3-5",
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "evidence_total": evidence_total,
         "network_status_total": sum(len(v) for v in groups.values()),
         "source_route_failure_count": sum(1 for (c, _), v in groups.items()
                                           if c == NS_CODE_SOURCE_ROUTE_FAILURE for _ in v),

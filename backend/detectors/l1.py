@@ -49,6 +49,25 @@ def _fmt_addr(v) -> str | None:
     return ":".join(v[i:i+2] for i in range(0, len(v), 2))
 
 
+# ── 结论/证据输出 (诊断页人工复核, 2026-08-05 需求) ──
+EVIDENCE_MAX = 15   # 每检测器证据帧上限 (展示截断, 总数单独统计)
+
+
+def _ev(ts, pid, type_, detail) -> dict:
+    """证据条目: 时间 + 帧号 + 类型 + 关键字段."""
+    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+
+
+def _cut(items: list) -> tuple[list, int]:
+    """证据列表截断 → (展示列表, 总数)."""
+    return items[:EVIDENCE_MAX], len(items)
+
+
+def _addr4(v) -> str:
+    """短地址 → 0xXXXX"""
+    return f"0x{v:04X}" if v is not None else "?"
+
+
 # ── L1-1 检测: 信道/网络发现失败 ──
 
 def detect_l1_1(packets: list[dict]) -> dict:
@@ -122,10 +141,33 @@ def detect_l1_1(packets: list[dict]) -> dict:
         verdict = "INCONCLUSIVE"      # request 太少 (<3), 无法可靠判定
         confidence = "低"
 
+    # 结论 (简短易懂, 诚实: 不可判定不强行结论)
+    if verdict == "L1-1_HIT":
+        conclusion = (f"设备找不到网络: Beacon 请求 {total} 次, 连续 {max_consecutive_miss} 次无响应 "
+                      "(疑似信道/信号覆盖问题)")
+    elif verdict == "HEALTHY":
+        conclusion = f"网络发现正常: Beacon 请求 {total} 次, 命中 {hit_count} 次"
+    elif total == 0 and beacons:
+        conclusion = "无法判定: 抓包无 Beacon 请求但网络有 Beacon (sniffer 可能没听到设备)"
+    elif total == 0:
+        conclusion = "无法判定: 抓包中没有 Beacon 请求"
+    else:
+        conclusion = f"无法判定: Beacon 请求太少 ({total} 次), 数据不足"
+
+    # 证据表 (人工复核)
+    evidence = [_ev(r["ts"], r["packet_id"], "Beacon Request",
+                    "命中" if r["hit"] else f"无响应 ({r['response_count']} 个 Beacon)") for r in results]
+    evidence += [_ev(p["ts"], p.get("packet_id"), "Beacon",
+                     f"PAN 0x{p['mac_beacon_pan']:04X}") for p in beacons]
+    evidence, evidence_total = _cut(evidence)
+
     return {
         "scenario": "L1-1",
         "verdict": verdict,
         "confidence": confidence,
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "evidence_total": evidence_total,
         "beacon_request_count": total,
         "hit_count": hit_count,
         "hit_rate": hit_rate,
@@ -213,11 +255,36 @@ def detect_l1_2(packets: list[dict]) -> dict:
         confidence = "低"
         summary = "未匹配到完整 req→resp"
 
+    # 结论 (简短易懂, 诚实)
+    if verdict == "L1-2_HIT_REJECTED":
+        conclusion = f"设备被拒绝入网: AssocResp 明确拒绝 ({len(rejected)} 台设备)"
+    elif verdict == "L1-2_POSSIBLE_NO_RESPONSE":
+        conclusion = (f"设备入网申请无响应 ({len(no_resp)} 次) 且无成功 — "
+                      "疑似信号覆盖问题 (低置信, 需设备日志佐证)")
+    elif verdict == "HEALTHY":
+        conclusion = f"设备入网申请成功 ({len(successes)}/{len(flows)} 次成功, 含重试)"
+    else:
+        conclusion = "无法判定: 未匹配到完整 Association 流程"
+
+    # 证据表 (人工复核): AssocReq + AssocResp
+    evidence = []
+    for f in flows:
+        evidence.append(_ev(f["ts"], f["packet_id"], "AssocReq",
+                            f"{f['device']} → {f['result']}"))
+        for r in f["responses"]:
+            st = f"status=0x{r['status']:02X}" if "status" in r else "?"
+            evidence.append(_ev(r["ts"], r["packet_id"], "AssocResp",
+                                f"{st} → 0x{r.get('short_addr', 0):04X}"))
+    evidence, evidence_total = _cut(evidence)
+
     return {
         "scenario": "L1-2",
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "evidence_total": evidence_total,
         "assoc_req_count": len(flows),
         "success_count": len(successes),
         "no_response_count": len(no_resp),
@@ -254,9 +321,12 @@ def detect_l1_3(packets: list[dict]) -> dict:
         return {
             "scenario": "L1-3", "verdict": "INCONCLUSIVE", "confidence": "不可判定",
             "summary": "无 Assoc 成功设备 (无入网活动)", "devices": [],
+            "conclusion": "无法判定密钥分发: 抓包中没有 Association 成功的设备",
+            "evidence": [], "evidence_total": 0,
         }
 
     # 2. 每台设备收集证据
+    evidence = []  # 人工复核证据帧 (命中设备的关键帧)
     results = []
     for dev in sorted(joined_devs):
         ev = {
@@ -289,6 +359,9 @@ def detect_l1_3(packets: list[dict]) -> dict:
 
         dev_result = _judge_l1_3_device(dev, ev)
         results.append(dev_result)
+        # 证据: 命中设备的密钥关键帧 (供人工复核)
+        if dev_result["verdict"].startswith("L1-3"):
+            _append_key_evidence(evidence, dev, ev)
 
     hits = [r for r in results if r["verdict"].startswith("L1-3")]
     healthies = [r for r in results if r["verdict"] == "HEALTHY"]
@@ -306,14 +379,49 @@ def detect_l1_3(packets: list[dict]) -> dict:
         confidence = "低"
         summary = "入网设备密钥流程未完整 (无异常判定证据)"
 
+    # 结论 (简短易懂, 诚实)
+    if hits:
+        conclusion = ("密钥分发/验证异常: " + ", ".join(
+            f"0x{r['device']:04X} ({r['sub_rule']})" for r in hits) +
+            " — 设备拿不到密钥或验证失败" +
+            (" (高置信)" if any(r["confidence"] == "高" for r in hits) else " (中置信, 需设备日志佐证)"))
+    elif healthies:
+        conclusion = "密钥分发流程正常 (设备成功拿到并验证密钥)"
+    else:
+        conclusion = "无法判定密钥分发: 入网设备密钥流程不完整 (数据不足)"
+
+    evidence, evidence_total = _cut(evidence)
     return {
         "scenario": "L1-3",
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "evidence_total": evidence_total,
         "joined_device_count": len(results),
         "devices": results,
     }
+
+
+_KEY_EV_TYPES = (
+    ("transport_nwk", "TransportKey(NWK)"),
+    ("transport_tclk", "TransportKey(TCLK)"),
+    ("verify", "VerifyKey"),
+    ("confirm", "VerifyKeyConfirm"),
+    ("leave", "Leave"),
+    ("announce", "Device Announce"),
+)
+
+
+def _append_key_evidence(evidence: list, dev: int, ev: dict) -> None:
+    """L1-3 证据: 命中设备的密钥关键帧 (每类型最多 3 条)."""
+    for key, label in _KEY_EV_TYPES:
+        for p in ev[key][:3]:
+            nsrc = _addr4(p.get("nwk_src"))
+            ndst = _addr4(p.get("nwk_dst"))
+            evidence.append(_ev(p["ts"], p.get("packet_id"), label,
+                                f"0x{dev:04X}: {nsrc} → {ndst}"))
 
 
 def _judge_l1_3_device(dev: int, ev: dict) -> dict:
@@ -514,11 +622,41 @@ def detect_l1_4(packets: list[dict]) -> dict:
         confidence = "低"
         summary = "无完整入网上下文 (L1-4 判定需 Assoc 成功设备)"
 
+    # 结论 (简短易懂, 诚实)
+    if hits:
+        conclusion = ("TC 拒绝/踢人: " + ", ".join(
+            f"0x{r['device']:04X} ({r['sub_rule']})" for r in hits) +
+            (" (高置信)" if any(r["confidence"] == "高" for r in hits) else " (中置信, 疑似)"))
+    elif healthies:
+        conclusion = "未发现 TC 拒绝/踢人证据"
+    else:
+        conclusion = "无法判定 TC 拒绝: 无完整入网上下文"
+
+    # 证据表 (人工复核): Remove Device + Mgmt Leave Req + 命中设备广播 Leave
+    evidence = []
+    for r in remove_events:
+        evidence.append(_ev(r["ts"], r["packet_id"], "Remove Device(0x07)",
+                            f"{_addr4(r['nwk_src'])} → {_addr4(r['nwk_dst'])}"
+                            + (f" target={r['target_eui64']}" if r["target_eui64"] else "")))
+    for m in mgmt_leave_events:
+        evidence.append(_ev(m["ts"], m["packet_id"], "Mgmt Leave Req(0x0034)",
+                            f"TC → {_addr4(m['nwk_dst'])}"))
+    for d in hits:
+        dev = d["device"]
+        for p in d.get("_leave_frames") or []:
+            evidence.append(_ev(p["ts"], p.get("packet_id"), "广播 Leave",
+                                f"0x{dev:04X} → 广播 (rejoin={p.get('nwk_leave_rejoin')})"))
+        d.pop("_leave_frames", None)  # 帧对象含 bytes, 不进 API 响应
+    evidence, evidence_total = _cut(evidence)
+
     return {
         "scenario": "L1-4",
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "evidence_total": evidence_total,
         "joined_device_count": len(results),
         "remove_event_count": len(remove_events),
         "remove_events": remove_events,
@@ -586,10 +724,12 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict],
         # 密钥验证失败上下文 (L1-3-B2 特征): TCLK 已分发但 Verify/Confirm 缺失
         key_fail_ctx = bool(tclk) and not (vk and cf)
         if not key_fail_ctx:
-            return hit("R2c", "中",
-                       f"已入网设备广播 Leave ×{len(kicked_bc)} (rejoin=0/request=0) — "
-                       "疑似运营期踢人 (无前置指令帧可见; 无法帧级排除设备自愿永久离网; "
-                       "无密钥验证失败痕迹, 已排除 L1-3-B2)")
+            r = hit("R2c", "中",
+                    f"已入网设备广播 Leave ×{len(kicked_bc)} (rejoin=0/request=0) — "
+                    "疑似运营期踢人 (无前置指令帧可见; 无法帧级排除设备自愿永久离网; "
+                    "无密钥验证失败痕迹, 已排除 L1-3-B2)")
+            r["_leave_frames"] = kicked_bc  # 证据帧 (供诊断页人工复核)
+            return r
         return inconclusive(
             f"已入网设备广播 Leave ×{len(kicked_bc)} 但伴随 TCLK 验证失败上下文 — 归 L1-3-B2 判定", "中")
 

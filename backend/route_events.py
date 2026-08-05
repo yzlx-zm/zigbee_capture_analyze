@@ -244,10 +244,18 @@ def extract_leave_events(packets: list[dict]) -> list[RouteEvent]:
         dst = p.get("nwk_dst")
         if src is None or dst is None:
             continue
+        # Leave 标志: 兼容 tshark (raw_layers Command Frame 树) 与 cubx (平铺 nwk_leave_*)
+        # ⚠️ 2026-08-05 修复: 此前仅 tshark 路径可用, cubx 素材 Leave 事件全丢 → 离线诊断失效
         nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
         cmd_data = _get_command_data(nwk, "Leave")
-        if not cmd_data:
-            continue
+        if cmd_data:
+            rejoin = cmd_data.get("zbee_nwk.cmd.leave.rejoin", "0") == "1"
+            request = cmd_data.get("zbee_nwk.cmd.leave.request", "0") == "1"
+            remove_children = cmd_data.get("zbee_nwk.cmd.leave.children", "0") == "1"
+        else:
+            rejoin = p.get("nwk_leave_rejoin") == 1
+            request = p.get("nwk_leave_request") == 1
+            remove_children = p.get("nwk_leave_children") == 1
         # EUI64 从 NWK 层 source EUI64 提取 (被踢设备可能没发过 Device Announce)
         eui64 = None
         nwk_src64_str = p.get("nwk_src64", "")
@@ -259,9 +267,9 @@ def extract_leave_events(packets: list[dict]) -> list[RouteEvent]:
             timestamp=p["ts"],
             event_type=EVENT_LEAVE,
             src=src, dst=dst,
-            rejoin=cmd_data.get("zbee_nwk.cmd.leave.rejoin", "0") == "1",
-            request=cmd_data.get("zbee_nwk.cmd.leave.request", "0") == "1",
-            remove_children=cmd_data.get("zbee_nwk.cmd.leave.children", "0") == "1",
+            rejoin=rejoin,
+            request=request,
+            remove_children=remove_children,
             eui64=eui64,
             pan=p.get("pan_src") or p.get("pan_dst"),
             packet_id=_get_packet_id(p),
@@ -597,6 +605,9 @@ def aggregate_offline_diagnosis(
             "devices": [],
             "summary": {"total_devices_left": 0, "kicked": 0,
                         "voluntary": 0, "with_rejoin": 0},
+            "conclusion": "未发现设备离网事件 (当前抓包没有 NWK Leave 帧)",
+            "evidence": [],
+            "evidence_total": 0,
         }
 
     # 按设备分组 Leave 事件
@@ -701,7 +712,25 @@ def aggregate_offline_diagnosis(
         "with_rejoin": sum(1 for d in devices if d["diagnosis"]["has_rejoin_attempt"]),
     }
 
-    return {"devices": devices, "summary": summary}
+    # 结论 (简短易懂, 诚实) + 证据表 (人工复核, 2026-08-05 需求)
+    if devices:
+        conclusion = (f"{len(devices)} 台设备离网: {summary['kicked']} 台被踢, "
+                      f"{summary['voluntary']} 台主动离开, {summary['with_rejoin']} 台尝试重入")
+    else:
+        conclusion = "未发现设备离网事件"
+    evidence = []
+    for e in leave_events[:8]:
+        evidence.append({"ts": round(e.timestamp, 3), "packet_id": None, "type": "NWK Leave",
+                         "detail": f"0x{e.src:04X} → 0x{e.dst:04X}"})
+    for e in announce_events[:4]:
+        evidence.append({"ts": round(e.timestamp, 3), "packet_id": None, "type": "Device Announce",
+                         "detail": f"0x{e.src:04X} → 广播"})
+    evidence_total = len(evidence)
+    evidence = evidence[:15]
+
+    return {"devices": devices, "summary": summary,
+            "conclusion": conclusion, "evidence": evidence,
+            "evidence_total": evidence_total}
 
 
 def _leave_type_name(event: RouteEvent) -> str:

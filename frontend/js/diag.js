@@ -12,12 +12,35 @@ function vClass(verdict, hitPrefix) {
   return 'v-warn';
 }
 
-function l1Card(scenario, title, verdict, confidence, bodyHtml) {
+function l1Card(scenario, title, verdict, confidence, bodyHtml, conclusion, evidence, evTotal) {
   return '<div class="l1-card">'
     + '<h4>' + scenario + ' ' + title + ': '
     + '<span class="' + vClass(verdict, scenario) + '">' + (verdict || '—') + '</span> '
     + '<span class="conf" title="' + CONF_TITLE + '">置信度:' + (confidence || '—') + '</span></h4>'
-    + '<div class="body">' + bodyHtml + '</div></div>';
+    + (conclusion ? '<div class="conclusion" style="font-size:12px;font-weight:600;color:#1e293b;background:#f1f5f9;border-radius:4px;padding:6px 8px;margin:6px 0">💬 ' + conclusion + '</div>' : '')
+    + '<div class="body">' + bodyHtml + '</div>'
+    + evTable(evidence, evTotal)
+    + '</div>';
+}
+
+// 证据表 (人工复核: 帧号/时间/类型/关键字段), 可折叠
+function evTable(evidence, evTotal) {
+  if (!evidence || !evidence.length) return '';
+  var rows = (evidence || []).map(function (e) {
+    return '<tr><td class="mono" style="font-family:monospace;font-size:10px">' + (e.ts != null ? e.ts.toFixed(3) : '—') + '</td>'
+      + '<td class="mono" style="font-family:monospace;font-size:10px">' + (e.packet_id != null ? e.packet_id : '—') + '</td>'
+      + '<td style="font-size:10px">' + (e.type || '') + '</td>'
+      + '<td class="text-dim" style="font-size:10px;color:#64748b">' + (e.detail || '') + '</td></tr>';
+  }).join('');
+  var total = evTotal || (evidence || []).length;
+  var note = total > evidence.length ? ('共 ' + total + ' 条, 展示前 ' + evidence.length + ' 条') : ('共 ' + total + ' 条');
+  return '<details class="ev-table" style="margin-top:6px;border-top:1px dashed #e2e8f0;padding-top:4px">'
+    + '<summary style="font-size:10px;color:#3b82f6;cursor:pointer">📋 证据帧 (' + note + ')</summary>'
+    + '<table style="width:100%;border-collapse:collapse;margin-top:4px">'
+    + '<thead><tr style="font-size:10px;color:#94a3b8;text-align:left">'
+    + '<th style="padding:2px 4px">时间(s)</th><th style="padding:2px 4px">帧号</th>'
+    + '<th style="padding:2px 4px">类型</th><th style="padding:2px 4px">关键字段</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table></details>';
 }
 
 function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
@@ -98,10 +121,10 @@ reg('diag', function () {
     h += '<div class="card l1-sec">'
       + '<h3>🔍 L1 入网检测 <span class="conf">(文档→测试→工具)</span></h3>'
       + '<div class="l1-cards">'
-      + l1Card('L1-1', '发现失败', l1.verdict, l1.confidence, b1)
-      + l1Card('L1-2', 'Association', l2.verdict, l2.confidence, b2)
-      + l1Card('L1-3', '密钥分发', l3.verdict, l3.confidence, b3)
-      + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4)
+      + l1Card('L1-1', '发现失败', l1.verdict, l1.confidence, b1, l1.conclusion, l1.evidence, l1.evidence_total)
+      + l1Card('L1-2', 'Association', l2.verdict, l2.confidence, b2, l2.conclusion, l2.evidence, l2.evidence_total)
+      + l1Card('L1-3', '密钥分发', l3.verdict, l3.confidence, b3, l3.conclusion, l3.evidence, l3.evidence_total)
+      + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4, l4.conclusion, l4.evidence, l4.evidence_total)
       + '</div></div>';
 
     // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效) ──
@@ -121,7 +144,7 @@ reg('diag', function () {
       h += '<div class="card l1-sec">'
         + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
         + '<div class="l1-cards">'
-        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5)
+        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + '</div></div>';
       document.getElementById('mc').innerHTML = h;
       renderOffline();
@@ -140,18 +163,21 @@ reg('diag', function () {
       var devs = d.devices || [];
       if (!devs.length) {
         h += '<div class="card empty">'
-          + '<p>✅ 未发现设备离网事件</p>'
+          + '<p>✅ ' + (d.conclusion || '未发现设备离网事件') + '</p>'
           + '<p class="sub">当前抓包中没有 NWK Leave 或 Device Announce 帧</p></div>';
       } else {
         var s = d.summary || {};
         h += '<div class="card card-info">'
           + '<div class="text-strong t-13">📊 设备离线总览</div>'
+          + (d.conclusion ? '<div class="conclusion" style="font-size:12px;font-weight:600;color:#1e293b;background:#f1f5f9;border-radius:4px;padding:6px 8px;margin:6px 0">💬 ' + d.conclusion + '</div>' : '')
           + '<div class="stats t-12">'
           + '<span>离网设备: <b class="text-danger-strong">' + s.total_devices_left + '</b></span>'
           + '<span>被踢: <b>' + s.kicked + '</b></span>'
           + '<span>主动: <b>' + s.voluntary + '</b></span>'
           + '<span>有重入网尝试: <b class="text-info">' + s.with_rejoin + '</b></span>'
-          + '</div></div>';
+          + '</div>'
+          + evTable(d.evidence, d.evidence_total)
+          + '</div>';
         for (var i = 0; i < devs.length; i++) {
           var dev = devs[i];
           var typeLabel = dev.device_type === 'coordinator' ? '协调器' : dev.device_type === 'router' ? '路由器' : '终端设备';
