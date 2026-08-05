@@ -172,5 +172,24 @@ reg('import',function(){
   });
   // 校验状态兜底 (刷新后导航锁定用) — 渲染已由 sr() 统一负责, 避免重复
   A.get('/api/import/verify').then(function(v){S.verifyPassed=v&&v.passed;}).catch(function(){});
+  // 解析正确性校验 (P6) — 导入后后台自动跑, 此处在导入结果区渲染结果卡片
+  A.get('/api/import/parser-verify').then(function(pv){
+    if(!pv||pv.passed===null||!document.getElementById('sout'))return;
+    S.parserPassed = (pv.failure_type!=='parse_mismatch');  // 解析错位 → 锁定导航
+    var ok = pv.passed===true;
+    var vc = ok?'#16a34a':'#dc2626';
+    var ph='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(ok?'#f0fdf4':'#fef2f2')+';border:1px solid '+vc+';font-size:11px">';
+    ph+='<b style="color:'+vc+'">'+(ok?'✅ 解析正确性校验通过':'❌ 解析正确性校验异常')+'</b>';
+    if(pv.failure_type){ph+=' <span style="color:#94a3b8">('+(pv.failure_type==='parse_mismatch'?'解析错位, 已锁定拓扑/时间线/节点页':pv.failure_type==='missing_key'?'缺 key, 仅警告':'警告')+')</span>';}
+    if(pv.checks){for(var ck in pv.checks){var c=pv.checks[ck];
+      ph+='<br>'+(c.passed?'✅':'⚠️')+' '+c.label+': <span style="color:#64748b">'+(c.actual||'')+'</span>';
+    }}
+    if(pv.detail){for(var dk in pv.detail){var dd=pv.detail[dk];
+      ph+='<div style="color:#b45309;margin-top:4px">'+dk+': '+(Array.isArray(dd)?dd.slice(0,3).join(' | '):dd)+'</div>';
+    }}
+    ph+='</div>';
+    var el=document.getElementById('sdiv');
+    if(el){el.innerHTML+=ph;}
+  }).catch(function(){});
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });

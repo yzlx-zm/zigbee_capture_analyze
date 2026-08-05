@@ -17,9 +17,10 @@ var R={}; function reg(n,h){R[n]=h}
 function rt(){var h=location.hash.slice(1)||'import';
   document.getElementById('mc').classList.toggle('mc-flat',h==='topo');
   document.querySelectorAll('.nt a').forEach(function(t){t.classList.toggle('on',t.dataset.r===h)});
-  if((window.S||{}).verifyPassed===false){
-    document.querySelectorAll('.nt a[data-r="topo"],.nt a[data-r="tl"],.nt a[data-r="nodes"]').forEach(function(t){t.style.opacity='0.4';t.title='数据校验未通过'});
-    if(h==='topo'||h==='tl'||h==='nodes'){document.getElementById('mc').innerHTML='<div class="card card-danger"><h3 class="text-danger">🚫 数据校验未通过</h3><p class="text-danger">导入数据与 pcap 文件不匹配，拓扑和时间线页已锁定。</p><p class="hint">请回到<a href="#import" class="text-info">导入页</a>检查校验报告并重新导入。</p></div>';return;}
+  if((window.S||{}).verifyPassed===false||(window.S||{}).parserPassed===false){
+    var why=(window.S||{}).parserPassed===false?'解析正确性校验未通过 (解析错位)':'数据校验未通过';
+    document.querySelectorAll('.nt a[data-r="topo"],.nt a[data-r="tl"],.nt a[data-r="nodes"]').forEach(function(t){t.style.opacity='0.4';t.title=why});
+    if(h==='topo'||h==='tl'||h==='nodes'){document.getElementById('mc').innerHTML='<div class="card card-danger"><h3 class="text-danger">🚫 '+why+'</h3><p class="text-danger">为保证数据准确，拓扑/时间线/节点页已锁定。</p><p class="hint">请回到<a href="#import" class="text-info">导入页</a>检查校验报告并重新导入。</p></div>';return;}
   }else{
     document.querySelectorAll('.nt a').forEach(function(t){t.style.opacity='';t.title=''});
   }

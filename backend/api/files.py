@@ -17,6 +17,7 @@ _packets: list[dict] = []
 _nodes: dict[int, dict] = {}
 _file_type: str = ""
 _verify_report: dict | None = None  # 校验报告
+_parser_verify_report: dict | None = None  # 解析正确性校验报告 (P6) — 导入后自动跑
 _pcap_paths: list[str] = []         # 最近一次导入的 pcap 路径
 _last_ubiqua_sync: dict | None = None  # 最近一次 Ubiqua key 同步结果
 _last_import_summary: dict | None = None  # 最近一次导入摘要 (含文件名, 前端切页恢复用)
@@ -62,6 +63,13 @@ def _start_import(fn) -> dict:
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "task_id": task_id}
+
+
+@router.get("/import/parser-verify")
+async def parser_verify_status():
+    """解析正确性校验报告 (P6) — 导入后自动跑, 前端切页恢复用"""
+    global _parser_verify_report
+    return _parser_verify_report or {"passed": None, "message": "尚未执行解析校验"}
 
 
 @router.get("/import/progress")
@@ -213,9 +221,11 @@ def _run_csv_local(task_id: str, path: str) -> dict:
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary, _full_packets
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary, _full_packets, _parser_verify_report
     _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
     _last_ubiqua_sync = None; _last_import_summary = None; _full_packets = []
+    global _parser_verify_report
+    _parser_verify_report = None
     return {"ok": True}
 
 
@@ -241,7 +251,7 @@ async def import_pcap(files: list[UploadFile] = File(...)):
 
 def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> dict:
     """后台: pcap 解析 + 校验 (进度: 同步→解析→MAC 帧→校验 6 项)"""
-    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths
+    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report
     from .. import tshark as _tshark
     try:
         # 导入前透明同步 Ubiqua Network Key (不可达则静默跳过)
@@ -285,6 +295,16 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
         except Exception:
             _verify_report = {"passed": False, "error": "校验执行异常"}
 
+        # 解析正确性校验 (P6): pcap 路径 tshark 权威对比 (后台默认, 分层)
+        # 权威对比用 _packets (NWK-only, 与 tshark -Y zbee_nwk 同 filter); 自洽校验用全量
+        try:
+            from .. import parser_verify as _pv
+            _parser_verify_report = _pv.run_parser_verify(
+                _packets, "pcap", source_path=_pcap_paths[0] if _pcap_paths else None)
+        except Exception:
+            _parser_verify_report = {"ok": False, "passed": False, "failure_type": "warn",
+                                     "checks": {}, "error": "解析校验执行异常"}
+
         return _import_result(", ".join(fnames))
     finally:
         for p in tmp_paths:
@@ -307,7 +327,7 @@ async def import_local_pcap(paths: str = Form(...)):
 
 def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
     """后台: 本地 pcap 路径解析 + 校验 (与上传流程一致)"""
-    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths
+    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report
     from .. import tshark as _tshark
     try:
         _task_update(task_id, stage="同步 Ubiqua Key", percent=10)
@@ -345,6 +365,15 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
         except Exception:
             _verify_report = {"passed": False, "error": "校验执行异常"}
 
+        # 解析正确性校验 (P6): pcap 路径 tshark 权威对比 (后台默认, 分层)
+        try:
+            from .. import parser_verify as _pv
+            _parser_verify_report = _pv.run_parser_verify(
+                _packets, "pcap", source_path=_pcap_paths[0] if _pcap_paths else None)
+        except Exception:
+            _parser_verify_report = {"ok": False, "passed": False, "failure_type": "warn",
+                                     "checks": {}, "error": "解析校验执行异常"}
+
         return _import_result(os.path.basename(path_list[0]))
     except RuntimeError as e:
         raise e
@@ -380,7 +409,7 @@ async def import_cubx(files: list[UploadFile] = File(...)):
 
 def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> dict:
     """后台: cubx 解析 (scapy 自解析, 无 tshark 校验; 进度按文件推进)"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report
     from .. import cubx_reader as _cubx
     try:
         all_pkts = []
@@ -408,6 +437,14 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
         _file_type = "cubx"
         _pcap_paths = fnames or tmp_paths
 
+        # 解析正确性校验 (P6): cubx 路径自洽校验 — 后台默认自动跑
+        try:
+            from .. import parser_verify as _pv
+            _parser_verify_report = _pv.run_parser_verify(_full_packets or _packets, "cubx")
+        except Exception:
+            _parser_verify_report = {"ok": False, "passed": False, "failure_type": "warn",
+                                     "checks": {}, "error": "解析校验执行异常"}
+
         return _import_result(", ".join(fnames))
     finally:
         for p in tmp_paths:
@@ -424,7 +461,7 @@ async def import_local_cubx(path: str = Form(...)):
 
 def _run_cubx_local(task_id: str, path: str) -> dict:
     """后台: 本地 cubx 路径解析"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report
     from .. import cubx_reader as _cubx
     _task_update(task_id, stage="cubx 解析", percent=30)
     try:
@@ -440,6 +477,15 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
     _nodes = _extract_nodes_from_packets(_packets)
     _file_type = "cubx"
     _pcap_paths = [path]
+
+    # 解析正确性校验 (P6): cubx 路径自洽校验 — 后台默认自动跑
+    try:
+        from .. import parser_verify as _pv
+        _parser_verify_report = _pv.run_parser_verify(_full_packets or _packets, "cubx")
+    except Exception:
+        _parser_verify_report = {"ok": False, "passed": False, "failure_type": "warn",
+                                 "checks": {}, "error": "解析校验执行异常"}
+
     return _import_result()
 
 
@@ -515,6 +561,7 @@ def _import_result(filename: str | None = None) -> dict:
         "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
         "decrypt_stats": decrypt_stats,
         "verify": _verify_report,  # 校验报告
+        "parser_verify": _parser_verify_report,  # 解析正确性校验 (P6)
         "ubiqua_sync": _last_ubiqua_sync,  # Ubiqua key 同步结果 (None=不可达)
     }
     # 持久化摘要 (后端内存, 不受前端页面切换影响)
