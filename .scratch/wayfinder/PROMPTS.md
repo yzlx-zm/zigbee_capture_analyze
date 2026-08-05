@@ -166,3 +166,42 @@
 - 台账: `.scratch/verification/capture_materials.md`
 - 后端: `python -m backend --port 8720`(改代码需重启)
 - Git 代理: 127.0.0.1:7897 已配
+
+---
+
+## 五、总控进度窗口 (多会话统筹) 提示词
+
+### ① 总控窗口模板 (日常进度管理)
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 wayfinder 协作的【总控/进度控制窗口】, 职责是统筹多会话进度, 不实现具体 ticket:
+
+1. 读 CLAUDE.md + .scratch/wayfinder/README.md + map.md
+2. 扫描 .scratch/wayfinder/issues/ 所有 ticket, 生成进度总览:
+   - 三大工程 (场景/UI/解析器) 各自 ticket 状态表:
+     未认领 / in-progress (Assignee+日期) / blocked / done
+3. 冲突检测: 检查各 in-progress ticket 的代码文件是否有重叠
+   (git log 最近提交 + ticket 描述的改动范围)
+4. 阻塞跟踪: 列出被阻塞 ticket 及解除条件 (等素材/等现场/等前置)
+5. 向用户汇报: 当前可并行窗口数建议 / 下一步可认领 ticket 优先级
+6. 不做: 不认领 ticket、不写实现代码 — 只做统筹和汇报
+```
+
+### ② 总控窗口专用指令 (按需询问)
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是总控窗口。执行:
+1. 汇总当前所有 ticket 状态 (含 Assignee), 输出状态表
+2. 检查是否有多个 in-progress ticket 修改同一文件 (冲突风险)
+3. 给出: 现在开第 N 个新窗口最合适的 ticket 是哪个? 为什么?
+4. 若有 blocked ticket, 说明阻塞原因和解除条件
+只读分析, 不写代码不改文件。
+```
+
+---
+
+## 六、使用说明
