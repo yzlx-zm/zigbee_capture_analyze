@@ -202,9 +202,17 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         parts = []
         for r in hits:
             srcs = ", ".join(_addr4(s) for s in (r.get("src") or []))
-            parts.append(f"0x{r['device']:04X} 下行链路持续失败 (断链前一跳 {srcs or '?'}, "
-                         f"{r.get('rounds')} 轮)")
-        conclusion = "; ".join(parts) + " — 设备收不到网关下发 (上行正常)"
+            rule = r.get("sub_rule") or ""
+            if "R1" in rule:
+                parts.append(f"0x{r['device']:04X} 下行链路持续失败 (断链前一跳 {srcs or '?'}, "
+                             f"{r.get('rounds')} 轮)")
+            elif "R2" in rule:
+                parts.append(f"0x{r['device']:04X} 上行链路持续失败 (MTORR, 断链前一跳 {srcs or '?'}, "
+                             f"{r.get('rounds')} 轮)")
+            else:
+                parts.append(f"0x{r['device']:04X} 路由持续失败 (断链前一跳 {srcs or '?'}, "
+                             f"{r.get('rounds')} 轮)")
+        conclusion = "; ".join(parts) + " — 链路方向见规则 (R1 下行 / R2 上行)"
         if any(r["confidence"] == "高" for r in hits):
             conclusion += " (高置信)"
         else:
