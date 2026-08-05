@@ -60,6 +60,7 @@ var PLAIN_TITLES = {
   'L1-4': '设备被网关拒绝或踢出',
   'L2-1': '终端频繁离线',
   'L3-5': '设备收不到网关下发',
+  'L6-3': 'SED 消息收不到',
   'OFF': '设备离网',
 };
 var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L1-4', 'L3-5': 'L3-5', 'OFF': 'OFF' };
@@ -212,17 +213,39 @@ reg('diag', function () {
         + '<div class="l1-cards">'
         + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + '</div></div>';
-      // 顶部诊断摘要 (通俗结论, 数据齐后注入 h)
-      summaryHtml = summaryCard([
-        { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion },
-        { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
-        { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
-        { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
-        { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion },
-        { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
-      ]);
-      renderH();
-      renderOffline();
+      // ── L6 SED 专项检测区 (L6-S3 间接事务过期) ──
+      A.get('/api/diag/l6').then(function (l6d) {
+        var l63 = l6d && !l6d.error ? (l6d.l6_3 || {}) : {};
+        var b6x = '0x06 间接过期: <b>' + (l63.expiry_count || 0) + '</b> 帧 | 0x05 队列满: <b>' + (l63.no_indirect_capacity_count || 0) + '</b><br>'
+          + '<span class="text-muted">' + (l63.summary || '') + '</span>'
+          + ((l63.devices || []).length ? '<div class="divider">'
+            + (l63.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  '0x06×' + (d.expiry_count || 0), d.summary, 'L6-3');
+              }).join('')
+            + '</div>' : '');
+        h += '<div class="card l1-sec">'
+          + '<h3>🌙 L6 SED 专项检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<div class="l1-cards">'
+          + l1Card('L6-3', '间接事务过期', l63.verdict, l63.confidence, b6x, l63.conclusion, l63.evidence, l63.evidence_total)
+          + '</div></div>';
+
+        // 顶部诊断摘要 (通俗结论, 数据齐后注入 h)
+        summaryHtml = summaryCard([
+          { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion },
+          { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
+          { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
+          { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
+          { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion },
+          { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
+          { scenario: 'L6-3', verdict: l63.verdict, conclusion: l63.conclusion },
+        ]);
+        renderH();
+        renderOffline();
+      }).catch(function () {  // L6 失败不阻塞
+        renderH();
+        renderOffline();
+      });
     }).catch(function () {
       renderH();
       renderOffline();

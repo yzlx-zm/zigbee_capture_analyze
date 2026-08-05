@@ -129,6 +129,21 @@ async def diag_l2():
     return l2_detector.detect(full)
 
 
+@router.get("/diag/l6")
+async def diag_l6():
+    """L6 SED 专项检测: L6-S3 间接事务过期 (Network Status 0x06).
+
+    与 L3 检测合并计算交叉提示 (G32 案例: 0x06 是 0x0C 下行失败的 SED 侧表现).
+    """
+    from ..detectors import l3 as l3_detector
+    from ..detectors import l6 as l6_detector
+    full = get_full_packets()
+    if not full:
+        return {"error": "无数据 (需导入 .cubx 文件)"}
+    l3_result = l3_detector.detect(full)
+    return l6_detector.detect(full, l3_result=l3_result)
+
+
 @router.get("/diag/l3")
 async def diag_l3():
     """L3 运营期检测: L3-5 源路由/MTORR 失效 (Network Status 0x0B/0x0C).
