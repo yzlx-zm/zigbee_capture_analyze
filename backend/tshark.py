@@ -233,6 +233,8 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         from datetime import datetime
         dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         ts = dt.timestamp()
+    # ⚠️ 2026-08-05 修复: packet_id 此前未提取 → 诊断页证据表帧号显示 '—' (pcap 路径)
+    packet_id = int(frame.get("frame.number", "0")) if frame.get("frame.number") else None
 
     # MAC 层 (wpan)
     wpan = layers.get("wpan", {})
@@ -361,6 +363,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
 
     return {
         "ts": ts, "ch": 0,
+        "packet_id": packet_id,
         "pkt_type": _pkt_type(mac_frame_type, nwk, aps, decrypted),
         "pan_src": mac_src_pan, "pan_dst": mac_dst_pan,
         "mac_src": mac_src, "mac_dst": mac_dst, "mac_seq": mac_seq,

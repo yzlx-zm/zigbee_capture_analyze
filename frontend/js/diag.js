@@ -52,10 +52,51 @@ function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
     + '</div>';
 }
 
+// ── 顶部诊断摘要 (通俗结论, 2026-08-05 需求) ──
+var PLAIN_TITLES = {
+  'L1-1': '设备找不到网络',
+  'L1-2': '设备入网失败或被拒',
+  'L1-3': '密钥分发或验证出问题',
+  'L1-4': '设备被网关拒绝或踢出',
+  'L3-5': '设备收不到网关下发',
+  'OFF': '设备离网',
+};
+var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L1-4', 'L3-5': 'L3-5', 'OFF': 'OFF' };
+
+function summaryCard(checks) {
+  // checks: [{scenario, verdict, conclusion}]
+  var probs = (checks || []).filter(function (c) {
+    return c.verdict && c.verdict.indexOf('_HIT') === 0;
+  });
+  var unknown = (checks || []).filter(function (c) {
+    return c.verdict === 'INCONCLUSIVE';
+  });
+  var h = '<div class="card" style="margin-bottom:12px;border-left:4px solid '
+    + (probs.length ? '#dc2626' : '#16a34a') + '">'
+    + '<h3 style="font-size:14px;margin-bottom:6px">'
+    + (probs.length ? '⚠️ 诊断结论: 发现问题 ' + probs.length + ' 项' : '✅ 诊断结论: 未发现明显问题')
+    + '</h3>';
+  if (probs.length) {
+    h += '<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.8">';
+    (probs || []).forEach(function (p) {
+      var title = PLAIN_TITLES[p.scenario] || p.scenario;
+      h += '<li><b>' + title + '</b>：' + (p.conclusion || '') + '</li>';
+    });
+    h += '</ul>';
+  } else if (unknown.length) {
+    h += '<p style="font-size:12px;color:#b45309;margin:4px 0 0">⚠️ 部分检测因数据不足无法判定 ('
+      + unknown.map(function (u) { return PLAIN_TITLES[u.scenario] || u.scenario; }).join('、')
+      + ')，未排除问题的存在。</p>';
+  }
+  h += '</div>';
+  return h;
+}
+
 reg('diag', function () {
   document.getElementById('mc').style.padding = '16px';
   var h = '<div class="card"><h3>🩺 网络诊断</h3>'
-    + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>';
+    + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>'
+    + '<div id="diag-summary"></div>';
 
   // ── L1 入网检测区 (文档→测试→工具工作流验证) ──
   A.get('/api/diag/l1').then(function (l1d) {
@@ -146,6 +187,14 @@ reg('diag', function () {
         + '<div class="l1-cards">'
         + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + '</div></div>';
+      // 顶部诊断摘要 (通俗结论, 数据齐后填充)
+      document.getElementById('diag-summary').innerHTML = summaryCard([
+        { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion },
+        { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
+        { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
+        { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
+        { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
+      ]);
       document.getElementById('mc').innerHTML = h;
       renderOffline();
     }).catch(function () {
