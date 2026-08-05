@@ -253,6 +253,12 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .legend-pop .edge-demo.traffic { border-color: #d1d5db; }
 .legend-pop .edge-demo.route { border-color: var(--c-route); border-top-style: dashed; }
 .legend-pop .edge-demo.neighbor { border-color: var(--c-text-4); border-top-style: dotted; }
+/* 图例浮层内的形状圆点 (无 .legend 父级, 需独立定义) */
+.legend-pop .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
+.legend-pop .dot.coord { background: var(--c-warning); }
+.legend-pop .dot.router { background: var(--c-primary); }
+.legend-pop .dot.enddev { background: var(--c-success); }
+.legend-pop .dot.unknown { background: var(--c-text-4); }
 .legend-pop .dot.silent { background: var(--c-text-4); }
 .legend-pop .dot.hl { background: var(--c-danger-strong); }
 .timebar { display: flex; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2);

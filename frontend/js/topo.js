@@ -332,8 +332,8 @@ reg('topo', function(){
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
         // 邻居边 (C2): 物理层 — two-way 点线 / one-way 虚线+箭头 (方向=有出站成本侧)
-        {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#94a3b8','width':1,'opacity':0.35}},
-        {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#94a3b8','arrow-scale':0.5,'opacity':0.25}},
+        {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#64748b','width':1.5,'opacity':0.6}},
+        {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#64748b','arrow-scale':0.6,'opacity':0.45}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
       ],
@@ -602,6 +602,15 @@ reg('topo', function(){
       row.addEventListener('mouseleave',function(){clearPathHighlight();});
     });
   }
+
+  // ═══ 底部面板 Tab 切换 (层级树已移除 2026-08-05) ═══
+  window.togBpTab=function(bp,btn){
+    document.querySelectorAll('.bp-tab').forEach(function(b){b.classList.remove('on');b.style.borderBottomColor='transparent'});
+    if(btn){btn.classList.add('on');btn.style.borderBottomColor='#3b82f6';}
+    document.getElementById('bp-routes').style.display=bp==='routes'?'block':'none';
+    document.getElementById('bp-neighbors').style.display=bp==='neighbors'?'block':'none';
+    if(bp==='neighbors') renderNeighborPanel();
+  };
 
   // ═══ 邻居关系面板 ═══
   function renderNeighborPanel(){
