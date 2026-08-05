@@ -11,9 +11,11 @@ reg('tl', function(){
   if(!S.tlType) S.tlType='';
   // Override PAN if jumped from topology
   if(S.topoPan){S.tlPan=S.topoPan; S.tlHasSearched=true;}
-  // Sync time from topology slider
-  if(S.topoT0!=null){var d0=new Date(S.topoT0*1000);S.tlTs0H=String(d0.getUTCHours());S.tlTs0M=String(d0.getUTCMinutes());S.tlTs0S=String(d0.getUTCSeconds());S.tlHasSearched=true;}
-  if(S.topoT1!=null){var d1=new Date(S.topoT1*1000);S.tlTs1H=String(d1.getUTCHours());S.tlTs1M=String(d1.getUTCMinutes());S.tlTs1S=String(d1.getUTCSeconds());S.tlHasSearched=true;}
+  // Override node filter if jumped from topology
+  // ⚠️ 修复 (U5): 此前 topoAddr 未同步 → 拓扑点击节点跳转后节点框为空, 看到的是全 PAN 的包
+  if(S.topoAddr){S.tlNode=S.topoAddr; S.tlHasSearched=true;}
+  // topoT0/T1 时间窗口同步延迟到 import/status 回调 (需 tlCaptureStart 做字符串→时间戳转换;
+  // 契约: 数字时间戳 (拓扑滑块) 或 "HH:MM:SS" 字符串 (时间线保存), 读侧兼容两者)
 
   // Build H/M/S dropdown helpers
   function hmssel(id,val,opts){var h='<select id="'+id+'" class="mono hm-sel">';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
@@ -65,6 +67,19 @@ reg('tl', function(){
 
   function tlFmtTs(ts){var d=new Date(ts*1000);return d.toISOString().substr(11,12);}
 
+  // S.topoT0/T1 → 绝对时间戳 (Unix sec): 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)
+  // ⚠️ 修复 (U5): 此前字符串格式直接 new Date(str*1000)=NaN → 时间下拉变全零
+  function tlToTs(v){
+    if(v==null)return null;
+    if(typeof v==='number')return v;
+    var parts=String(v).split(':');
+    if(parts.length<2||tlCaptureStart==null)return null;
+    var h=parseInt(parts[0]),m=parseInt(parts[1]),s=parseInt(parts[2])||0;
+    if(isNaN(h)||isNaN(m))return null;
+    var d=new Date(tlCaptureStart*1000);
+    return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m,s)/1000;
+  }
+
   function tlGetTimeFilter(){
     var h0=document.getElementById('tl-h0').value;
     var m0=document.getElementById('tl-m0').value;
@@ -94,6 +109,20 @@ reg('tl', function(){
     document.getElementById('tl-pi').textContent='第 '+tlPage+' / '+mp+' 页 (共 '+tlTotal+' 条)';
     document.getElementById('tl-pp').disabled=tlPage<=1;
     document.getElementById('tl-pn').disabled=tlPage>=mp;
+  }
+
+  // U5: 类型下拉从实际数据动态生成 (硬编码 13 类型 → /api/packets/types 全量统计)
+  function tlFillTypes(){
+    A.get('/api/packets/types').then(function(t){
+      if(!t||!t.types||!t.types.length)return;
+      var sel=document.getElementById('tl-type');
+      if(sel.options.length<=1){
+        for(var ti=0;ti<t.types.length;ti++){
+          var tn=t.types[ti].name;
+          sel.innerHTML+='<option value="'+tn+'"'+(S.tlType===tn?' selected':'')+'>'+tn+' ('+t.types[ti].count+')</option>';
+        }
+      }
+    });
   }
 
   function search(){
@@ -133,20 +162,8 @@ reg('tl', function(){
           +Object.entries(s.type_counts||{}).map(function(e){return e[0]+'×'+e[1]}).join(' + ');
       }
     }).catch(function(){});
-    // Update type dropdown from data stats (only on first load / no type filter)
-    if(!typeVal){
-      A.get('/api/import/status').then(function(s){
-        if(!s.total)return;
-        // Populate from known types
-        var types=['Data','Link Status','Route Request','Route Reply','Route Record','Network Status','Leave','APS Ack','ZDP: Node Desc Req','ZDP: Node Desc Resp','ZDP: NWK Addr Req','ZDP: Match Desc Req','NWK Cmd'];
-        var sel=document.getElementById('tl-type');
-        if(sel.options.length<=1){
-          for(var ti=0;ti<types.length;ti++){
-            sel.innerHTML+='<option value=\"'+types[ti]+'\"'+(S.tlType===types[ti]?' selected':'')+'>'+types[ti]+'</option>';
-          }
-        }
-      });
-    }
+    // 类型下拉兜底填充 (U5: 硬编码 13 类型 → /api/packets/types 全量统计; 主填充在 init 时)
+    tlFillTypes();
     // Fetch packets
     A.get('/api/packets?'+params).then(function(d){
       var pkts=d.packets||[];tlTotal=d.total||pkts.length;
@@ -158,6 +175,19 @@ reg('tl', function(){
         var ns=typeof p.nwk_src==='number'?'0x'+p.nwk_src.toString(16).toUpperCase():'-';
         var nd=typeof p.nwk_dst==='number'?'0x'+p.nwk_dst.toString(16).toUpperCase():'-';
         var isNwkCmdRow=(p.pkt_type==='Link Status'||p.pkt_type==='Route Request'||p.pkt_type==='Route Reply'||p.pkt_type==='Route Record'||p.pkt_type==='Network Status'||p.pkt_type==='Leave'||p.pkt_type.startsWith('NWK Cmd'));
+        // 事件标记 (U5): Leave/Rejoin/NetworkStatus 行内徽章
+        // 协议依据: NWK 0x04 Leave (bit5=rejoin, bit6=request) / 0x06-0x07 Rejoin / 0x03 Network Status
+        var evBadge='';
+        if(p.pkt_type==='Leave'){
+          var lvTip='NWK Leave (0x04)'+(p.nwk_leave_request===1?' 设备主动申请离开':' 被命令离开')+(p.nwk_leave_rejoin===1?' 随后重入网':' 永久离开');
+          evBadge=p.nwk_leave_rejoin===1?'<span class="badge-ev badge-rej" title="'+lvTip+'">🔄 重入网</span>'
+                                      :'<span class="badge-ev badge-leave" title="'+lvTip+'">⛔ 离网</span>';
+        }else if(p.pkt_type==='Rejoin Request'||p.pkt_type==='Rejoin Response'){
+          var rjTip=p.pkt_type==='Rejoin Request'?'设备申请重新入网 (NWK 0x06)':'入网申请被响应 (NWK 0x07)';
+          evBadge='<span class="badge-ev badge-rej" title="'+rjTip+'">🔄 '+p.pkt_type.replace('Rejoin ','')+'</span>';
+        }else if(p.pkt_type==='Network Status'){
+          evBadge='<span class="badge-ev badge-nstat" title="网络状态命令 (NWK 0x03), 详见右侧详情">⚠️ 状态</span>';
+        }
         var decIcon='';
         if(isNwkCmdRow){
           decIcon='<span class="ic-nwk" title="NWK命令">📡</span>';
@@ -167,7 +197,7 @@ reg('tl', function(){
           decIcon='<span class="ic-enc" title="加密">🔒</span>';
         }
         var stat=(p.status||'')+' '+decIcon;
-        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+p.pkt_type+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
+        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+p.pkt_type+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
       document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
@@ -375,11 +405,15 @@ reg('tl', function(){
         }
       }
       // Detect NWK Command type first
+      // ⚠️ 修复 (U5): 非 NWK 帧 (Beacon/ACK/MAC Cmd) 无 zbee_nwk 层, nwk=undefined
+      // for-in 抛 TypeError → 整帧详情加载失败 (Cannot read properties of undefined)
       var isNwkCmd=false;
-      for(var ck in nwk){if(ck.startsWith('Command Frame:')){isNwkCmd=true;break;}}
-      if(!isNwkCmd){
-        var fct2=nwk['zbee_nwk.fcf_tree']||{};
-        isNwkCmd=(fct2['zbee_nwk.frame_type']==='0x0001');
+      if(nwk){
+        for(var ck in nwk){if(ck.startsWith('Command Frame:')){isNwkCmd=true;break;}}
+        if(!isNwkCmd){
+          var fct2=nwk['zbee_nwk.fcf_tree']||{};
+          isNwkCmd=(fct2['zbee_nwk.frame_type']==='0x0001');
+        }
       }
 
       // APS — only for Data frames
@@ -563,12 +597,18 @@ reg('tl', function(){
       document.getElementById('tl-capture-info').textContent='抓包: '+tlFmtTs(tlCaptureStart)+' ~ '+tlFmtTs(tlCaptureEnd)+' ('+durStr+')';
       var capH=capStartD.getUTCHours();var capM=capStartD.getUTCMinutes();var capS=capStartD.getUTCSeconds();
       var endH=capEndD.getUTCHours();var endM=capEndD.getUTCMinutes();var endS=capEndD.getUTCSeconds();
+      // 联动时间窗口同步 (延迟到此回调: tlCaptureStart 已就绪, tlToTs 可转换字符串格式)
+      var t0n=tlToTs(S.topoT0), t1n=tlToTs(S.topoT1);
+      if(t0n!=null){var d0n=new Date(t0n*1000);S.tlTs0H=String(d0n.getUTCHours());S.tlTs0M=String(d0n.getUTCMinutes());S.tlTs0S=String(d0n.getUTCSeconds());S.tlHasSearched=true;}
+      if(t1n!=null){var d1n=new Date(t1n*1000);S.tlTs1H=String(d1n.getUTCHours());S.tlTs1M=String(d1n.getUTCMinutes());S.tlTs1S=String(d1n.getUTCSeconds());S.tlHasSearched=true;}
       // Detect if saved time values are invalid (from old offset semantics):
       // if saved start clock is more than 1h before capture start or after capture end, reset
       var savedSec0=parseInt(S.tlTs0H||'0')*3600+parseInt(S.tlTs0M||'0')*60+parseInt(S.tlTs0S||'0');
       var capSec=capH*3600+capM*60+capS;
       var endSec=endH*3600+endM*60+endS;
-      var needReset=!S.tlHasSearched||savedSec0<capSec-3600||savedSec0>endSec+3600;
+      // ⚠️ 修复 (U5): isNaN 兜底 (旧坏值 "NaN" 不会被区间比较捕获) + 拓扑跳转清空时间窗口时重置为抓包全范围
+      var jumpedTopo=(S.topoPan&&S.topoT0==null&&S.topoT1==null);
+      var needReset=!S.tlHasSearched||isNaN(savedSec0)||savedSec0<capSec-3600||savedSec0>endSec+3600||jumpedTopo;
       if(needReset){
         // Reset to capture range
         document.getElementById('tl-h0').value=capH;document.getElementById('tl-m0').value=capM;document.getElementById('tl-s0').value=capS;
@@ -582,4 +622,6 @@ reg('tl', function(){
       }
     }
   });
+  // U5: 类型下拉页面加载即填充 (不依赖点查看; search() 内保留兜底)
+  tlFillTypes();
 });

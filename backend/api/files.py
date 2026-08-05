@@ -671,9 +671,25 @@ async def packet_list(addr: str = "", pan: str = "",
             "aps_cluster_name": p.get("aps_cluster_name"),
             "zcl_cmd_name": p.get("zcl_cmd_name"),
             "decrypted": p.get("decrypted", False),
+            # NWK 命令级字段 (时间线事件标记用; tshark/cubx 双路径已输出)
+            "nwk_cmd_id": p.get("nwk_cmd_id"),
+            "nwk_leave_rejoin": p.get("nwk_leave_rejoin"),
+            "nwk_leave_request": p.get("nwk_leave_request"),
+            "nwk_leave_children": p.get("nwk_leave_children"),
         } for orig_idx, p in page],
         "total": total, "limit": limit, "offset": offset,
     }
+
+
+@router.get("/packets/types")
+async def packet_types():
+    """全部 pkt_type 全量统计 (时间线类型下拉动态化用, 不截断)."""
+    types: dict[str, int] = {}
+    for p in _packets:
+        t = p.get("pkt_type") or "Unknown"
+        types[t] = types.get(t, 0) + 1
+    return {"types": [{"name": k, "count": v}
+                      for k, v in sorted(types.items(), key=lambda x: -x[1])]}
 
 
 @router.get("/packets/{pkt_id}")

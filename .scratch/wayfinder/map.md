@@ -48,6 +48,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [U6 导入页优化](issues/U6-导入页优化.md) — 三方向落地 (流程反馈/密钥面板/校验报告) + **真实导入进度条**: 6 端点后台任务化 (POST→task_id + /import/progress 轮询), XHR 上传真实进度 (修 0% 静止), pollImport 立即首查+300ms+5min 兜底; **cubx 卡 0 修复 (08-05)**: parse_cubx 加 progress_cb 按包上报 (30MB 实测 0%→10%→90% 平滑推进); 顺带修复 import_pcap 缺 global _verify_report + verify.py 空包除零; CDP 验证 22/22 + 进度轨迹实测
 - [U7 拓扑页优化](issues/U7-拓扑页优化.md) — 形状分类 (协调器六边/路由菱形/终端圆/未知三角) + 死控件修复 (taddr 定位 / 静默节点切换) + 播放按钮 + 时间刻度条 + 图实例复用 (时间过滤不再重建, 性能提升); 截图见 .scratch/verification/u7-topo/
 - [U3 节点页补齐](issues/U3-节点页补齐.md) — 行内展开详情 (首末时间/帧类型计数/EUI64/LQI-RSSI 统计/邻居表+不对称标记) + 设备类型列 + 🎯 定位按钮; 后端 /api/nodes 加 detail (EUI64/LQI-RSSI 仅 cubx); seen 计数单遍 O(pkts); CDP 17/17; 截图见 .scratch/verification/u3-nodes/; CSV 路径未实测
+- [U5 时间线优化](issues/U5-时间线优化.md) — 类型下拉动态化 (/api/packets/types 全量统计) + 事件标记 (⛔Leave 按 rejoin 区分 / 🔄Rejoin / ⚠️NetStatus, 协议依据: NWK 0x04 标志位) + 2 bug 修复 (详情 TypeError: nwk undefined for-in; 联动时间全零: S.topoT0/T1 契约统一 tlToTs 兼容 + isNaN 兜底 + 跳转重置抓包范围) + 跳转节点过滤 (topoAddr→tlNode 同步); 验证: 徽章 DOM/详情/跳转端到端 ✅, 详情崩溃修复待含 MAC 帧素材; 截图见 .scratch/verification/u5-timeline/
 
 ## Not yet specified
 
@@ -56,7 +57,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - L1-3 规则 A1/A2/B1 的故障帧形态 — 等用户素材后验证
 - L1-4 规则 R1/R2a (0x07 显式拒绝/踢人) 与 R3 (静默拒绝) — 等复现素材 (网关白名单 deny / 删除设备操作)
 - L3-5 规则 R2 (0x0C MTORR 上行失败) — 需断链链路上行抓包
-- UI 优先级 — 由用户定 (U4 联动 / U5 时间线 等; U1/U3/U6/U7 已完成 2026-08-04)
+- UI 优先级 — 由用户定 (剩 U4 联动; U1/U3/U5/U6/U7 已完成)
 
 ## Out of scope
 
