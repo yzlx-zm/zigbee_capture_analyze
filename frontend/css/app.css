@@ -398,7 +398,8 @@ input.mono, select.mono { font-family: var(--font-mono); }
   padding: 4px 8px; border-radius: var(--r-sm); }
 .path-arrow { color: var(--c-route); }
 .path-row { display: flex; align-items: center; gap: 4px; padding: 3px 0;
-  border-bottom: 1px solid #f1f5f9; font-family: var(--font-mono); font-size: var(--fs-sm); }
+  border-bottom: 1px solid #f1f5f9; font-family: var(--font-mono); font-size: var(--fs-sm); cursor: default; }
+.path-row:hover { background: var(--c-row-hover); }   /* 路径行 hover 提示可联动 */
 .path-row .p-icon { min-width: 14px; text-align: center; }
 .path-row .p-tag { font-size: 9px; white-space: nowrap; }
 .sep { border-top: 1px solid var(--c-border); margin: var(--sp-2) 0; }

@@ -82,11 +82,9 @@ reg('topo', function(){
     +'<div class="bp-head">'
     +'<button class="btn bp-tab on" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
     +'<button class="btn bp-tab" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
-    +'<button class="btn bp-tab" onclick="togBpTab(\'tree\',this)">🌳 层级树</button>'
     +'</div>'
     +'<div id="bp-routes" class="bp-body"></div>'
     +'<div id="bp-neighbors" class="bp-body hidden"></div>'
-    +'<div id="bp-tree" class="bp-body hidden"><ul class="tree" id="tree-root"></ul></div>'
     +'</div>'
     +'</div></div>';
   document.getElementById('mc').innerHTML=h;
@@ -335,6 +333,8 @@ reg('topo', function(){
         // 邻居边 (C2): 物理层 — two-way 点线 / one-way 虚线+箭头 (方向=有出站成本侧)
         {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#94a3b8','width':1,'opacity':0.35}},
         {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#94a3b8','arrow-scale':0.5,'opacity':0.25}},
+        // 路径行 hover 高亮 (路由路径链联动)
+        {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
       ],
         wheelSensitivity:0.3,
       });
@@ -538,7 +538,7 @@ reg('topo', function(){
         var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
         var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
         var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
-        h+='<div class="path-row'+(p.is_current?' text-strong':'')+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
+        h+='<div class="path-row'+(p.is_current?' text-strong':'')+'" data-pidx="'+i+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
           +'<span class="p-icon" style="color:'+color+'">'+icon+'</span>'
           +'<span style="color:'+color+'">'+p.path_str+'</span>'
           +'<span class="p-tag text-dim">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
@@ -585,84 +585,20 @@ reg('topo', function(){
     }
 
     panel.innerHTML=h;
-  }
 
-  // ═══ 层级树 (保留, 移到底部面板) ═══
-  function renderTree(){
-    var d=topoData;if(!d) return;
-    var ns=d.nodes||[], es=d.edges||[];
-    var treeCoord=d.coord;
-    var nmap={};for(var i=0;i<ns.length;i++){nmap[ns[i].aid]=ns[i]}
-    var edgeMap={};for(var i=0;i<es.length;i++){edgeMap[es[i].src+'-'+es[i].dst]=es[i];edgeMap[es[i].dst+'-'+es[i].src]=es[i]}
-
-    function renderNode(aid, ul){
-      var n=nmap[aid];if(!n)return;
-      var li=document.createElement('li');
-      var isRouter=n.children&&n.children.length>0;
-      var cls=n.is_coord?'coord':isRouter?'router':n.seen>100?'leaf':'low';
-      var kids=n.children||[];
-      kids.sort(function(a,b){return (nmap[b]?nmap[b].coord_traffic||0:0)-(nmap[a]?nmap[a].coord_traffic||0:0)});
-      if(kids.length>0){
-        var tog=document.createElement('span');tog.className='toggle';tog.textContent='▼';
-        tog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});
-        li.appendChild(tog);
-      }
-      var nd=document.createElement('span');nd.className='node '+cls;
-      nd.innerHTML='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
-      if(isRouter)nd.innerHTML+=' ['+kids.length+']';
-      nd.title='seen:'+n.seen+' depth:'+n.depth;
-      nd.addEventListener('click',function(){S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl'});
-      li.appendChild(nd);
-      if(n.parent!=null){
-        var ek=n.parent+'-'+aid;var edge=edgeMap[ek];
-        if(edge){
-          var el=document.createElement('span');el.className='edge-label';
-          el.textContent='← '+edge.count+'pkts';
-          li.appendChild(el);
-        }
-      }
-      if(kids.length>0){
-        var childUl=document.createElement('ul');
-        var MAX=15;var show=kids.slice(0,MAX);
-        for(var i=0;i<show.length;i++)renderNode(show[i], childUl);
-        if(kids.length>MAX){
-          var foldLi=document.createElement('li');
-          var foldSpan=document.createElement('span');foldSpan.className='fold';
-          foldSpan.textContent='...'+(kids.length-MAX)+' more';
-          foldSpan.addEventListener('click',function(e){e.stopPropagation();var pli=this.parentElement;pli.style.display='none';var rest=kids.slice(MAX);for(var i=0;i<rest.length;i++)renderNode(rest[i], childUl);});
-          foldLi.appendChild(foldSpan);childUl.appendChild(foldLi);
-        }
-        li.appendChild(childUl);
-      }
-      ul.appendChild(li);
+    // ── 路径行 ↔ 图联动: hover 高亮图上对应路径 (U7 优化) ──
+    function highlightPathOnGraph(idx){
+      if(!cy) return;
+      cy.elements().removeClass('path-hl');
+      cy.edges('[edge_type="route"]').forEach(function(e){ if(e.data('path_idx')===idx) e.addClass('path-hl'); });
     }
-
-    var root=document.getElementById('tree-root');root.innerHTML='';
-    if(treeCoord!=null&&nmap[treeCoord]) renderNode(treeCoord, root);
-    var orphans=[];for(var i=0;i<ns.length;i++){if(ns[i].parent==null&&ns[i].aid!==treeCoord)orphans.push(ns[i])}
-    if(orphans.length>0){
-      var oli=document.createElement('li');oli.classList.add('collapsed');
-      var otog=document.createElement('span');otog.className='toggle';otog.textContent='▶';
-      otog.addEventListener('click',function(e){e.stopPropagation();var p=this.parentElement;p.classList.toggle('collapsed');this.textContent=p.classList.contains('collapsed')?'▶':'▼'});
-      oli.appendChild(otog);
-      var ospan=document.createElement('span');ospan.className='node low';ospan.style.fontWeight='bold';ospan.style.background='#fef2f2';ospan.textContent='❓ 未归类节点 ('+orphans.length+')';
-      oli.appendChild(ospan);
-      var oul=document.createElement('ul');
-      for(var i=0;i<Math.min(orphans.length,20);i++) renderNode(orphans[i].aid, oul);
-      oli.appendChild(oul);root.appendChild(oli);
-    }
+    function clearPathHighlight(){ if(cy) cy.elements().removeClass('path-hl'); }
+    document.querySelectorAll('#bp-routes .path-row[data-pidx]').forEach(function(row){
+      var idx=parseInt(row.dataset.pidx);
+      row.addEventListener('mouseenter',function(){highlightPathOnGraph(idx);});
+      row.addEventListener('mouseleave',function(){clearPathHighlight();});
+    });
   }
-
-  // ═══ 底部面板 Tab 切换 ═══
-  window.togBpTab=function(bp,btn){
-    document.querySelectorAll('.bp-tab').forEach(function(b){b.classList.remove('on');b.style.borderBottomColor='transparent'});
-    if(btn){btn.classList.add('on');btn.style.borderBottomColor='#3b82f6';}
-    document.getElementById('bp-routes').style.display=bp==='routes'?'block':'none';
-    document.getElementById('bp-neighbors').style.display=bp==='neighbors'?'block':'none';
-    document.getElementById('bp-tree').style.display=bp==='tree'?'block':'none';
-    if(bp==='neighbors') renderNeighborPanel();
-    if(bp==='tree') renderTree();
-  };
 
   // ═══ 邻居关系面板 ═══
   function renderNeighborPanel(){
@@ -685,9 +621,11 @@ reg('topo', function(){
     panel.innerHTML=h;
     // Global function to show neighbor detail
     window.showNbTable=function(){
-      var aid=parseInt(document.getElementById('nb-dev-sel').value);
+      var v=document.getElementById('nb-dev-sel').value;
       var detail=document.getElementById('nb-detail');
-      if(!aid||!nbt[aid]){detail.innerHTML='';return;}
+      if(v===''){detail.innerHTML='';return;}   // 未选择; 注意不能用 !aid (协调器 aid=0 会被误过滤)
+      var aid=parseInt(v);
+      if(!nbt[aid]){detail.innerHTML='';return;}
       var nbs=nbt[aid]; var nbKeys=Object.keys(nbs);
       if(nbKeys.length===0){detail.innerHTML='<p class="text-dim">该设备无邻居记录</p>';return;}
       var th='<table class="tbl"><tr><th>邻居</th><th>In Cost</th><th>Out Cost</th><th>最后更新</th><th>次数</th></tr>';
