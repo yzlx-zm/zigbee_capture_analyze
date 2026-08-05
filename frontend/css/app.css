@@ -177,6 +177,8 @@ input.mono, select.mono { font-family: var(--font-mono); }
 /* U5 时间线事件徽章 (状态色 token: danger=离网 / route=重入网 / warning=网络状态) */
 .badge-ev { display: inline-block; padding: 0 6px; margin-left: 4px; border-radius: 8px;
   font-size: var(--fs-xs); line-height: 1.5; vertical-align: 1px; }
+/* U5 ZCL 命令级显示: 类型列中命令名弱化 (Data · Report Attributes) */
+.zcl-cmd { color: var(--c-text-3); font-size: var(--fs-xs); }
 .badge-leave { background: var(--c-danger-bg); color: var(--c-danger); border: 1px solid var(--c-danger-border); }
 .badge-rej { background: #f3e8ff; color: var(--c-route); border: 1px solid #ddd0f2; }
 .badge-nstat { background: var(--c-warning-bg); color: var(--c-amber); border: 1px solid var(--c-warning-border); }

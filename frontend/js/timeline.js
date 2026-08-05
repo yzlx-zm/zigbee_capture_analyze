@@ -188,6 +188,14 @@ reg('tl', function(){
         }else if(p.pkt_type==='Network Status'){
           evBadge='<span class="badge-ev badge-nstat" title="网络状态命令 (NWK 0x03), 详见右侧详情">⚠️ 状态</span>';
         }
+        // ZCL 命令级显示 (U5): 解密 Data 帧类型列显示实际命令 (如 "Report Attributes"),
+        // 而非笼统的 "Data"; 过滤仍按 pkt_type=Data (后端), 仅展示增强
+        var typeDisp=p.pkt_type;
+        if(p.decrypted&&p.zcl_cmd_name){
+          typeDisp='Data · <span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
+        }else if(p.decrypted&&p.aps_cluster_name){
+          typeDisp='Data · <span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
+        }
         var decIcon='';
         if(isNwkCmdRow){
           decIcon='<span class="ic-nwk" title="NWK命令">📡</span>';
@@ -197,7 +205,7 @@ reg('tl', function(){
           decIcon='<span class="ic-enc" title="加密">🔒</span>';
         }
         var stat=(p.status||'')+' '+decIcon;
-        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+p.pkt_type+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
+        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+typeDisp+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
       document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
