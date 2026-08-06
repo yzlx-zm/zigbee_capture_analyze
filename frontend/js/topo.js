@@ -648,7 +648,7 @@ reg('topo', function(){
         var icColor=ic<=1?'#16a34a':ic<=3?'#d97706':'#dc2626';
         var ocColor=oc<=1?'#16a34a':oc<=3?'#d97706':'#dc2626';
         var ts=new Date((nb.last_seen_ts||0)*1000).toISOString().substr(11,8);
-        th+='<tr onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';location.hash=\'tl\'">'
+        th+='<tr onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';S.topoT0=null;S.topoT1=null;location.hash=\'tl\'">'
           +'<td>0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'</td>'
           +'<td class="text-strong" style="color:'+icColor+'">'+ic+'</td>'
           +'<td class="text-strong" style="color:'+ocColor+'">'+oc+'</td>'
@@ -872,22 +872,55 @@ reg('topo', function(){
   };
   document.getElementById('tplay').addEventListener('click',togglePlay);
 
-  // 获取抓包时间范围 + 时间线过滤约束
+  // S.topoT0/T1 → 绝对时间戳: 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)
+  // ⚠️ P2 修复: 此前字符串直接赋给 tsStart → 数值运算 NaN, 且 tsStart/tsEnd 被覆盖破坏滑块比例
+  function topoTs(v, baseTs){
+    if(v==null)return null;
+    if(typeof v==='number')return v;
+    var parts=String(v).split(':');
+    if(parts.length<2||!baseTs)return null;
+    var h=parseInt(parts[0]),m=parseInt(parts[1]),s=parseInt(parts[2])||0;
+    if(isNaN(h)||isNaN(m))return null;
+    var d=new Date(baseTs*1000);
+    return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m,s)/1000;
+  }
+
+  // 时间线时间窗口 → 拓扑窗口 UI (档位 + 滑块中心 + 标签)
+  function syncWinFromTimeline(){
+    if(tlT0==null||tlT1==null)return;
+    var ws=tlT1-tlT0;
+    if(ws<=0)return;
+    var sel=document.getElementById('twin-size');
+    if(sel){
+      var opts=[30,60,120,300];
+      var best=opts[0];
+      for(var oi=1;oi<opts.length;oi++){if(Math.abs(opts[oi]-ws)<Math.abs(best-ws))best=opts[oi];}
+      sel.value=String(best);
+    }
+    tCenter=(tlT0+tlT1)/2;
+    var sl=document.getElementById('tsl');
+    if(sl)sl.value=tsToSlider(tCenter);
+    updateTimeLabel();
+  }
+
+  // 获取抓包时间范围 + 时间线过滤窗口同步 (P2)
   var tlT0=null, tlT1=null;
   A.get('/api/import/status').then(function(s){
     dataTotal=s.total||0;
-    tsStart=s.ts_start;tsEnd=s.ts_end;
-    // 时间线过滤存在时, 以时间线范围为准
-    if(S.topoT0!=null&&S.topoT1!=null){tlT0=S.topoT0;tlT1=S.topoT1;tsStart=S.topoT0;tsEnd=S.topoT1;}
-    else if(S.topoT0!=null){tlT0=S.topoT0;tsStart=S.topoT0;}
+    tsStart=s.ts_start;tsEnd=s.ts_end;  // tsStart/tsEnd 始终 = 抓包范围 (滑块比例/刻度条基准)
+    var t0n=topoTs(S.topoT0, tsStart), t1n=topoTs(S.topoT1, tsStart);
+    if(t0n!=null&&t1n!=null&&t1n>t0n){tlT0=t0n;tlT1=t1n;}
+    else if(t0n!=null){tlT0=t0n;}
+    syncWinFromTimeline();
     updateTimeLabel();
-  });
 
-  // ═══ 初始加载 ═══
-  var initPan=S.topoPan||'';
-  loadData(initPan,function(d){
-    try{renderGraph(d);}catch(e){console.error(e);}
-    try{renderRoutePaths(d);}catch(e){console.error(e);}
-    try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
+    // ═══ 初始加载 (等 tsStart 就绪方可转换时间线窗口; 数据用 UI 窗口保证与显示一致) ═══
+    var initPan=S.topoPan||'';
+    var tw0=getTimeWindow();
+    loadData(initPan,function(d){
+      try{renderGraph(d);}catch(e){console.error(e);}
+      try{renderRoutePaths(d);}catch(e){console.error(e);}
+      try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
+    },tw0.t0,tw0.t1);
   });
 });
