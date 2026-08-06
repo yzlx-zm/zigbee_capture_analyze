@@ -828,7 +828,82 @@ def _fallback_layers(p: dict) -> dict:
             zcl["Frame Control Field"] = {"zbee_zcl.dir": str(p["zcl_direction"])}
         layers["zbee_zcl"] = zcl
 
+    # ── ZDP (profile 0x0000) — cubx 路径 aps_payload_hex 解析载荷明细 ──
+    if p.get("aps_profile") == 0x0000 and p.get("aps_cluster") is not None:
+        zdp = _fallback_zdp_tree(p["aps_cluster"], p.get("aps_payload_hex"))
+        if zdp:
+            layers["zbee_zdp"] = zdp
+
     return layers
+
+
+def _fallback_zdp_tree(cluster_id: int, payload_hex: str | None) -> dict | None:
+    """ZDP 命令载荷 → zbee_zdp 子树 (字段名对齐前端 zdpLabels, 详情面板展示).
+
+    ZDP 载荷结构: [seq:1][命令数据]; 短地址 = LE16, EUI64 = LE64。
+    覆盖常见命令: Device Announce (0x0013) / NWK Addr Req (0x0000) /
+    IEEE Addr Req (0x0001) / 各类 Desc/EP Req / Mgmt LQI Req / Addr Resp。
+    """
+    if not payload_hex:
+        return None
+    try:
+        pl = bytes.fromhex(payload_hex)
+    except ValueError:
+        return None
+    if not pl:
+        return None
+    tree: dict = {"zbee_zdp.seqno": str(pl[0])}
+
+    def _eui(b: bytes) -> str:
+        return "0x" + int.from_bytes(b, "little").to_bytes(8, "big").hex().upper()
+
+    def _cap_desc(cap: int) -> str:
+        parts = []
+        if cap & 0x01:
+            parts.append("备选协调器")
+        parts.append("路由器/协调器" if cap & 0x02 else "终端设备")
+        if cap & 0x04:
+            parts.append("主电源")
+        if cap & 0x08:
+            parts.append("RxOnWhenIdle")
+        if cap & 0x20:
+            parts.append("安全能力")
+        return " · ".join(parts) + f" (0x{cap:02X})"
+
+    # 0x0013 Device Announce: [seq][nwk:2][eui64:8][cap:1]
+    if cluster_id == 0x0013 and len(pl) >= 12:
+        tree["zbee_zdp.zdp_cmd_nwk_addr"] = f"0x{int.from_bytes(pl[1:3], 'little'):04X}"
+        tree["zbee_zdp.zdp_cmd_eui64"] = _eui(pl[3:11])
+        tree["zbee_zdp.zdp_cmd_capability"] = _cap_desc(pl[11])
+    # 0x0000 NWK Addr Req: [seq][eui64:8][req_type:1][start:1]
+    elif cluster_id == 0x0000 and len(pl) >= 11:
+        tree["zbee_zdp.zdp_cmd_eui64"] = _eui(pl[1:9])
+        tree["zbee_zdp.zdp_cmd_req_type"] = "单设备应答" if pl[9] == 0 else "扩展应答"
+        tree["zbee_zdp.zdp_cmd_start_index"] = str(pl[10])
+    # 0x0001 IEEE Addr Req: [seq][nwk:2][req_type:1][start:1]
+    elif cluster_id == 0x0001 and len(pl) >= 5:
+        tree["zbee_zdp.zdp_cmd_nwk_addr"] = f"0x{int.from_bytes(pl[1:3], 'little'):04X}"
+        tree["zbee_zdp.zdp_cmd_req_type"] = "单设备应答" if pl[3] == 0 else "扩展应答"
+        tree["zbee_zdp.zdp_cmd_start_index"] = str(pl[4])
+    # 0x0002/3/4/5/6, 0x0010 Desc/EP Req: [seq][nwk:2]
+    elif cluster_id in (0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0010) and len(pl) >= 3:
+        tree["zbee_zdp.zdp_cmd_nwk_addr"] = f"0x{int.from_bytes(pl[1:3], 'little'):04X}"
+    # 0x0031 Mgmt LQI Req: [seq][start:1]
+    elif cluster_id == 0x0031 and len(pl) >= 2:
+        tree["zbee_zdp.zdp_cmd_start_index"] = str(pl[1])
+    # 0x8000/0x8001 Addr Resp: [seq][status:1][eui64:8][nwk:2][num_assoc:1][start:1]
+    elif cluster_id in (0x8000, 0x8001) and len(pl) >= 14:
+        tree["zbee_zdp.status"] = f"0x{pl[1]:02X}"
+        tree["zbee_zdp.zdp_cmd_eui64"] = _eui(pl[2:10])
+        tree["zbee_zdp.zdp_cmd_nwk_addr"] = f"0x{int.from_bytes(pl[10:12], 'little'):04X}"
+        tree["zbee_zdp.zdp_cmd_num_assoc"] = str(pl[12])
+        tree["zbee_zdp.zdp_cmd_start_index"] = str(pl[13])
+    # 0x8002 Node Desc Resp: [seq][status:1][nwk:2]
+    elif cluster_id == 0x8002 and len(pl) >= 4:
+        tree["zbee_zdp.status"] = f"0x{pl[1]:02X}"
+        tree["zbee_zdp.zdp_cmd_nwk_addr"] = f"0x{int.from_bytes(pl[2:4], 'little'):04X}"
+
+    return tree if len(tree) > 1 else None
 
 
 def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
