@@ -1,0 +1,46 @@
+═══ 1. 群控压测问题包 (PAN 0xA736, 16 锁 SED + 中继 19950) ═══
+  PAN 0xA736 节点数: 22
+  ✅ 锁 0x2418 → end_device (期望 end_device)
+  ✅ 锁 0x3B94 → end_device (期望 end_device)
+  ✅ 锁 0x4072 → end_device (期望 end_device)
+  ✅ 锁 0x49B3 → end_device (期望 end_device)
+  ✅ 锁 0x53A3 → end_device (期望 end_device)
+  ✅ 锁 0x6D43 → end_device (期望 end_device)
+  ✅ 锁 0xA7A8 → end_device (期望 end_device)
+  ✅ 锁 0xB130 → end_device (期望 end_device)
+  ✅ 锁 0xB868 → end_device (期望 end_device)
+  ✅ 锁 0xBC9B → end_device (期望 end_device)
+  ✅ 锁 0xC998 → end_device (期望 end_device)
+  ✅ 锁 0xD15E → end_device (期望 end_device)
+  ✅ 锁 0xDE15 → end_device (期望 end_device)
+  ✅ 锁 0xE71A → end_device (期望 end_device)
+  ✅ 锁 0x82A0 → end_device (期望 end_device)
+  ✅ 锁 0xD6D3 → end_device (期望 end_device)
+  ✅ 中继 0x4DEE → router (期望 router)
+  ✅ 0xE091 → router (期望 router)
+  ✅ 协调器 0x0000 → coordinator
+═══ 2. G32_0626 (0xEE48 实证 SED) ═══
+  ✅ 0x0000 → coordinator (期望 coordinator)
+  ✅ 0x5D3C → router (期望 router)
+  ✅ 0xBE5A → router (期望 router)
+  ✅ 0xEFC2 → router (期望 router)
+  ✅ 0xEE48 → end_device (期望 end_device)
+  ✅ 0x4488 → unknown (期望 unknown)
+  ✅ 0xA185 → unknown (期望 unknown)
+  ✅ 0xD4F2 → unknown (期望 unknown)
+═══ 3. test2-ubiqua-export (早期'大量终端节点'素材) ═══
+  ✅ 0x0000 → coordinator
+  ✅ 0x0071 (LS×19) → router (期望 router)
+  分布: end_device=0, unknown=2628, router=117, 总 2746
+  ✅ 无信号节点不再误判终端 (end_device 数 = 0, 期望 0)
+  ✅ 无信号节点改为 unknown (2628 个)
+═══ 4. 1-标准入网抓包-2 (Device Announce capability 偏移验证) ═══
+  Device Announce 帧: 3
+  0x2951: cap=0x8E (路由器/协调器 · 主电源 · RxOnWhenIdle) → 推断 router
+  ✅ 0x2951 capability 声明 router 与推断 router 一致
+  0x2951: cap=0x8E (路由器/协调器 · 主电源 · RxOnWhenIdle) → 推断 router
+  ✅ 0x2951 capability 声明 router 与推断 router 一致
+  0x2951: cap=0x8E (路由器/协调器 · 主电源 · RxOnWhenIdle) → 推断 router
+  ✅ 0x2951 capability 声明 router 与推断 router 一致
+
+═══ 结果: 34 通过 / 0 失败 ═══

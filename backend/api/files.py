@@ -269,7 +269,6 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
         if not _packets:
             raise RuntimeError("无有效数据 (可能不是 Zigbee 抓包)")
         _packets.sort(key=lambda p: p["ts"])
-        _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
         _pcap_paths = [os.path.abspath(p) for p in tmp_paths]
 
@@ -284,6 +283,8 @@ def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
             _full_packets.sort(key=lambda p: p["ts"])
         except Exception:
             _full_packets = list(_packets)
+        # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
+        _nodes = _extract_nodes_from_packets(_packets, _full_packets)
 
         # 运行校验 (6 项逐项上报进度, 50→95)
         _task_update(task_id, stage="校验", percent=50)
@@ -341,7 +342,6 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
             _task_update(task_id, stage=f"tshark 解析 ({i + 1}/{total})",
                          percent=15 + int((i + 1) / total * 25))
         _packets.sort(key=lambda p: p["ts"])
-        _nodes = _extract_nodes_from_packets(_packets)
         _file_type = "pcap"
         _pcap_paths = path_list
 
@@ -355,6 +355,8 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
             _full_packets.sort(key=lambda p: p["ts"])
         except Exception:
             _full_packets = list(_packets)
+        # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
+        _nodes = _extract_nodes_from_packets(_packets, _full_packets)
 
         _task_update(task_id, stage="校验", percent=50)
         try:
@@ -433,7 +435,8 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
 
         _packets = all_pkts
         _full_packets = all_full
-        _nodes = _extract_nodes_from_packets(_packets)
+        # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
+        _nodes = _extract_nodes_from_packets(_packets, _full_packets)
         _file_type = "cubx"
         _pcap_paths = fnames or tmp_paths
 
@@ -474,7 +477,8 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
     _last_ubiqua_sync = {"synced": added, "total_keys": total}
     _full_packets = pkts
     _packets = [p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None]
-    _nodes = _extract_nodes_from_packets(_packets)
+    # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
+    _nodes = _extract_nodes_from_packets(_packets, _full_packets)
     _file_type = "cubx"
     _pcap_paths = [path]
 
@@ -489,14 +493,27 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
     return _import_result()
 
 
-def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
-    """从 pcap 包列表中提取节点 (兼容 csv_reader.extract_nodes 格式)"""
+def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | None = None) -> dict[int, dict]:
+    """从 pcap 包列表中提取节点 (兼容 csv_reader.extract_nodes 格式).
+
+    full_packets: 含 MAC 命令帧的全量包 (可选) — SED poll 信号 (MAC Data Request)
+    是纯 MAC 帧无 NWK 头, 被 packets 的 NWK 可见过滤排除, 必须从全量列表采集。
+    """
     nodes: dict[int, dict] = {}
     pan_counts: dict[int, dict[int, int]] = {}
-    # 跟踪设备类型信号
+    # 设备类型信号收集 (2026-08-06 重构, 协议级依据 + 素材实证, 详见 U7 ticket):
+    # - Link Status (nwk_cmd 8): 规范仅 FFD 周期广播 → router 强信号
+    # - Route Reply (nwk_cmd 2): 仅具备路由能力的设备可回应 → router 弱信号
+    # - Route Request (nwk_cmd 1) / Route Record (nwk_cmd 5) 不作 router 信号 —
+    #   素材实证: G32 SED 0xEE48 (poll×1933) 发 RREQ×4; 群控包 SED 锁 0x82A0/0xD6D3
+    #   发 Route Record (路由源自己上报, 帧里中继列表才是路由器)
+    # - MAC Data Request (cmd 4, SED 轮询): 仅 SED 会 poll 父节点 → end_device 强信号
+    # - Device Announce (ZDP 0x0013) capability bit1 (0x02): 设备入网自声明 FFD/RFD (权威;
+    #   cubx 路径 aps_payload_hex 可得, pcap 路径待解析器补 APS 明文, 见 P5)
     has_link_status: set[int] = set()
-    has_route: set[int] = set()
-    has_device_announce: set[int] = set()
+    has_route_reply: set[int] = set()
+    has_poll: set[int] = set()
+    cap_declared: dict[int, str] = {}   # aid → "router"/"end_device" (入网时 capability 声明)
 
     for p in packets:
         pan = p["pan_src"] or p["pan_dst"]
@@ -514,31 +531,48 @@ def _extract_nodes_from_packets(packets: list[dict]) -> dict[int, dict]:
             if addr == 0:
                 nodes[addr]["is_coord"] = True
 
-        # 设备类型信号收集
-        pkt_type = p.get("pkt_type", "")
+    # 设备类型信号采集 (nwk_cmd_id 协议级字段; mac_cmd_id 4 = SED 轮询) —
+    # poll 帧无 NWK 头, 必须用 full_packets 全量列表
+    for p in (full_packets if full_packets is not None else packets):
         nwk_src = p.get("nwk_src")
-        if "Link Status" in pkt_type and nwk_src is not None:
+        nwk_cmd = p.get("nwk_cmd_id")
+        if nwk_cmd == 8 and nwk_src is not None:
             has_link_status.add(nwk_src)
-        if any(x in pkt_type for x in ("Route Request", "Route Reply", "Route Record")) and nwk_src is not None:
-            has_route.add(nwk_src)
-        if "Device Announce" in pkt_type and nwk_src is not None:
-            has_device_announce.add(nwk_src)
+        elif nwk_cmd == 2 and nwk_src is not None:
+            has_route_reply.add(nwk_src)
+        if p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None:
+            has_poll.add(p["mac_src"])
+        # Device Announce (ZDP 0x0013) capability: [seq][nwk:2][eui64:8][cap:1], cap 在 pl[11]
+        if nwk_src is not None and p.get("aps_cluster") == 0x0013 and p.get("aps_payload_hex"):
+            try:
+                _pl = bytes.fromhex(p["aps_payload_hex"])
+                if len(_pl) >= 12:
+                    cap_declared[nwk_src] = "router" if (_pl[11] & 0x02) else "end_device"
+            except ValueError:
+                pass
 
     for aid, pc in pan_counts.items():
         if pc:
             nodes[aid]["pan"] = max(pc, key=pc.get)
 
-    # 设备类型推断
+    # 设备类型推断 (2026-08-06 重构): 物理行为信号 > 入网 capability 声明 > unknown
     for aid in nodes:
         if aid == 0:
             nodes[aid]["device_type"] = "coordinator"
-        elif aid in has_link_status or aid in has_route:
+            continue
+        ffd_ev = aid in has_link_status or aid in has_route_reply
+        sed_ev = aid in has_poll
+        if ffd_ev and not sed_ev:
             nodes[aid]["device_type"] = "router"
-        elif aid in has_device_announce:
-            nodes[aid]["device_type"] = "router"  # Device Announce 通常是 Router
-        else:
-            # 只有 Data 帧, 从未发过 Link Status → 可能是 End Device
+        elif sed_ev and not ffd_ev:
             nodes[aid]["device_type"] = "end_device"
+        elif ffd_ev and sed_ev:
+            nodes[aid]["device_type"] = "router"  # 信号冲突 (规范上 FFD 不 poll / RFD 不发 LS): 物理帧证据优先
+        elif aid in cap_declared:
+            nodes[aid]["device_type"] = cap_declared[aid]
+        else:
+            # 无信号不可判定: RxOnWhenIdle 的 SED 不 poll; 路由器 LS 可能未捕获/未解密 — 如实标 unknown
+            nodes[aid]["device_type"] = "unknown"
 
     return nodes
 
