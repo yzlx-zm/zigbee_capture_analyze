@@ -229,6 +229,16 @@ def _addr(val) -> int | None:
     return v
 
 
+def _addr_nwk(val) -> int | None:
+    """NWK 地址提取 — 保留广播地址 (0xFFFC/0xFFFD/0xFFFF), 对齐 tshark zbee_nwk.dst.
+
+    P1 契约修复 (2026-08-05): tshark 对 Route Request 等广播命令帧输出 nwk_dst=0xfffc,
+    cubx 此前经 _addr 过滤为 None — 双路径不一致, 且下游无法区分广播帧。
+    MAC 层仍用 _addr (广播过滤); 分析层需要广播语义时读 nwk_dst (0xFFFF 需显式排除).
+    """
+    return _h(val)
+
+
 def _format_eui(val) -> str | None:
     """scapy EUI64 → hex string without colons."""
     if val is None:
@@ -333,6 +343,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "security": "", "status": "", "decrypted": False,
         "aps_cluster": None, "aps_cluster_name": None, "aps_profile": None,
         "aps_counter": None, "aps_src_ep": None, "aps_dst_ep": None,
+        "aps_payload_hex": None,   # APS 解密明文 payload hex (ZDP 详情展示)
         "zcl_cmd_id": None, "zcl_cmd_name": None,
         "sec_level": None, "sec_key": None, "sec_key_label": None,
         "sec_frame_counter": None, "sec_mic": None,
@@ -413,8 +424,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 
     nwk = pkt[ZigbeeNWK]
     nwk_secure = bool(int(nwk.flags) & 0x02)
-    result["nwk_src"] = _addr(nwk.source)
-    result["nwk_dst"] = _addr(nwk.destination)
+    result["nwk_src"] = _addr_nwk(nwk.source)
+    result["nwk_dst"] = _addr_nwk(nwk.destination)
     result["nwk_radius"] = _h(getattr(nwk, "radius", None))
     result["nwk_seq"] = _h(getattr(nwk, "seqnum", None))
     result["nwk_src64"] = _format_eui(getattr(nwk, "ext_src", None))
@@ -422,6 +433,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 
     nwk_cmd_id: int | None = None
     plaintext = bytes(nwk.payload)
+    # 明文有效性: 非加密帧明文可用; 加密帧仅解密成功后才有效
+    # (曾解密失败时 plaintext 仍是密文, 密文首字节被当命令 ID — 0x20/0x38 误读同类复发)
+    plain_valid = not nwk_secure
 
     # NWK decryption
     sec = None
@@ -440,6 +454,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                 result["sec_mic"] = sec_bytes[-4:].hex()
         try:
             plaintext, key_label, key_value = _decrypt_nwk(nwk, network_keys, link_keys)
+            plain_valid = True
             result["decrypted"] = True
             result["security"] = "Decrypted"
             result["status"] = "Decrypted"
@@ -455,8 +470,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         # 非加密 NWK 帧可能仍含可识别 payload
         pass
 
-    # NWK command parsing (on decrypted plaintext)
-    if int(nwk.frametype) == 1:
+    # NWK command parsing (on valid plaintext only)
+    if int(nwk.frametype) == 1 and plain_valid:
         nwk_cmd_id = _parse_nwk_command_id(plaintext)
         result["nwk_cmd_id"] = nwk_cmd_id
         if nwk_cmd_id == 1 and len(plaintext) >= 2:  # Route Request
@@ -521,6 +536,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             result["aps_counter"] = _h(getattr(aps, "counter", None))
             result["aps_src_ep"] = _h(getattr(aps, "src_endpoint", None))
             result["aps_dst_ep"] = _h(getattr(aps, "dst_endpoint", None))
+            # APS 解密后明文 payload hex (ZDP/ZCL 详情展示用; 解析在 API 展示层, 见 files._fallback_zdp_tree)
+            result["aps_payload_hex"] = aps_plain.hex() if aps_plain else None
 
         # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
         if aps_ftype == 2:
@@ -548,20 +565,25 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                 result["aps_cmd_update_status"] = aps_plain[1]
 
         # ZCL 层 (profile != 0x0000 的 APS data 帧): 手动解析 ZCL header — 对齐 tshark.
-        # 官方结构 (ZCL spec): fcf(1) [+manufacturer code 2B if fcf bit2] + tsn(1) + cmd_id(1)
-        # fcf bit1 = direction (0=Client→Server, 1=Server→Client)
+        # 官方结构 (ZCL spec 2.3.1): fcf(1) [+manufacturer code 2B if fcf bit2] + tsn(1) + cmd_id(1)
+        # fcf 位: bit0-1 frame type, bit2 = manufacturer specific, bit3 = direction
+        #   (0=Client→Server, 1=Server→Client), bit4 = disable default response
+        # (曾误用 bit1/bit2 — tshark 字段注册证实 dir=0x08/bit3, ms=bit2)
+        # APS 加密帧解密明文从 profile 起 (FCF/counter 不加密) → ZCL 头偏移 6;
+        # 非加密帧 aps_plain = aps.payload → ZCL 头偏移 0
         if (result["aps_profile"] not in (None, 0x0000) and aps_plain
                 and len(aps_plain) >= 3):
-            zcl_fcf = aps_plain[0]
-            zcl_off = 1
-            if zcl_fcf & 0x04:  # manufacturer specific → 额外 2 字节厂商码
+            zcl_base = 6 if aps.haslayer(ZigbeeSecurityHeader) else 0
+            zcl_fcf = aps_plain[zcl_base]
+            zcl_off = zcl_base + 1
+            if zcl_fcf & 0x04:  # bit2 = manufacturer specific → 额外 2 字节厂商码
                 zcl_off += 2
             if len(aps_plain) > zcl_off:
                 result["zcl_seq"] = aps_plain[zcl_off]
                 if zcl_off + 1 < len(aps_plain):
                     result["zcl_cmd_id"] = aps_plain[zcl_off + 1]
                 result["zcl_direction"] = (
-                    "Server→Client" if (zcl_fcf >> 1) & 1 else "Client→Server")
+                    "Server→Client" if (zcl_fcf >> 3) & 1 else "Client→Server")
                 if result["zcl_cmd_id"] is not None:
                     result["zcl_cmd_name"] = zcl_defs.get_command_name(
                         result["aps_cluster"], result["zcl_cmd_id"])
