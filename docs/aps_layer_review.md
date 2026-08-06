@@ -175,12 +175,14 @@ SED 需要 APS ACK 时的完整操作 (三次电流脉冲, 功耗实测):
 
 | # | 缺口 | 影响场景 | 工作量 | 建议路径 |
 |---|------|---------|--------|---------|
-| A | **APS FCF 未完整提取** (delivery mode/security/ack-req 位) | L3-1 判定需区分"要求了 ack 没收到" vs "没要求"; 含 tshark "Ack" 字符串匹配改位级 + 先实证 tshark 对 type=2 帧输出结构 | 小 | P5 工单 |
-| B | **APS Ack 关联匹配** (ack 的 counter ↔ 原帧) | **L3-1 发送命令无 APS Ack** (⬜ 场景, 检测器不存在); 群控已有 18/18 实证基础 (§6.5); **前置已具备 (2026-08-06)**: 两路径 Ack 帧 counter 契约一致, 可直接用 `pkt_type=='APS Ack'` + `aps_counter` 重建配对; 注意 nwk_seq 回绕教训 + 处理"锁 ACK 更早帧"案例 | 中 | 新检测器工单 |
+| ~~A~~ | ~~APS FCF ack-req 位~~ | ✅ **已完成 (cc99542)**: cubx 提取 aps_ack_req (FCF bit6, 与 test-harness 源码一致); tshark 路径占位待素材实证 | — | — |
+| ~~B~~ | ~~APS Ack 关联匹配~~ | ✅ **已完成 (cc99542 + 自审修正)**: `_build_ack_match` counter 精确配对 + 5s 时间窗 (counter 8 位循环防误配, G32 97% 候选 <2s); 第七次 95%/G32 99%/中继 91%; 详情端点 aps_ack_pair + 前端配对行; **L3-1 检测器本体仍未实现** | — | 新检测器工单 |
 | C | APS 重传轮次判定 (同 counter 多帧) | L3-11 应用层重传频繁 (⬜); 时间窗依据见 §5.1 (APS 3 次/50ms×hops) | 小 | P5 + 检测器 |
 | D | groupId / 组播投递解析 | L3-4 绑定/组播未达 (⬜) | 小 | P5 |
 | E | aps_payload_hex (pcap 路径) | ZDP 详情双路径一致 (P1 契约遗留) | 中 | P5 (P1 关联) |
-| F | APS 帧的 pkt_type 归类细化 | 时间线 APS Ack 无独立类型显示 | 小 | UI 工单 |
+| ~~F~~ | ~~APS 帧 pkt_type 归类~~ | ✅ **已完成 (cc99542)**: 命令帧 pkt_type='APS Cmd' + 命令名, 时间线类型列显示 | — | — |
+
+**自审记录 (2026-08-06)**: ① ack 帧 8B 完整头结构为**素材实证** (G32 1179 条 + 第七次明文), 规范原文/Wireshark dissector 源码因网络受限未直接确认 — 待补证; ② counter 8 位循环导致长抓包同 (dst,counter) 跨周期重复 → 已加 5s 时间窗 (97% 最近候选 <2s, 3 条窗口外不配对, 不配对比误配安全); ③ 一帧多 ack (重复捕获/重发) 保留最近一条; ④ 命令帧 ack_req 语义: 第七次协调器对 VerifyKey 回 ack (ack_req=True), 中继素材 VerifyKey ack_req=False — 设备实现差异, 字段提取正确, L3-1 判定应聚焦数据帧。
 
 **结论**: APS 字段级解析覆盖 ~80%, 密钥流程 (L1-3/L1-4) 已闭环; 空白集中在
 **可靠性维度 (ACK 匹配/重传)** — 而这正是"设备收不到下发"类诊断 (L3-1/L3-11) 的协议级判定基础,

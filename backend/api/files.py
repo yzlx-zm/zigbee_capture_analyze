@@ -1021,15 +1021,21 @@ def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
     return None
 
 
-def _build_ack_match(packets: list[dict]) -> dict:
-    """APS Ack ↔ 原帧配对 (2026-08-06, 第七次素材实证 60/62 精确匹配).
+# APS ack 配对时间窗: counter 为 8 位循环 (0-255), 长抓包同 (dst,counter) 跨周期重复;
+# ack 通常紧跟原帧 (EmberZNet APS 超时 50ms×hops+100ms, SED 场景 + poll 延迟),
+# 自审实测 G32 97% 最近候选 <2s → 5s 窗内无候选视为不配对, 避免跨周期误配 (2026-08-06 自审修正)
+ACK_MATCH_WINDOW_S = 5.0
+
+
+def _build_ack_match(packets: list[dict]) -> tuple[dict, dict]:
+    """APS Ack ↔ 原帧配对 (2026-08-06, 素材实证: 第七次 62/62, G32 98.9%, 中继 91%).
 
     协议依据: ack 帧携带完整 APS 头 (素材解密明文 8B 实证:
     [FCF][dst_ep][cluster:2][profile:2][src_ep][counter]), counter 沿用原帧
-    (FCF bit4 ack format=0) — 因此可字段级精确配对.
-    匹配: 原帧 nwk_src == ack.nwk_dst 且 aps_counter 相同, 取 ack 前最近一帧;
-    ack format=1 (新 counter): 方向 + 最近时序推断.
-    返回 {ack_pid: orig_pid} (双向映射由详情端点组装).
+    (FCF bit4 ack format=0) — 字段级精确匹配; 叠加 ACK_MATCH_WINDOW_S 时间窗
+    排除 counter 循环误配.
+    匹配: 原帧 nwk_src == ack.nwk_dst 且 aps_counter 相同, 取 ack 前窗口内最近一帧.
+    返回 (ack→orig, orig→ack) 双向映射.
     """
     from collections import defaultdict
     idx: dict[tuple, list] = defaultdict(list)
@@ -1037,30 +1043,28 @@ def _build_ack_match(packets: list[dict]) -> dict:
         s, c = p.get("nwk_src"), p.get("aps_counter")
         if c is not None and s is not None and p.get("pkt_type") != "APS Ack":
             idx[(s, c)].append((i, p))
-    pairs: dict = {}
+    ack_to_orig: dict = {}
+    orig_to_ack: dict = {}
     for ai, a in enumerate(packets):
         if a.get("pkt_type") != "APS Ack":
             continue
         ats = a.get("ts", 0.0)
         ctr, dst = a.get("aps_counter"), a.get("nwk_dst")
-        best = None
-        if ctr is not None and dst is not None:
-            cands = [(i, p) for i, p in idx.get((dst, ctr), []) if p.get("ts", 0.0) < ats]
-            if cands:
-                best = max(cands, key=lambda ip: ip[1].get("ts", 0.0))[0]
-        if best is None and a.get("ack_format") == 1:
-            # format=1: counter 为新值, 只能方向 + 最近时序 (推断级)
-            cands = [(i, p) for i, p in enumerate(packets)
-                     if p.get("nwk_src") == dst and p.get("ts", 0.0) < ats
-                     and p.get("pkt_type") != "APS Ack"]
-            if cands:
-                best = max(cands, key=lambda ip: ip[1].get("ts", 0.0))[0]
-        if best is not None:
-            pairs[ai] = best
-    return pairs
+        if ctr is None or dst is None:
+            continue
+        cands = [(i, p) for i, p in idx.get((dst, ctr), [])
+                 if ats - ACK_MATCH_WINDOW_S <= p.get("ts", 0.0) < ats]
+        if not cands:
+            continue
+        best_i, best_p = max(cands, key=lambda ip: ip[1].get("ts", 0.0))
+        ack_to_orig[ai] = best_i
+        # 一帧多 ack (重复捕获/重发) — 保留最近一条
+        if best_i not in orig_to_ack or a.get("ts", 0.0) > orig_to_ack[best_i][1]:
+            orig_to_ack[best_i] = (ai, a.get("ts", 0.0))
+    return ack_to_orig, orig_to_ack
 
 
-def _get_ack_match() -> dict:
+def _get_ack_match() -> tuple[dict, dict]:
     """惰性构建 + 缓存 (以 _packets 引用 id 失效, 重新导入自动重建)."""
     global _ack_match_cache
     ref, pairs = _ack_match_cache
@@ -1080,18 +1084,18 @@ async def packet_detail(pkt_id: int):
     if not layers:
         layers = _fallback_layers(p)  # cubx 路径 raw_layers 为空 → 平铺字段构造 (U5)
     # APS Ack 配对 (ack 帧 → 被确认帧; 数据帧 → 确认它的 ack 帧)
+    ack_to_orig, orig_to_ack = _get_ack_match()
     ack_pair = None
     if p.get("pkt_type") == "APS Ack":
-        orig = _get_ack_match().get(pkt_id)
+        orig = ack_to_orig.get(pkt_id)
         if orig is not None:
             ack_pair = {"kind": "ack_to", "peer_id": orig,
                         "text": f"确认了帧 #{orig}"}
     else:
-        for ack_id, orig_id in _get_ack_match().items():
-            if orig_id == pkt_id:
-                ack_pair = {"kind": "ack_from", "peer_id": ack_id,
-                            "text": f"被帧 #{ack_id} 确认"}
-                break
+        got = orig_to_ack.get(pkt_id)
+        if got is not None:
+            ack_pair = {"kind": "ack_from", "peer_id": got[0],
+                        "text": f"被帧 #{got[0]} 确认"}
     return {
         "id": pkt_id,
         "ts": p["ts"],
