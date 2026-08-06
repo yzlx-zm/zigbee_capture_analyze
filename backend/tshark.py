@@ -431,6 +431,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_cmd_key_type": aps_cmd_key_type,
         "aps_cmd_remove_target": aps_cmd_remove_target,
         "aps_cmd_update_status": aps_cmd_update_status,
+        "aps_payload_hex": None,   # cubx 路径提供 APS 解密明文 hex (ZDP 详情) — pcap 路径占位
         "nwk_cmd_id": nwk_cmd_id,
         "nwk_route_request_mto": nwk_route_request_mto,
         "nwk_status_code": nwk_status_code,       # Network Status 错误码 (0x0B=Source Route Failure)
