@@ -100,9 +100,11 @@ reg('diag', function () {
     + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>'
     + '<!--DIAG-SUMMARY-->';
   // ⚠️ 2026-08-05 修复: 摘要区被 innerHTML 重建覆盖 (先填旧 DOM 再整体重渲)
-  // 改用注释占位 + 统一渲染, 摘要 HTML 每次渲染前注入
-  var summaryHtml = '';
+  // 改用注释占位 + 统一渲染; 2026-08-06 摘要独立渲染:
+  // 各检测完成即写入 checks, renderH() 动态生成 — 不再依赖最内层回调 (L6 失败曾致摘要丢失)
+  var checks = {};
   function renderH() {
+    var summaryHtml = Object.keys(checks).length ? summaryCard(Object.keys(checks).map(function (k) { return checks[k]; })) : '';
     document.getElementById('mc').innerHTML = h.replace('<!--DIAG-SUMMARY-->', summaryHtml);
   }
 
@@ -120,6 +122,12 @@ reg('diag', function () {
     var l2 = l1d ? (l1d.l1_2 || {}) : {};
     var l3 = l1d ? (l1d.l1_3 || {}) : {};
     var l4 = l1d ? (l1d.l1_4 || {}) : {};
+
+    // 摘要独立收集: 每层检测成功即写入, renderH() 动态渲染 (2026-08-06)
+    checks['L1-1'] = { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion };
+    checks['L1-2'] = { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion };
+    checks['L1-3'] = { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion };
+    checks['L1-4'] = { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion };
 
     // ── L1-1 卡片 ──
     var b1 = 'Beacon Request: <b>' + (l1.beacon_request_count || 0) + '</b> 个 | 命中 <b class="' + vClass(l1.verdict, 'L1-1') + '">'
@@ -179,6 +187,7 @@ reg('diag', function () {
     // ── L2 在线维持检测区 (L2-1 终端频繁离线) ──
     A.get('/api/diag/l2').then(function (l2d) {
       var l21 = l2d && !l2d.error ? (l2d.l2_1 || {}) : {};
+      checks['L2-1'] = { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion };
       var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
         + '<span class="text-muted">' + (l21.summary || '') + '</span>'
         + ((l21.devices || []).length ? '<div class="divider">'
@@ -196,6 +205,7 @@ reg('diag', function () {
     // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效) ──
     A.get('/api/diag/l3').then(function (l3d) {
       var l35 = l3d && !l3d.error ? (l3d.l3_5 || {}) : {};
+      checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
       var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
         + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
         + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
@@ -216,6 +226,7 @@ reg('diag', function () {
       // ── L6 SED 专项检测区 (L6-S3 间接事务过期) ──
       A.get('/api/diag/l6').then(function (l6d) {
         var l63 = l6d && !l6d.error ? (l6d.l6_3 || {}) : {};
+        checks['L6-3'] = { scenario: 'L6-3', verdict: l63.verdict, conclusion: l63.conclusion };
         var b6x = '0x06 间接过期: <b>' + (l63.expiry_count || 0) + '</b> 帧 | 0x05 队列满: <b>' + (l63.no_indirect_capacity_count || 0) + '</b><br>'
           + '<span class="text-muted">' + (l63.summary || '') + '</span>'
           + ((l63.devices || []).length ? '<div class="divider">'
@@ -230,16 +241,7 @@ reg('diag', function () {
           + l1Card('L6-3', '间接事务过期', l63.verdict, l63.confidence, b6x, l63.conclusion, l63.evidence, l63.evidence_total)
           + '</div></div>';
 
-        // 顶部诊断摘要 (通俗结论, 数据齐后注入 h)
-        summaryHtml = summaryCard([
-          { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion },
-          { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion },
-          { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion },
-          { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion },
-          { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion },
-          { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion },
-          { scenario: 'L6-3', verdict: l63.verdict, conclusion: l63.conclusion },
-        ]);
+        // 摘要已独立渲染 (checks 收集 + renderH 动态生成), 此处只需渲染卡片与离线区
         renderH();
         renderOffline();
       }).catch(function () {  // L6 失败不阻塞
