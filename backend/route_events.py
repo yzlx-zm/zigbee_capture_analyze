@@ -176,13 +176,20 @@ def extract_route_request_events(packets: list[dict]) -> list[RouteEvent]:
             continue
         nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
         cmd_data = _get_command_data(nwk, "Route Request")
-        if not cmd_data:
-            continue
-        dst = _h(cmd_data.get("zbee_nwk.cmd.route.dest", ""))
+        if cmd_data:
+            dst = _h(cmd_data.get("zbee_nwk.cmd.route.dest", ""))
+            cost = int(cmd_data.get("zbee_nwk.cmd.route.cost", "0"), 16)
+        else:
+            # cubx 路径: raw_layers 为空 (cubx_reader 不构造), 回退已解析载荷
+            # route_req = {options, id, dest, cost} (cubx_reader._parse_route_request)
+            rr = p.get("route_req")
+            if not rr or rr.get("dest") is None:
+                continue
+            dst = rr["dest"]
+            cost = rr.get("cost") or 0
         if dst is None:
             continue
         radius = p.get("nwk_radius", 0) or 0
-        cost = int(cmd_data.get("zbee_nwk.cmd.route.cost", "0"), 16)
         events.append(RouteEvent(
             timestamp=p["ts"],
             event_type=EVENT_ROUTE_REQUEST,
@@ -207,15 +214,20 @@ def extract_network_status_events(packets: list[dict]) -> list[RouteEvent]:
         if p.get("pkt_type") != "Network Status":
             continue
         src = p.get("nwk_src")
-        dst = p.get("nwk_dst")
-        if src is None or dst is None:
+        if src is None:
             continue
         nwk = p.get("raw_layers", {}).get("zbee_nwk", {})
         cmd_data = _get_command_data(nwk, "Network Status")
-        if not cmd_data:
+        if cmd_data:
+            dst = p.get("nwk_dst")
+            sc_raw = cmd_data.get("zbee_nwk.cmd.status", "")
+            status_code = int(sc_raw, 16) if sc_raw else None
+        else:
+            # cubx 路径: raw_layers 为空, 回退已解析字段 (nwk_status_code/nwk_status_target)
+            dst = p.get("nwk_dst") or p.get("nwk_status_target")
+            status_code = p.get("nwk_status_code")
+        if dst is None:
             continue
-        sc_raw = cmd_data.get("zbee_nwk.cmd.status", "")
-        status_code = int(sc_raw, 16) if sc_raw else None
         events.append(RouteEvent(
             timestamp=p["ts"],
             event_type=EVENT_NETWORK_STATUS,
