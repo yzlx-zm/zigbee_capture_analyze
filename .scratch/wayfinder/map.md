@@ -21,7 +21,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 
 ## Decisions so far
 
-- [L3-1 发送命令无 APS Ack](issues/11-L3-1发送命令无APS-Ack.md) — 认领 2026-08-06; 前置 APS 配对已提交 (cc99542/60de1ff); MCP 核对官方机制 (APS 3 次/50ms×hops/1600ms/0x66/SED 7680ms); 素材无 ack 样本充足 (中继 838D ×34 与 L3-5 交叉)
+- [L3-1 检测闭环](issues/11-L3-1发送命令无APS-Ack.md) — 文档 v1.0 + 检测器 R1-R4 (提交 6c1b517); 素材实证: **中继 838D 下行 ×42 R2 高 + L3-5 交叉 (0x0B×39)**, G32 BE5A 上行 ×45 + 0x0C×1043 交叉, 第七次 C1F5 ×32; 配对抽共享模块 aps_pairing.py; 事务级判定 + 重复捕获去重; L3-5/L1-3 回归不变
 - [L1-1/L1-2 检测闭环](issues/01-...) — 文档 v1.2 + 检测器 + 素材验证;判定规则: 允许单次MISS/1s窗口/AssocResp 200-500ms
 - [L1-3 检测闭环](issues/02-...) — 文档 v1.3 + B2-LOOP/B2-LOOP-ROUTE;真实素材根因 = Confirm 经中继转发失败 (Source Route Failure, L3 路由层, 非密钥问题)
 - [协议语义破解] — VerifyKey 16B = keyed_hash(TCLK,3);0x0F/0x10 = Zigbee 3.0 标准命令 (Ubiqua Reserved 是库过时);Confirm = [0x10][status=0x00 SUCCESS][key_type][dst]
