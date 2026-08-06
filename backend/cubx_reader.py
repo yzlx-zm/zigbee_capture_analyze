@@ -210,6 +210,13 @@ ZDP_CLUSTER_NAMES = {
     0x8002: "ZDP: Node Desc Resp", 0x8005: "ZDP: Active EP Resp",
 }
 
+# APS 命令名 (官方 zigbee_packet_types.h — 2026-08-06 MCP 复核)
+APS_CMD_NAMES = {
+    0x05: "TransportKey", 0x06: "UpdateDevice", 0x07: "RemoveDevice",
+    0x08: "RequestKey", 0x09: "SwitchKey", 0x0E: "TunnelData",
+    0x0F: "VerifyKey", 0x10: "VerifyKeyConfirm",
+}
+
 
 def _h(val) -> int | None:
     """scapy field → int, or None."""
@@ -402,6 +409,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "aps_cmd_key_type": None,    # TransportKey 的 key_type (0x01=NWK Key, 0x04=TC Link Key)
         "aps_cmd_remove_target": None,   # Remove Device (0x07) 目标 EUI64 (L1-4 踢人检测)
         "aps_cmd_update_status": None,   # Update Device (0x06) 状态 (1=UNSECURED_JOIN, 2=DEVICE_LEFT)
+        "aps_cmd_name": None,            # APS 命令名 (TransportKey/RequestKey/... 前端类型列显示)
+        "aps_ack_req": None,             # 数据帧 FCF bit6 — 是否要求 APS Ack (L3-1 配对基础)
+        "ack_format": None,              # APS Ack FCF bit4 (0=counter 沿用原帧, 1=新值)
         "nwk_leave_rejoin": None,        # Leave options bit5=rejoin
         "nwk_leave_request": None,       # Leave options bit6=request
         "nwk_leave_children": None,      # Leave options bit7=children
@@ -581,9 +591,22 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             # APS 解密后明文 payload hex (ZDP/ZCL 详情展示用; 解析在 API 展示层, 见 files._fallback_zdp_tree)
             result["aps_payload_hex"] = aps_plain.hex() if aps_plain else None
 
+        # APS FCF bit6 = ack request (数据帧要求 APS 确认; L3-1 配对基础)
+        # 素材实测: scapy frame_control 含 ack_req 标志; 直接读 FCF 字节更可靠
+        result["aps_ack_req"] = bool(bytes(aps)[0] & 0x40) if len(bytes(aps)) >= 1 else None
+
         # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
         if aps_ftype == 2:
             result["pkt_type"] = "APS Ack"
+            # ack 帧携带完整 APS 头 (素材实证: 解密明文 8B 结构
+            #   [FCF][dst_ep][cluster:2][profile:2][src_ep][counter], scapy 字段解析正确);
+            # 注意 2026-08-06 曾误判为 [FCF][dst:2][counter:1] 4B 结构 (Zigbee 2007 记忆) —
+            # G32/第七次素材 8B 实证推翻, aps_counter 等字段保留 scapy 值.
+            # FCF bit4 = ack format (0=counter 沿用原帧, 1=新值) — 配对时参考
+            try:
+                result["ack_format"] = (bytes(aps)[0] >> 4) & 1
+            except Exception:
+                result["ack_format"] = None
 
         # APS 命令帧 (aps_frametype==1): 手动字节解析 cmd_id + key_type.
         # 0x20/0x38 教训: 不依赖 scapy ZigbeeAppCommandPayload (解析有偏差),
@@ -592,6 +615,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         if aps_ftype == 1 and aps_plain:
             cid = aps_plain[0]
             result["aps_cmd_id"] = cid
+            result["aps_cmd_name"] = APS_CMD_NAMES.get(cid, f"Cmd 0x{cid:02X}")
+            # 命令帧 pkt_type: 此前误显示为 Data (2026-08-06 修复)
+            result["pkt_type"] = "APS Cmd"
             # key_type 位置按命令结构 (对齐 tshark zbee_aps.cmd.key_type):
             # 0x05/0x08/0x0F: [cmd(1)][key_type(1)]; 0x10 Confirm: [cmd(1)][status(1)][key_type(1)]
             if cid in (0x05, 0x08, 0x0F) and len(aps_plain) >= 2:

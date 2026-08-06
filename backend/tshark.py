@@ -380,8 +380,10 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     aps_cmd_key_type = None
     aps_cmd_remove_target = None
     aps_cmd_update_status = None
+    aps_cmd_name = None
     for akey in aps:
         if akey.startswith("Command Frame:"):
+            aps_cmd_name = akey.split(":", 1)[1].strip()   # "Transport Key" → 命令名
             aps_cmd = aps[akey]
             if isinstance(aps_cmd, dict):
                 aps_cmd_id = _h(aps_cmd.get("zbee_aps.cmd.id", ""))
@@ -393,6 +395,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
                 elif aps_cmd_id == 0x06:
                     aps_cmd_update_status = _h(aps_cmd.get("zbee_aps.cmd.update_status", ""))
             break
+    # APS ack request / ack format — pcap 路径占位 (tshark zbee_aps 对 ack 帧输出结构待素材实证, P5)
 
     # ZCL 层
     zcl = layers.get("zbee_zcl", {})
@@ -431,6 +434,9 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_cmd_key_type": aps_cmd_key_type,
         "aps_cmd_remove_target": aps_cmd_remove_target,
         "aps_cmd_update_status": aps_cmd_update_status,
+        "aps_cmd_name": aps_cmd_name,
+        "aps_ack_req": None,   # cubx 路径提取 (FCF bit6); pcap 路径待素材实证 (P5)
+        "ack_format": None,    # cubx 路径提取 (FCF bit4); pcap 路径待素材实证 (P5)
         "aps_payload_hex": None,   # cubx 路径提供 APS 解密明文 hex (ZDP 详情) — pcap 路径占位
         "nwk_cmd_id": nwk_cmd_id,
         "nwk_route_request_mto": nwk_route_request_mto,

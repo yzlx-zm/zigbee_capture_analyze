@@ -195,6 +195,8 @@ reg('tl', function(){
           typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
         }else if(p.decrypted&&p.aps_cluster_name){
           typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
+        }else if(p.pkt_type==='APS Cmd'&&p.aps_cmd_name){
+          typeDisp='<span class="zcl-cmd" title="APS 命令帧">'+p.aps_cmd_name+'</span>';
         }
         var decIcon='';
         if(isNwkCmdRow){
@@ -230,6 +232,15 @@ reg('tl', function(){
         return;
       }
       var html='<div class="frame-meta">帧 #'+pid+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
+      // APS Ack 配对 (2026-08-06: 字段级 counter 匹配)
+      if(d.aps_ack_pair){
+        var pk=d.aps_ack_pair;
+        html+='<div class="ack-pair" style="margin:6px 0;padding:4px 8px;border-left:3px solid #16a34a;background:#f0fdf4;font-size:11px">'
+          +(pk.kind==='ack_to'?'✅ '+pk.text:'📩 '+pk.text)
+          +' <span class="text-dim">(APS Ack 配对</span>'
+          +(pk.kind==='ack_to'?'<span class="text-dim">, 点击帧 #'+pk.peer_id+' 查看原帧)</span>':'<span class="text-dim">)</span>')
+          +'</div>';
+      }
       var layers=d.layers;
       // MAC layer (wpan)
       if(layers.wpan){
@@ -446,7 +457,7 @@ reg('tl', function(){
           // APS 命令帧明细 (cubx fallback; L1-3 密钥流程 / L1-4 踢人)
           if(aps['zbee_aps.cmd_id']!=null){
             var acid=parseInt(aps['zbee_aps.cmd_id'],16);
-            apsF.push(['Command', _tlApsCmdName(acid)]);
+            apsF.push(['Command', aps['zbee_aps.cmd_name']||_tlApsCmdName(acid)]);
             if(aps['zbee_aps.cmd_key_type']!=null){
               var kt=parseInt(aps['zbee_aps.cmd_key_type'],16);
               apsF.push(['Key Type', kt===1?'Network Key':kt===4?'TC Link Key':'0x'+kt.toString(16)]);
@@ -456,6 +467,13 @@ reg('tl', function(){
               var us=parseInt(aps['zbee_aps.cmd_update_status']);
               apsF.push(['Update Status', us===1?'UNSECURED_JOIN':us===2?'DEVICE_LEFT':'0x'+us.toString(16)]);
             }
+          }
+          // APS 可靠性字段 (2026-08-06: L3-1 配对基础)
+          if(aps['zbee_aps.ack_req']!=null){
+            apsF.push(['Ack Req', aps['zbee_aps.ack_req']==='1'?'要求确认':'未要求', aps['zbee_aps.ack_req']==='1'?'该帧要求 APS 确认, 应收到 ack':'无 ack 期望']);
+          }
+          if(aps['zbee_aps.ack_format']!=null){
+            apsF.push(['Ack Format', aps['zbee_aps.ack_format']==='0'?'沿用原帧 Counter':'新 Counter', 'ack 帧 FCF bit4']);
           }
           html+=_tlLayer('APS', '#16a34a', apsF);
         }else if(!d.decrypted){

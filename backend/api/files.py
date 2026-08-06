@@ -15,6 +15,7 @@ router = APIRouter()
 
 _packets: list[dict] = []
 _nodes: dict[int, dict] = {}
+_ack_match_cache: tuple = (None, None)   # (packets 引用 id, {ack_pid: orig_pid}) — 导入后失效
 _file_type: str = ""
 _verify_report: dict | None = None  # 校验报告
 _parser_verify_report: dict | None = None  # 解析正确性校验报告 (P6) — 导入后自动跑
@@ -752,6 +753,7 @@ async def packet_list(addr: str = "", pan: str = "",
             "security": p.get("security", ""), "status": p.get("status", ""),
             "aps_cluster": p.get("aps_cluster"),
             "aps_cluster_name": p.get("aps_cluster_name"),
+            "aps_cmd_name": p.get("aps_cmd_name"),   # APS 命令名 (时间线类型列显示)
             "zcl_cmd_name": p.get("zcl_cmd_name"),
             "decrypted": p.get("decrypted", False),
             # NWK 命令级字段 (时间线事件标记用; tshark/cubx 双路径已输出)
@@ -850,7 +852,9 @@ def _fallback_layers(p: dict) -> dict:
         layers["ZigBee Security Header"] = sec_fields
 
     # ── APS (Data 帧) ──
-    if p.get("aps_cluster") is not None or p.get("aps_profile") is not None:
+    if (p.get("aps_cluster") is not None or p.get("aps_profile") is not None
+            or p.get("aps_cmd_id") is not None or p.get("aps_ack_req") is not None):
+        # 含命令帧/可靠性字段 (2026-08-06): 命令帧无 cluster/profile, 此前整个 APS 区被跳过
         aps: dict = {}
         if p.get("aps_profile") is not None:
             aps["zbee_aps.profile"] = f"0x{p['aps_profile']:04X}"
@@ -867,12 +871,19 @@ def _fallback_layers(p: dict) -> dict:
         # APS 命令帧明细 (L1-3 密钥流程: TransportKey/Confirm 的 key_type; L1-4: Remove/Update)
         if p.get("aps_cmd_id") is not None:
             aps["zbee_aps.cmd_id"] = f"0x{p['aps_cmd_id']:02X}"
+            if p.get("aps_cmd_name"):
+                aps["zbee_aps.cmd_name"] = p["aps_cmd_name"]
             if p.get("aps_cmd_key_type") is not None:
                 aps["zbee_aps.cmd_key_type"] = f"0x{p['aps_cmd_key_type']:02X}"
             if p.get("aps_cmd_remove_target"):
                 aps["zbee_aps.cmd_remove_target"] = p["aps_cmd_remove_target"]
             if p.get("aps_cmd_update_status") is not None:
                 aps["zbee_aps.cmd_update_status"] = str(p["aps_cmd_update_status"])
+        # APS 可靠性字段 (2026-08-06: L3-1 配对基础)
+        if p.get("aps_ack_req") is not None:
+            aps["zbee_aps.ack_req"] = "1" if p["aps_ack_req"] else "0"
+        if p.get("ack_format") is not None:
+            aps["zbee_aps.ack_format"] = str(p["ack_format"])
         layers["zbee_aps"] = aps
 
     # ── ZCL ──
@@ -1010,6 +1021,55 @@ def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
     return None
 
 
+def _build_ack_match(packets: list[dict]) -> dict:
+    """APS Ack ↔ 原帧配对 (2026-08-06, 第七次素材实证 60/62 精确匹配).
+
+    协议依据: ack 帧携带完整 APS 头 (素材解密明文 8B 实证:
+    [FCF][dst_ep][cluster:2][profile:2][src_ep][counter]), counter 沿用原帧
+    (FCF bit4 ack format=0) — 因此可字段级精确配对.
+    匹配: 原帧 nwk_src == ack.nwk_dst 且 aps_counter 相同, 取 ack 前最近一帧;
+    ack format=1 (新 counter): 方向 + 最近时序推断.
+    返回 {ack_pid: orig_pid} (双向映射由详情端点组装).
+    """
+    from collections import defaultdict
+    idx: dict[tuple, list] = defaultdict(list)
+    for i, p in enumerate(packets):
+        s, c = p.get("nwk_src"), p.get("aps_counter")
+        if c is not None and s is not None and p.get("pkt_type") != "APS Ack":
+            idx[(s, c)].append((i, p))
+    pairs: dict = {}
+    for ai, a in enumerate(packets):
+        if a.get("pkt_type") != "APS Ack":
+            continue
+        ats = a.get("ts", 0.0)
+        ctr, dst = a.get("aps_counter"), a.get("nwk_dst")
+        best = None
+        if ctr is not None and dst is not None:
+            cands = [(i, p) for i, p in idx.get((dst, ctr), []) if p.get("ts", 0.0) < ats]
+            if cands:
+                best = max(cands, key=lambda ip: ip[1].get("ts", 0.0))[0]
+        if best is None and a.get("ack_format") == 1:
+            # format=1: counter 为新值, 只能方向 + 最近时序 (推断级)
+            cands = [(i, p) for i, p in enumerate(packets)
+                     if p.get("nwk_src") == dst and p.get("ts", 0.0) < ats
+                     and p.get("pkt_type") != "APS Ack"]
+            if cands:
+                best = max(cands, key=lambda ip: ip[1].get("ts", 0.0))[0]
+        if best is not None:
+            pairs[ai] = best
+    return pairs
+
+
+def _get_ack_match() -> dict:
+    """惰性构建 + 缓存 (以 _packets 引用 id 失效, 重新导入自动重建)."""
+    global _ack_match_cache
+    ref, pairs = _ack_match_cache
+    if ref != id(_packets) or pairs is None:
+        pairs = _build_ack_match(_packets)
+        _ack_match_cache = (id(_packets), pairs)
+    return pairs
+
+
 @router.get("/packets/{pkt_id}")
 async def packet_detail(pkt_id: int):
     """单帧协议树 — 返回 raw_layers 完整 JSON"""
@@ -1019,6 +1079,19 @@ async def packet_detail(pkt_id: int):
     layers = p.get("raw_layers") or {}
     if not layers:
         layers = _fallback_layers(p)  # cubx 路径 raw_layers 为空 → 平铺字段构造 (U5)
+    # APS Ack 配对 (ack 帧 → 被确认帧; 数据帧 → 确认它的 ack 帧)
+    ack_pair = None
+    if p.get("pkt_type") == "APS Ack":
+        orig = _get_ack_match().get(pkt_id)
+        if orig is not None:
+            ack_pair = {"kind": "ack_to", "peer_id": orig,
+                        "text": f"确认了帧 #{orig}"}
+    else:
+        for ack_id, orig_id in _get_ack_match().items():
+            if orig_id == pkt_id:
+                ack_pair = {"kind": "ack_from", "peer_id": ack_id,
+                            "text": f"被帧 #{ack_id} 确认"}
+                break
     return {
         "id": pkt_id,
         "ts": p["ts"],
@@ -1029,4 +1102,5 @@ async def packet_detail(pkt_id: int):
         # ZCL 按簇正确解析的命令名 (前端详情 ZCL 层优先使用, 避免前端混合表误标)
         "zcl_cmd_name": p.get("zcl_cmd_name"),
         "aps_cluster_name": p.get("aps_cluster_name"),
+        "aps_ack_pair": ack_pair,   # APS Ack 配对 (2026-08-06)
     }
