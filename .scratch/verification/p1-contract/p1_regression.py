@@ -30,28 +30,27 @@ check("全局去重生效", stats['duplicates'] > 4000, f"{stats['original']} ->
 ul_before = len([p for p in packets if p.get('zcl_cmd_id') == 1 and p.get('aps_cluster_name') == 'Door Lock'])
 deduped2 = dedup_packets(packets)
 ul_after = len([p for p in deduped2 if p.get('zcl_cmd_id') == 1 and p.get('aps_cluster_name') == 'Door Lock'])
-tx = set((p.get('nwk_dst'), p.get('nwk_seq')) for p in deduped2 if p.get('zcl_cmd_id') == 1 and p.get('aps_cluster_name') == 'Door Lock')
-check("Unlock 同跳去重 634→461 (37% 重复捕获)", ul_after == 461, f"{ul_before} -> {ul_after}")
-check("事务数 399 (分析层语义, 两跳合并)", len(tx) == 399, f"唯一事务 {len(tx)}")
+check("Unlock 同跳去重 634→461 (物理重复 27%)", ul_after == 461, f"{ul_before} -> {ul_after}")
 
-print("\n== ④ 去重后投递率 (54995/33440 结论不变) ==")
+print("\n== ④ 投递率 (回绕安全键: 物理去重后逐帧, 自审修正 2026-08-06) ==")
+# ⚠️ 不能用 (nwk_dst,nwk_seq) 事务键 — nwk_seq 8 位回绕会错误合并独立事务
+# (实锤: (54995,seq=12) 是相隔 421s 的两个事务), 曾致 62%/67% 数字失真。
+# 正确口径: 发送帧 = mac_src=0 物理去重后; 投递 = 锁侧 ACK 佐证 (缺投帧 3s 内锁 ACK).
 deduped = dedup_packets(packets)
 unlocks = [p for p in deduped if p.get('zcl_cmd_id') == 1 and p.get('aps_cluster_name') == 'Door Lock']
-sent = {}
-for p in unlocks:
-    sent.setdefault((p.get('nwk_dst'), p.get('nwk_seq')), p)
-delivered = set()
-for p in unlocks:
-    if p.get('mac_dst') == p.get('nwk_dst') and p.get('mac_dst') not in (None, ''):
-        delivered.add((p.get('nwk_dst'), p.get('nwk_seq')))
-sent_cnt = Counter(k[0] for k in sent)
-deliv_cnt = Counter(k[0] for k in delivered)
+acks = [p for p in deduped if p.get('pkt_type') == 'APS Ack']
 for dst in (54995, 33440):
-    s, d = sent_cnt[dst], deliv_cnt.get(dst, 0)
-    check(f"锁 {dst} 投递率 {'62%' if dst == 54995 else '67%'}", d/s == (15/24 if dst == 54995 else 16/24), f"{d}/{s}")
-total_sent = sum(sent_cnt.values())
-total_deliv = sum(deliv_cnt.values())
-check("去重后发送尝试 399", total_sent == 399, f"实际 {total_sent}")
+    s1 = [p for p in unlocks if p.get('nwk_dst') == dst and p.get('mac_src') == 0]
+    d2_ts = [p['ts'] for p in unlocks if p.get('nwk_dst') == dst and p.get('mac_dst') == dst]
+    miss = [p for p in s1 if not any(0 < dt - p['ts'] < 3 for dt in d2_ts)]
+    acked = sum(1 for p in miss if any(a.get('nwk_src') == dst and 0 < a['ts'] - p['ts'] < 3 for a in acks))
+    check(f"锁 {dst} 缺投帧 {len(miss)} 全有锁侧 ACK (收到佐证)", acked == len(miss), f"{acked}/{len(miss)}")
+    check(f"锁 {dst} 发送 {len(s1)} 全部投递 (帧证据+ACK 佐证)", len(miss) == 0 or acked == len(miss), f"{len(s1)} 发送, 投递帧 {len(d2_ts)}, 缺投 {len(miss)}")
+# 直发锁 ACK 覆盖口径 (锁收到确认度, 非投递率)
+for dst in (9240, 48283):
+    s1 = [p for p in unlocks if p.get('nwk_dst') == dst and p.get('mac_src') == 0]
+    ack_n = sum(1 for p in s1 if any(a.get('nwk_src') == dst and 0 < a['ts'] - p['ts'] < 3 for a in acks))
+    check(f"直发锁 {dst} 锁侧 ACK 覆盖 {ack_n}/{len(s1)}", ack_n >= len(s1) * 0.5, f"{ack_n}/{len(s1)}")
 
 print("\n== ⑤ 标准入网素材解析 (cubx 路径无回归) ==")
 jp, _, _ = parse_cubx(JOIN_PATH, include_mac_frames=True)

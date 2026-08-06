@@ -625,10 +625,12 @@ async def packet_summary(addr: str = "", pan: str = "",
             t = p.get("pkt_type", "?")
             type_counts[t] = type_counts.get(t, 0) + 1
             # Find communication peer
+            # ⚠️ P1 契约修复 (2026-08-06): cubx 现保留广播地址 (0xFFFC/0xFFFD/0xFFFF),
+            # 邻居统计必须排除 ≥0xFFF0, 否则广播帧把 0xFFFC 当成 peer 出现虚拟节点
             peer = None
-            if p.get("nwk_src") == addr_int and p.get("nwk_dst") and p["nwk_dst"] != 0xFFFF:
+            if p.get("nwk_src") == addr_int and p.get("nwk_dst") and p["nwk_dst"] < 0xFFF0:
                 peer = p["nwk_dst"]
-            elif p.get("nwk_dst") == addr_int and p.get("nwk_src") and p["nwk_src"] != 0xFFFF:
+            elif p.get("nwk_dst") == addr_int and p.get("nwk_src") and p["nwk_src"] < 0xFFF0:
                 peer = p["nwk_src"]
             if peer is not None:
                 peers[peer] = peers.get(peer, 0) + 1
