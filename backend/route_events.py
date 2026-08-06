@@ -510,6 +510,8 @@ def derive_topology(timeline: RouteEventTimeline,
     # ── 节点 ──
     node_list = []
     for aid in sorted(active_aids):
+        if not is_unicast(aid):
+            continue  # 广播地址 (RREQ dst=0xFFFC 广播探测) 不当节点
         n = nodes.get(aid, {})
         node_list.append({
             "aid": aid, "label": f"0x{aid:04X}",
