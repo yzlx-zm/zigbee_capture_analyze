@@ -28,8 +28,10 @@ def _addr4(v) -> str:
 NWK_CMD_NETWORK_STATUS = 3
 NWK_CMD_ROUTE_REQUEST = 1
 NWK_CMD_ROUTE_RECORD = 5
+NWK_CMD_LEAVE = 4
 NS_CODE_SOURCE_ROUTE_FAILURE = 0x0B   # Source Route Failure (下行, concentrator 专属)
 NS_CODE_MANY_TO_ONE_ROUTE_FAILURE = 0x0C  # Many-to-One Route Failure (上行)
+NS_CODE_INDIRECT_EXPIRY = 0x06        # 间接事务过期 (L6-S3)
 
 # ── L3-5 判定参数 (grilling 定稿 + 素材校准 2026-08-04) ──
 ROUND_GAP_S = 0.5       # 同轮判定: 间隔 <0.5s 归同轮 (APS 重试 3 连发 = 1 轮, 素材间隔 3-10ms)
@@ -306,10 +308,152 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
     }
 
 
+# ── L3-1 判定参数 (MCP 核对 2026-08-06, 见 L3-1.md) ──
+# APS 重传: 50ms×hops 间隔, 3 次尝试, 单次 1600ms (非 SED 完整失败链 4.8s);
+# 配对窗口复用 aps_pairing.ACK_MATCH_WINDOW_S (5s, 覆盖完整重试链)
+L31_MIN_NO_ACK_PER_DEV = 2   # 设备级收敛: 同设备同方向无 ack ≥2 才输出 (排除单帧瞬态)
+L31_RETRY_THRESHOLD = 2      # R2 高置信: 同 counter 重发 ≥2 (栈内重传证据)
+L31_CROSS_WINDOW_S = 10.0    # 交叉归因窗口: 0x0B/0x06/Leave 在无 ack 帧前后 ±10s
+
+
+def _cross_signals(packets: list[dict], ts: float) -> dict:
+    """无 ack 帧时间点的交叉信号 (R3 归因): 0x0B 路由错误 / 0x06 间接过期 / Leave."""
+    lo, hi = ts - L31_CROSS_WINDOW_S, ts + L31_CROSS_WINDOW_S
+    out = {"route_error": 0, "indirect_expiry": 0, "leave": 0}
+    for p in packets:
+        t = p.get("ts", 0.0)
+        if not (lo <= t <= hi):
+            continue
+        if p.get("nwk_cmd_id") == NWK_CMD_NETWORK_STATUS:
+            c = p.get("nwk_status_code")
+            if c in (NS_CODE_SOURCE_ROUTE_FAILURE, NS_CODE_MANY_TO_ONE_ROUTE_FAILURE):
+                # 0x0B (下行源路由) / 0x0C (上行 MTORR) 均属 L3-5 路由失效
+                out["route_error"] += 1
+            elif c == NS_CODE_INDIRECT_EXPIRY:  # 0x06 (L6-S3)
+                out["indirect_expiry"] += 1
+        elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE:
+            out["leave"] += 1
+    return out
+
+
+def detect_l3_1(packets: list[dict]) -> dict:
+    """发送命令无 APS Ack 检测 (文档 L3-1.md v1.0).
+
+    规则 (MCP 核对 2026-08-06):
+      - R1 : 数据帧 aps_ack_req=True 且 5s 配对窗口无 ack → 无确认 (中置信, 字段级)
+      - R2 : R1 + 同 counter 重发 ≥2 (栈内重传证据) → 栈确认失败 (高置信, 非 SED 近铁证)
+            ⚠️ 重发次数不做硬阈值上限 (应用层可叠加, 社区案例 23 条)
+      - R3 : 交叉归因 — 伴随 0x0B → L3-5; 0x06 → L6-S3; Leave → 离线
+      - R4 : 方向细分 — 下行 (协调器→设备=控制失败) / 上行 (上报丢失)
+      设备级收敛: 同设备同方向无 ack ≥2 次才输出结论 (排除单帧瞬态/抓包盲区)
+    """
+    from ..aps_pairing import build_ack_match
+    ack_to_orig, _ = build_ack_match(packets)
+
+    # 事务级无 ack 判定: 有 ack 的事务 = ack_to_orig 里任一被确认帧的 (nwk_src, aps_counter);
+    # 重传帧 (同 counter) 只需最近一帧被 ack 配对, 整个事务即算"有 ack" (修正 2026-08-06)
+    acked_txn = {(packets[oi].get("nwk_src"), packets[oi].get("aps_counter"))
+                 for oi in ack_to_orig.values()}
+    # 无 ack 帧 = ack_req=True 且其事务无任何 ack 配对
+    no_ack: list[tuple[int, dict]] = []
+    for i, p in enumerate(packets):
+        if p.get("aps_ack_req") and p.get("pkt_type") != "APS Ack" \
+                and (p.get("nwk_src"), p.get("aps_counter")) not in acked_txn:
+            no_ack.append((i, p))
+
+    # 重传统计: 同 (nwk_src, aps_counter) 去重复捕获 (同 counter+mac_seq = 物理帧被抓两次)
+    # 后的帧数 (栈内重传; 新 counter = 应用新事务不计)
+    retry_cnt: dict[tuple, int] = defaultdict(int)
+    seen_mac: set = set()
+    for p in packets:
+        s, c = p.get("nwk_src"), p.get("aps_counter")
+        if s is None or c is None or p.get("pkt_type") == "APS Ack":
+            continue
+        mkey = (s, c, p.get("mac_seq"))
+        if mkey in seen_mac:
+            continue
+        seen_mac.add(mkey)
+        retry_cnt[(s, c)] += 1
+
+    # 按设备+方向聚合
+    dev_map: dict[tuple, dict] = {}
+    for i, p in no_ack:
+        src, dst = p.get("nwk_src"), p.get("nwk_dst")
+        downlink = dst != 0x0000  # 目标非协调器 = 下行 (网关→设备)
+        key = (src, dst if downlink else src)  # 设备视角: 下行按 dst, 上行按 src
+        agg = dev_map.setdefault(key, {
+            "device": dst if downlink else src,
+            "direction": "downlink" if downlink else "uplink",
+            "count": 0, "retries": [], "cross": {"route_error": 0, "indirect_expiry": 0, "leave": 0},
+            "clusters": defaultdict(int), "first_ts": p.get("ts", 0.0), "last_ts": p.get("ts", 0.0),
+        })
+        agg["count"] += 1
+        agg["first_ts"] = min(agg["first_ts"], p.get("ts", 0.0))
+        agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
+        agg["clusters"][p.get("aps_cluster_name") or "?"] += 1
+        agg["retries"].append(retry_cnt.get((p.get("nwk_src"), p.get("aps_counter")), 1))
+        cs = _cross_signals(packets, p.get("ts", 0.0))
+        for k in agg["cross"]:
+            agg["cross"][k] += cs[k]
+
+    results = []
+    evidence = []
+    for agg in dev_map.values():
+        if agg["count"] < L31_MIN_NO_ACK_PER_DEV:
+            continue  # 单帧瞬态/盲区, 不输出
+        max_retry = max(agg["retries"])
+        cross = agg["cross"]
+        cross_hints = []
+        if cross["route_error"]:
+            cross_hints.append("L3-5 源路由失效")
+        if cross["indirect_expiry"]:
+            cross_hints.append("L6-S3 间接过期")
+        if cross["leave"]:
+            cross_hints.append("设备离线/被踢")
+        # 置信度: R2 (重发) + 交叉 → 高; 仅 R1 + 交叉 → 中; 仅 R1 → 中 (收敛后)
+        conf, rule = "中", "R1"
+        if max_retry >= L31_RETRY_THRESHOLD:
+            conf, rule = "高", "R2"
+        if cross_hints:
+            hint_s = " 交叉: " + "/".join(cross_hints)
+        else:
+            hint_s = " 无交叉信号 (抓包盲区或设备侧)"
+        summary = (f"命令无 APS Ack ×{agg['count']} ({'下行' if agg['direction']=='downlink' else '上行'}, "
+                   f"重发最多 ×{max_retry}){hint_s}")
+        results.append({
+            "device": agg["device"], "verdict": "L3-1_HIT",
+            "sub_rule": rule, "confidence": conf,
+            "direction": agg["direction"],
+            "no_ack_count": agg["count"],
+            "retry_max": max_retry,
+            "cross": agg["cross"],
+            "summary": summary,
+        })
+        for ts in (agg["first_ts"], agg["last_ts"]):
+            evidence.append(_ev(ts, None, "L3-1", summary))
+
+    ev, ev_total = _cut(evidence)
+    if results:
+        verdict, conf = "L3-1_HIT", max(r["confidence"] for r in results)
+        total = sum(r["no_ack_count"] for r in results)
+        concl = (f"发送命令无 APS Ack ×{total} (方向: 下行 {sum(1 for r in results if r['direction']=='downlink')} 设备"
+                 f" / 上行 {sum(1 for r in results if r['direction']=='uplink')} 设备)")
+    else:
+        verdict, conf = ("HEALTHY", "高") if no_ack else ("INCONCLUSIVE", "低")
+        concl = "未发现命令无确认" if verdict == "HEALTHY" else "无 ack 候选帧 (需含 ack_req 字段素材)"
+    return {
+        "scenario": "L3-1", "verdict": verdict, "confidence": conf,
+        "summary": concl, "conclusion": concl,
+        "no_ack_total": len(no_ack), "devices": results,
+        "evidence": ev, "evidence_total": ev_total,
+    }
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
     """运行全部 L3 检测 → 汇总报告."""
     return {
         "l3_5": detect_l3_5(packets, l1_result),
+        "l3_1": detect_l3_1(packets),
     }

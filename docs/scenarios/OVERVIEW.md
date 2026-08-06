@@ -33,7 +33,7 @@
 
 | ID | 场景 | 状态 | 现有检测能力 |
 |----|------|------|-------------|
-| L3-1 | 发送命令无 APS Ack | ⬜ | APS counter/ack 匹配 |
+| L3-1 | 发送命令无 APS Ack | 📝 检测器就绪 (R1+R2 素材验证通过) | APS Ack 配对 (cc99542) + 事务级无 ack 判定 + 交叉归因 (838D ×42 与 L3-5 交叉 / G32 BE5A ×45 与 0x0C 交叉 / 第七次 C1F5) |
 | L3-2 | 命令送达未执行 | ⬜ | ZCL Default Response |
 | L3-3 | 状态上报滞后 | ⬜ | Write→Report 间隔 |
 | L3-4 | 绑定/组播未达 | ⬜ | Bind Response / MTORR |

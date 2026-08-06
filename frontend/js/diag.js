@@ -60,6 +60,7 @@ var PLAIN_TITLES = {
   'L1-4': '设备被网关拒绝或踢出',
   'L2-1': '终端频繁离线',
   'L3-5': '设备收不到网关下发',
+  'L3-1': '命令收不到确认',
   'L6-3': 'SED 消息收不到',
   'OFF': '设备离网',
 };
@@ -202,10 +203,12 @@ reg('diag', function () {
         + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
         + '</div></div>';
 
-    // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效) ──
+    // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效 + L3-1 命令无 APS Ack) ──
     A.get('/api/diag/l3').then(function (l3d) {
       var l35 = l3d && !l3d.error ? (l3d.l3_5 || {}) : {};
+      var l31 = l3d && !l3d.error ? (l3d.l3_1 || {}) : {};
       checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
+      checks['L3-1'] = { scenario: 'L3-1', verdict: l31.verdict, conclusion: l31.conclusion };
       var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
         + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
         + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
@@ -218,10 +221,28 @@ reg('diag', function () {
                 'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary, 'L3-5');
             }).join('')
           + '</div>' : '');
+      // ── L3-1 卡片 (2026-08-06: 发送命令无 APS Ack, APS 配对能力支撑) ──
+      var b31 = '无 ack 事务: <b class="' + vClass(l31.verdict, 'L3-1') + '">' + (l31.no_ack_total || 0) + '</b>'
+        + '<br><span class="text-muted">' + (l31.summary || '') + '</span>'
+        + ((l31.devices || []).length ? '<div class="divider">'
+          + (l31.devices || []).map(function (d) {
+              var cross = '';
+              if (d.cross && (d.cross.route_error || d.cross.indirect_expiry || d.cross.leave)) {
+                cross = '<span class="text-dim"> ' + (d.cross.route_error ? 'L3-5×' + d.cross.route_error : '')
+                  + (d.cross.indirect_expiry ? ' L6-S3×' + d.cross.indirect_expiry : '')
+                  + (d.cross.leave ? ' Lv×' + d.cross.leave : '') + '</span>';
+              }
+              return devLine(d.device, d.verdict, d.sub_rule,
+                (d.direction === 'downlink' ? '↓下行' : '↑上行') + '×' + (d.no_ack_count || 0)
+                + '/重发' + (d.retry_max || 0) + cross,
+                d.summary, 'L3-1');
+            }).join('')
+          + '</div>' : '');
       h += '<div class="card l1-sec">'
         + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
         + '<div class="l1-cards">'
         + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
+        + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
         + '</div></div>';
       // ── L6 SED 专项检测区 (L6-S3 间接事务过期) ──
       A.get('/api/diag/l6').then(function (l6d) {
