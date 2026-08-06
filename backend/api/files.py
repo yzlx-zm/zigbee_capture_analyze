@@ -801,6 +801,17 @@ def _fallback_layers(p: dict) -> dict:
             wpan["wpan.dst16"] = f"{p['mac_dst']:04x}"
         if p.get("mac_src") is not None:
             wpan["wpan.src16"] = f"{p['mac_src']:04x}"
+        # MAC 命令帧/Beacon 明细 (L1-1/L1-2 入网流程关键: AssocReq/AssocResp/BeaconReq)
+        if p.get("mac_cmd_id") is not None:
+            wpan["wpan.cmd_id"] = str(p["mac_cmd_id"])
+        if p.get("mac_src64"):
+            wpan["wpan.src64"] = p["mac_src64"]
+        if p.get("mac_dst64"):
+            wpan["wpan.dst64"] = p["mac_dst64"]
+        if p.get("mac_beacon_pan") is not None:
+            wpan["wpan.beacon_pan"] = f"{p['mac_beacon_pan']:04x}"
+        if p.get("mac_beacon_permit") is not None:
+            wpan["wpan.beacon_permit"] = str(p["mac_beacon_permit"])
         layers["wpan"] = wpan
 
     # ── NWK ──
@@ -853,6 +864,15 @@ def _fallback_layers(p: dict) -> dict:
             aps["zbee_aps.dst"] = str(p["aps_dst_ep"])
         if p.get("aps_counter") is not None:
             aps["zbee_aps.counter"] = str(p["aps_counter"])
+        # APS 命令帧明细 (L1-3 密钥流程: TransportKey/Confirm 的 key_type; L1-4: Remove/Update)
+        if p.get("aps_cmd_id") is not None:
+            aps["zbee_aps.cmd_id"] = f"0x{p['aps_cmd_id']:02X}"
+            if p.get("aps_cmd_key_type") is not None:
+                aps["zbee_aps.cmd_key_type"] = f"0x{p['aps_cmd_key_type']:02X}"
+            if p.get("aps_cmd_remove_target"):
+                aps["zbee_aps.cmd_remove_target"] = p["aps_cmd_remove_target"]
+            if p.get("aps_cmd_update_status") is not None:
+                aps["zbee_aps.cmd_update_status"] = str(p["aps_cmd_update_status"])
         layers["zbee_aps"] = aps
 
     # ── ZCL ──
@@ -958,6 +978,23 @@ def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
         if p.get("nwk_status_target") is not None:
             tree["zbee_nwk.cmd.route.dest"] = f"0x{p['nwk_status_target']:04X}"
         return tree
+    if cmd_name == "Route Request" and p.get("route_req"):
+        rr = p["route_req"]
+        return {
+            "zbee_nwk.cmd.route.opts": f"0x{rr['options']:02X}",
+            "zbee_nwk.cmd.route.id": str(rr["id"]),
+            "zbee_nwk.cmd.route.dest": f"0x{rr['dest']:04X}",
+            "zbee_nwk.cmd.route.cost": str(rr["cost"]),
+        }
+    if cmd_name == "Route Reply" and p.get("route_reply"):
+        rp = p["route_reply"]
+        return {
+            "zbee_nwk.cmd.route.opts": f"0x{rp['options']:02X}",
+            "zbee_nwk.cmd.route.id": str(rp["id"]),
+            "zbee_nwk.cmd.route.orig": f"0x{rp['originator']:04X}",
+            "zbee_nwk.cmd.route.resp": f"0x{rp['responder']:04X}",
+            "zbee_nwk.cmd.route.cost": str(rp["cost"]),
+        }
     if cmd_name == "Leave":
         return {
             "zbee_nwk.cmd.leave.rejoin": "1" if p.get("nwk_leave_rejoin") else "0",

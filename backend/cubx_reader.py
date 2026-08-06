@@ -328,6 +328,42 @@ def _parse_nwk_command_id(plaintext: bytes) -> int | None:
     return plaintext[0] if len(plaintext) > 0 else None
 
 
+def _parse_route_request(plaintext: bytes) -> dict | None:
+    """手动解析 Route Request 载荷 (Zigbee NWK 命令 0x01).
+
+    结构: [cmd_id(1)][options(1)][id(1)][dest(2 LE)][path_cost(1)]
+    对齐 tshark zbee_nwk.cmd.route.* 字段 (详情面板 Route Request 展示).
+    """
+    if len(plaintext) < 6:
+        return None
+    if plaintext[0] != 0x01:
+        return None
+    return {
+        "options": plaintext[1],
+        "id": plaintext[2],
+        "dest": int.from_bytes(plaintext[3:5], "little"),
+        "cost": plaintext[5],
+    }
+
+
+def _parse_route_reply(plaintext: bytes) -> dict | None:
+    """手动解析 Route Reply 载荷 (Zigbee NWK 命令 0x02).
+
+    结构: [cmd_id(1)][options(1)][id(1)][originator(2 LE)][responder(2 LE)][path_cost(1)]
+    """
+    if len(plaintext) < 8:
+        return None
+    if plaintext[0] != 0x02:
+        return None
+    return {
+        "options": plaintext[1],
+        "id": plaintext[2],
+        "originator": int.from_bytes(plaintext[3:5], "little"),
+        "responder": int.from_bytes(plaintext[5:7], "little"),
+        "cost": plaintext[7],
+    }
+
+
 def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                  channel: int, lqi: int, rssi: int,
                  network_keys: list[KeyRecord],
@@ -357,6 +393,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "mac_beacon_permit": None,   # Beacon PermitJoin 位 (帧类型 0)
         "link_status_neighbors": None,
         "route_record_relays": None,
+        "route_req": None,          # Route Request 载荷 (详情面板)
+        "route_reply": None,        # Route Reply 载荷 (详情面板)
         "nwk_cmd_id": None,          # NWK 命令 ID (4=Leave, 8=Link Status...)
         "nwk_status_code": None,     # Network Status 错误码 (0x0B=Source Route Failure)
         "nwk_status_target": None,   # Network Status 目标短地址
@@ -477,6 +515,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         if nwk_cmd_id == 1 and len(plaintext) >= 2:  # Route Request
             # options bit3 (0x08) = many-to-one (MTORR) — 行为实证 (838D 素材 121/161)
             result["nwk_route_request_mto"] = (plaintext[1] >> 3) & 1
+            # 完整载荷 (详情面板 Route Request 展示: Originator/Dest/Cost/ID/Options)
+            result["route_req"] = _parse_route_request(plaintext)
+        elif nwk_cmd_id == 2:  # Route Reply (详情面板展示: Originator/Responder/Cost)
+            result["route_reply"] = _parse_route_reply(plaintext)
         elif nwk_cmd_id == 8:  # Link Status
             result["link_status_neighbors"] = _parse_link_status(plaintext)
         elif nwk_cmd_id == 5:  # Route Record

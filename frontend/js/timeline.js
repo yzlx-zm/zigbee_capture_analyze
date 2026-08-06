@@ -233,14 +233,24 @@ reg('tl', function(){
       var layers=d.layers;
       // MAC layer (wpan)
       if(layers.wpan){
-        html+=_tlLayer('MAC', '#d97706', [
-          ['Frame Type', _tlMacType(layers.wpan)],
+        var wpanF=[['Frame Type', _tlMacType(layers.wpan)],
           ['Seq#', _tlF(layers.wpan,'wpan.seq_no')],
           ['Dest PAN', _tlA(layers.wpan,'wpan.dst_pan')],
           ['Dest Addr', _tlA(layers.wpan,'wpan.dst16')],
           ['Src Addr', _tlA(layers.wpan,'wpan.src16')],
-          ['FCS OK', layers.wpan['wpan.fcs_ok']==='1'?'Yes':'No'],
-        ]);
+          ['FCS OK', layers.wpan['wpan.fcs_ok']==='1'?'Yes':'No']];
+        // MAC 命令帧/Beacon 明细 (cubx fallback; L1-1/L1-2 入网流程)
+        if(layers.wpan['wpan.cmd_id']!=null){
+          var mcid=parseInt(layers.wpan['wpan.cmd_id']);
+          wpanF.push(['MAC Cmd', _tlMacCmdName(mcid), '入网流程命令']);
+        }
+        if(layers.wpan['wpan.src64'])wpanF.push(['Src EUI64', layers.wpan['wpan.src64']]);
+        if(layers.wpan['wpan.dst64'])wpanF.push(['Dest EUI64', layers.wpan['wpan.dst64']]);
+        if(layers.wpan['wpan.beacon_pan']!=null){
+          wpanF.push(['Beacon PAN', _tlA(layers.wpan,'wpan.beacon_pan')]);
+          wpanF.push(['Permit Join', layers.wpan['wpan.beacon_permit']==='1'?'允许':'不允许']);
+        }
+        html+=_tlLayer('MAC', '#d97706', wpanF);
       }
       // NWK layer
       if(layers.zbee_nwk){
@@ -428,13 +438,26 @@ reg('tl', function(){
       if(!isNwkCmd){
         if(layers.zbee_aps){
           var aps=layers.zbee_aps;
-          html+=_tlLayer('APS', '#16a34a', [
-            ['Cluster', _tlCluster(aps)],
+          var apsF=[['Cluster', _tlCluster(aps)],
             ['Profile', _tlA(aps,'zbee_aps.profile')],
             ['Src EP', aps['zbee_aps.src']||'?'],
             ['Dest EP', aps['zbee_aps.dst']||'?'],
-            ['Counter', aps['zbee_aps.counter']||'?'],
-          ]);
+            ['Counter', aps['zbee_aps.counter']||'?']];
+          // APS 命令帧明细 (cubx fallback; L1-3 密钥流程 / L1-4 踢人)
+          if(aps['zbee_aps.cmd_id']!=null){
+            var acid=parseInt(aps['zbee_aps.cmd_id'],16);
+            apsF.push(['Command', _tlApsCmdName(acid)]);
+            if(aps['zbee_aps.cmd_key_type']!=null){
+              var kt=parseInt(aps['zbee_aps.cmd_key_type'],16);
+              apsF.push(['Key Type', kt===1?'Network Key':kt===4?'TC Link Key':'0x'+kt.toString(16)]);
+            }
+            if(aps['zbee_aps.cmd_remove_target'])apsF.push(['Remove Target', aps['zbee_aps.cmd_remove_target'], '被移除设备 EUI64 (踢人)']);
+            if(aps['zbee_aps.cmd_update_status']!=null){
+              var us=parseInt(aps['zbee_aps.cmd_update_status']);
+              apsF.push(['Update Status', us===1?'UNSECURED_JOIN':us===2?'DEVICE_LEFT':'0x'+us.toString(16)]);
+            }
+          }
+          html+=_tlLayer('APS', '#16a34a', apsF);
         }else if(!d.decrypted){
           html+=_tlLayer('APS', '#16a34a', [['Status','🔒 Encrypted']]);
         }
@@ -527,6 +550,16 @@ reg('tl', function(){
     var fcf=parseInt(wpan['wpan.fcf']||'0',16);
     var types={0:'Beacon',1:'Data',2:'ACK',3:'MAC Cmd'};
     return (types[fcf&0x07]||'?')+' [0x'+fcf.toString(16).toUpperCase()+']';
+  }
+  // MAC 命令名 (IEEE 802.15.4; L1-1/L1-2 入网流程)
+  function _tlMacCmdName(id){
+    var names={1:'AssocReq (入网请求)',2:'AssocResp (入网应答)',3:'DataReq (数据请求)',4:'DataConf',5:'PollReq',7:'BeaconReq (信标请求)',8:'BeaconNotify',9:'GTSReq',10:'GTSNotify',11:'GTSConf'};
+    return names[id]||'0x'+id.toString(16);
+  }
+  // APS 命令名 (Zigbee spec; L1-3 密钥流程)
+  function _tlApsCmdName(id){
+    var names={5:'TransportKey (密钥分发)',6:'UpdateDevice',7:'RemoveDevice (踢人)',8:'RequestKey',9:'SwitchKey',15:'VerifyKey',16:'ConfirmKey',17:'Tunnel'};
+    return (names[id]||'0x'+id.toString(16))+' (0x'+id.toString(16).toUpperCase().padStart(2,'0')+')';
   }
   function _tlSecLevel(sec){
     var lv=sec['zbee.sec.sec_level']||'?';
