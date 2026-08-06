@@ -49,8 +49,8 @@ reg('tl', function(){
     // LEFT: packet table
     +'<div class="tl-table-wrap">'
     +'<table class="tbl" id="tltbl"><thead><tr>'
-    +'<th>时间</th><th>类型</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
-    +'</tr></thead><tbody id="tltb"><tr><td colspan="6" class="tl-empty-cell">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
+    +'<th>帧号</th><th>时间</th><th>类型</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
+    +'</tr></thead><tbody id="tltb"><tr><td colspan="7" class="tl-empty-cell">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
     +'</div>'
     // RIGHT: protocol detail panel
     +'<div id="tl-detail">'
@@ -64,6 +64,7 @@ reg('tl', function(){
     +'<span>每页</span><select id="tl-ps"><option value="50">50</option><option value="100">100</option><option value="200" selected>200</option><option value="500">500</option></select></div></div>';
 
   var tlPage=1,tlLimit=200,tlTotal=0,tlCaptureStart=null,tlCaptureEnd=null;
+  var tlPendingJump=null;  // 待定位帧 (APS Ack 配对跳转; search 完成后消费)
 
   function tlFmtTs(ts){var d=new Date(ts*1000);return d.toISOString().substr(11,12);}
 
@@ -125,6 +126,23 @@ reg('tl', function(){
     });
   }
 
+  // U5 后续: 从 DOM 构建查询参数 (search 与跳转定位复用)
+  function tlQueryParams(limit,offset){
+    var q='limit='+limit+'&offset='+offset;
+    var panVal=document.getElementById('tl-pan').value.trim();
+    var nodeVal=document.getElementById('tl-node').value.trim();
+    if(panVal.match(/^0x/i))panVal=panVal.slice(2);
+    if(nodeVal.match(/^0x/i))nodeVal=nodeVal.slice(2);
+    var tf=tlGetTimeFilter();
+    var typeVal=document.getElementById('tl-type').value;
+    if(panVal)q+='&pan='+panVal;
+    if(nodeVal)q+='&addr='+nodeVal;
+    if(tf.ts0)q+='&time_start='+encodeURIComponent(tf.ts0);
+    if(tf.ts1)q+='&time_end='+encodeURIComponent(tf.ts1);
+    if(typeVal)q+='&pkt_type='+encodeURIComponent(typeVal);
+    return q;
+  }
+
   function search(){
     var panVal=document.getElementById('tl-pan').value.trim();
     var nodeVal=document.getElementById('tl-node').value.trim();
@@ -135,12 +153,7 @@ reg('tl', function(){
     tlSaveFilter();
     // Build params
     var typeVal=document.getElementById('tl-type').value;
-    var params='limit='+tlLimit+'&offset='+((tlPage-1)*tlLimit);
-    if(panVal)params+='&pan='+panVal;
-    if(nodeVal)params+='&addr='+nodeVal;
-    if(tf.ts0)params+='&time_start='+encodeURIComponent(tf.ts0);
-    if(tf.ts1)params+='&time_end='+encodeURIComponent(tf.ts1);
-    if(typeVal)params+='&pkt_type='+encodeURIComponent(typeVal);
+    var params=tlQueryParams(tlLimit,(tlPage-1)*tlLimit);
     // Show what we're querying
     document.getElementById('tl-stat').textContent='查询中... '+[panVal?'PAN='+panVal:'',nodeVal?'节点='+nodeVal:'',tf.ts0?'时间:'+tf.ts0+'~'+tf.ts1:''].filter(Boolean).join(' | ')||'全部包';
     // Summary params
@@ -191,9 +204,10 @@ reg('tl', function(){
         // ZCL 命令级显示 (U5): 解密 Data 帧类型列直接显示实际命令 (如 "Down / Close"),
         // 去掉笼统的 "Data"; 过滤仍按 pkt_type=Data (后端), 仅展示增强
         var typeDisp=p.pkt_type;
-        if(p.decrypted&&p.zcl_cmd_name){
+        // ⚠️ 修复: 仅 Data 帧走 ZCL 显示 — APS Ack 帧也带 cluster 且已解密, 此前被误标为簇名
+        if(p.pkt_type==='Data'&&p.decrypted&&p.zcl_cmd_name){
           typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
-        }else if(p.decrypted&&p.aps_cluster_name){
+        }else if(p.pkt_type==='Data'&&p.decrypted&&p.aps_cluster_name){
           typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
         }else if(p.pkt_type==='APS Cmd'&&p.aps_cmd_name){
           typeDisp='<span class="zcl-cmd" title="APS 命令帧">'+p.aps_cmd_name+'</span>';
@@ -207,8 +221,8 @@ reg('tl', function(){
           decIcon='<span class="ic-enc" title="加密">🔒</span>';
         }
         var stat=(p.status||'')+' '+decIcon;
-        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+ts+'</td><td>'+typeDisp+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
-      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="6" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
+        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+(p.packet_id!=null?p.packet_id:'-')+'</td><td>'+ts+'</td><td>'+typeDisp+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
+      document.getElementById('tltb').innerHTML=h||'<tr><td colspan="7" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
         tr.addEventListener('click',function(){
@@ -219,7 +233,61 @@ reg('tl', function(){
         });
       });
       updPgr();
+      // 跳转定位 (U5 后续: APS Ack 配对): search 完成后消费 tlPendingJump
+      if(tlPendingJump!=null){
+        var jtr=document.querySelector('#tltb tr.tl-row[data-pid="'+tlPendingJump+'"]');
+        if(jtr){ tlHighlightRow(jtr); }
+        else { document.getElementById('tl-stat').textContent='⚠️ 帧 #'+tlPendingJump+' 不在数据中'; }
+        tlPendingJump=null;
+      }
     }).catch(function(e){document.getElementById('tl-stat').textContent='加载失败';});
+  }
+
+  // 高亮定位行 (滚动可见 + .hl + 加载详情)
+  function tlHighlightRow(tr){
+    document.querySelectorAll('#tltb tr.tl-row').forEach(function(r){r.classList.remove('hl')});
+    tr.classList.add('hl');
+    tr.scrollIntoView({block:'center',behavior:'smooth'});
+    tlShowDetail(parseInt(tr.dataset.pid));
+  }
+
+  // APS Ack 配对跳转 (U5 后续): 本页有 → 直接定位 (过滤完全保持);
+  // 过滤内其他页 → 翻页定位 (过滤保持); 过滤外 → 清除过滤重查定位
+  function tlJumpToFrame(peerId){
+    var tr=document.querySelector('#tltb tr.tl-row[data-pid="'+peerId+'"]');
+    if(tr){ tlHighlightRow(tr); return; }
+    var step=500;
+    function tryPage(off){
+      A.get('/api/packets?'+tlQueryParams(step,off)).then(function(d){
+        if(!d||!d.packets)return;
+        var hitIdx=-1;
+        for(var i=0;i<d.packets.length;i++){if(d.packets[i].id===peerId){hitIdx=off+i;break;}}
+        if(hitIdx>=0){
+          tlPage=Math.floor(hitIdx/tlLimit)+1;
+          tlPendingJump=peerId;
+          search();
+        }else if(d.total>off+step){
+          tryPage(off+step);
+        }else{
+          tlClearFiltersForJump(peerId);
+        }
+      }).catch(function(){ tlClearFiltersForJump(peerId); });
+    }
+    tryPage(0);
+  }
+
+  // 目标帧不在当前过滤内 → 清除过滤定位 (时间重置为抓包全范围, 与 ✕ 按钮一致)
+  function tlClearFiltersForJump(peerId){
+    document.getElementById('tl-pan').value='';
+    document.getElementById('tl-node').value='';
+    document.getElementById('tl-type').value='';
+    if(tlCaptureStart&&tlCaptureEnd){
+      var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
+      document.getElementById('tl-h0').value=csd.getUTCHours();document.getElementById('tl-m0').value=csd.getUTCMinutes();document.getElementById('tl-s0').value=csd.getUTCSeconds();
+      document.getElementById('tl-h1').value=ced.getUTCHours();document.getElementById('tl-m1').value=ced.getUTCMinutes();document.getElementById('tl-s1').value=ced.getUTCSeconds();
+    }
+    document.getElementById('tl-stat').textContent='🔍 帧 #'+peerId+' 不在当前过滤内, 已清除过滤定位';
+    tlPage=1; tlPendingJump=peerId; search();
   }
 
   // Detail panel renderer
@@ -237,9 +305,8 @@ reg('tl', function(){
         var pk=d.aps_ack_pair;
         html+='<div class="ack-pair" style="margin:6px 0;padding:4px 8px;border-left:3px solid #16a34a;background:#f0fdf4;font-size:11px">'
           +(pk.kind==='ack_to'?'✅ '+pk.text:'📩 '+pk.text)
-          +' <span class="text-dim">(APS Ack 配对</span>'
-          +(pk.kind==='ack_to'?'<span class="text-dim">, 点击帧 #'+pk.peer_id+' 查看原帧)</span>':'<span class="text-dim">)</span>')
-          +'</div>';
+          +' <span class="text-dim">(APS Ack 配对'+(pk.kind==='ack_to'?', </span><a class="ack-jump" href="javascript:void(0)" data-peer="'+pk.peer_id+'">点击帧 #'+pk.peer_id+' 查看原帧</a><span class="text-dim">)':'<span class="text-dim">)')
+          +'</span></div>';
       }
       var layers=d.layers;
       // MAC layer (wpan)
@@ -546,6 +613,13 @@ reg('tl', function(){
         }
       }
       panel.innerHTML=html;
+      // APS Ack 配对跳转 (U5 后续): 点击帧号链接 → 定位时间线对应行
+      panel.querySelectorAll('.ack-jump').forEach(function(a){
+        a.addEventListener('click',function(e){
+          e.preventDefault();
+          tlJumpToFrame(parseInt(this.dataset.peer));
+        });
+      });
     }).catch(function(e){
       panel.innerHTML='<p class="text-danger text-center">加载失败: '+e.message+'</p>';
     });

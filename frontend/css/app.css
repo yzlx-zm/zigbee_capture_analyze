@@ -179,6 +179,9 @@ input.mono, select.mono { font-family: var(--font-mono); }
   font-size: var(--fs-xs); line-height: 1.5; vertical-align: 1px; }
 /* U5 ZCL 命令级显示: 类型列中命令名弱化 (Data · Report Attributes) */
 .zcl-cmd { color: var(--c-text-3); font-size: var(--fs-xs); }
+/* U5 后续: APS Ack 配对跳转链接 */
+.ack-jump { color: var(--c-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.ack-jump:hover { color: var(--c-primary-hover); }
 .badge-leave { background: var(--c-danger-bg); color: var(--c-danger); border: 1px solid var(--c-danger-border); }
 .badge-rej { background: #f3e8ff; color: var(--c-route); border: 1px solid #ddd0f2; }
 .badge-nstat { background: var(--c-warning-bg); color: var(--c-amber); border: 1px solid var(--c-warning-border); }

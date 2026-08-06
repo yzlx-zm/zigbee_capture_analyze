@@ -746,6 +746,7 @@ async def packet_list(addr: str = "", pan: str = "",
     return {
         "packets": [{
             "id": orig_idx,
+            "packet_id": p.get("packet_id"),  # 抓包原始帧号 (时间线帧号列; 与 id 是同一帧的两个标识)
             "ts": p["ts"], "ch": p.get("ch", 0), "pkt_type": p.get("pkt_type", ""),
             "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
             "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
@@ -1021,47 +1022,8 @@ def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
     return None
 
 
-# APS ack 配对时间窗: counter 为 8 位循环 (0-255), 长抓包同 (dst,counter) 跨周期重复;
-# ack 通常紧跟原帧 (EmberZNet APS 超时 50ms×hops+100ms, SED 场景 + poll 延迟),
-# 自审实测 G32 97% 最近候选 <2s → 5s 窗内无候选视为不配对, 避免跨周期误配 (2026-08-06 自审修正)
-ACK_MATCH_WINDOW_S = 5.0
-
-
-def _build_ack_match(packets: list[dict]) -> tuple[dict, dict]:
-    """APS Ack ↔ 原帧配对 (2026-08-06, 素材实证: 第七次 62/62, G32 98.9%, 中继 91%).
-
-    协议依据: ack 帧携带完整 APS 头 (素材解密明文 8B 实证:
-    [FCF][dst_ep][cluster:2][profile:2][src_ep][counter]), counter 沿用原帧
-    (FCF bit4 ack format=0) — 字段级精确匹配; 叠加 ACK_MATCH_WINDOW_S 时间窗
-    排除 counter 循环误配.
-    匹配: 原帧 nwk_src == ack.nwk_dst 且 aps_counter 相同, 取 ack 前窗口内最近一帧.
-    返回 (ack→orig, orig→ack) 双向映射.
-    """
-    from collections import defaultdict
-    idx: dict[tuple, list] = defaultdict(list)
-    for i, p in enumerate(packets):
-        s, c = p.get("nwk_src"), p.get("aps_counter")
-        if c is not None and s is not None and p.get("pkt_type") != "APS Ack":
-            idx[(s, c)].append((i, p))
-    ack_to_orig: dict = {}
-    orig_to_ack: dict = {}
-    for ai, a in enumerate(packets):
-        if a.get("pkt_type") != "APS Ack":
-            continue
-        ats = a.get("ts", 0.0)
-        ctr, dst = a.get("aps_counter"), a.get("nwk_dst")
-        if ctr is None or dst is None:
-            continue
-        cands = [(i, p) for i, p in idx.get((dst, ctr), [])
-                 if ats - ACK_MATCH_WINDOW_S <= p.get("ts", 0.0) < ats]
-        if not cands:
-            continue
-        best_i, best_p = max(cands, key=lambda ip: ip[1].get("ts", 0.0))
-        ack_to_orig[ai] = best_i
-        # 一帧多 ack (重复捕获/重发) — 保留最近一条
-        if best_i not in orig_to_ack or a.get("ts", 0.0) > orig_to_ack[best_i][1]:
-            orig_to_ack[best_i] = (ai, a.get("ts", 0.0))
-    return ack_to_orig, orig_to_ack
+# APS Ack 配对 — 共享模块 (backend/aps_pairing.py, 详情端点与 L3-1 检测器共用)
+from ..aps_pairing import build_ack_match as _build_ack_match  # noqa: E402
 
 
 def _get_ack_match() -> tuple[dict, dict]:
@@ -1098,6 +1060,7 @@ async def packet_detail(pkt_id: int):
                         "text": f"被帧 #{got[0]} 确认"}
     return {
         "id": pkt_id,
+        "packet_id": p.get("packet_id"),  # 抓包原始帧号 (与列表端点 id 对应同一帧)
         "ts": p["ts"],
         "pkt_type": p.get("pkt_type", ""),
         "decrypted": p.get("decrypted", False),
