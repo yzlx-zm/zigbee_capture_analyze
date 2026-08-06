@@ -386,10 +386,14 @@ def detect_l3_1(packets: list[dict]) -> dict:
             "direction": "downlink" if downlink else "uplink",
             "count": 0, "retries": [], "cross": {"route_error": 0, "indirect_expiry": 0, "leave": 0},
             "clusters": defaultdict(int), "first_ts": p.get("ts", 0.0), "last_ts": p.get("ts", 0.0),
+            "first_pid": None, "last_pid": None,
         })
         agg["count"] += 1
         agg["first_ts"] = min(agg["first_ts"], p.get("ts", 0.0))
         agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
+        if agg["first_pid"] is None:
+            agg["first_pid"] = p.get("packet_id")
+        agg["last_pid"] = p.get("packet_id")
         agg["clusters"][p.get("aps_cluster_name") or "?"] += 1
         agg["retries"].append(retry_cnt.get((p.get("nwk_src"), p.get("aps_counter")), 1))
         cs = _cross_signals(packets, p.get("ts", 0.0))
@@ -429,8 +433,9 @@ def detect_l3_1(packets: list[dict]) -> dict:
             "cross": agg["cross"],
             "summary": summary,
         })
-        for ts in (agg["first_ts"], agg["last_ts"]):
-            evidence.append(_ev(ts, None, "L3-1", summary))
+        # 证据帧: 设备级首末帧的真实帧号 (人工复核定位用)
+        for ts, pid in ((agg["first_ts"], agg["first_pid"]), (agg["last_ts"], agg["last_pid"])):
+            evidence.append(_ev(ts, pid, "L3-1", summary))
 
     ev, ev_total = _cut(evidence)
     if results:

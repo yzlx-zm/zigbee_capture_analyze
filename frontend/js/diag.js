@@ -241,8 +241,8 @@ reg('diag', function () {
       h += '<div class="card l1-sec">'
         + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
         + '<div class="l1-cards">'
-        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
+        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
         + '</div></div>';
       // ── L6 SED 专项检测区 (L6-S3 间接事务过期) ──
       A.get('/api/diag/l6').then(function (l6d) {
