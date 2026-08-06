@@ -147,6 +147,9 @@
 - **一次会话只解一个 ticket**(research 型可并行)
 - 认领 = 在 ticket 文件顶部加 `**Assignee:** <会话标识> + 日期`
 - 完成 = ticket 写 `## Resolution` + map.md Decisions so far 更新 + git 提交推送
+- **收尾同步 (2026-08-06 补充, P6 账实不符教训)**: 代码提交后**同一会话内必须**完成 ticket 收尾
+  (Assignee/Status/Resolution + map.md 条目 + push), 不得只提交代码留 ticket 空转 —
+  总控窗口会定期核对账实, 但收尾是执行会话的责任
 
 ### 共同上下文(每个会话必读)
 
