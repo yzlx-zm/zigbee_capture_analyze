@@ -446,7 +446,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "nwk_leave_request": nwk_leave_request,
         "nwk_leave_children": nwk_leave_children,
         "zcl_cmd_id": zcl_cmd_id,
-        "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id) if zcl_cmd_id is not None else None,
+        "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id, _zcl_frame_type(zcl)) if zcl_cmd_id is not None else None,
         "zcl_direction": zcl_dir,
         "zcl_seq": zcl_seq,
         "sec_level": sec_level,
@@ -517,6 +517,24 @@ def _zcl_direction(zcl: dict) -> str | None:
     elif d == "0":
         return "Client→Server"
     return None
+
+
+def _zcl_frame_type(zcl: dict) -> int | None:
+    """ZCL FCF bits0-1 frame type: 0=Profile-wide (全局命令), 1=cluster-specific.
+
+    字段 zbee_zcl.type (tshark -G fields 确认), 嵌套于 "Frame Control Field" key 下,
+    结构与 _zcl_direction 相同; 解析失败返回 None (走 get_command_name 回退逻辑).
+    """
+    fcf = None
+    for k in zcl:
+        if k.startswith("Frame Control Field"):
+            fcf = zcl[k]
+            break
+    if isinstance(fcf, dict):
+        t = fcf.get("zbee_zcl.type", "")
+    else:
+        t = zcl.get("zbee_zcl.type", "")
+    return _h(t) if t else None
 
 
 def _pkt_type(mac_ft: int, nwk: dict, aps: dict | None = None, decrypted: bool = False) -> str:

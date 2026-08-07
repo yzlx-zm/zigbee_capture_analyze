@@ -191,8 +191,22 @@ def get_cluster_name(cluster_id: int | None) -> str | None:
     return CLUSTER_NAMES.get(cluster_id)
 
 
-def get_command_name(cluster_id: int | None, cmd_id: int) -> str | None:
-    """Command ID → 名称。先查 cluster-specific, 再查 global"""
+def get_command_name(cluster_id: int | None, cmd_id: int,
+                     frame_type: int | None = None) -> str | None:
+    """Command ID → 名称。frame_type 为 ZCL FCF bits0-1 (ZCL spec 2.3.1):
+    0=Profile-wide (全局命令), 1=cluster-specific。
+    同名冲突 (如 Basic 0x0000 的 cmd 0x00: 全局 Read Attributes vs cluster Reset to
+    Factory Defaults) 必须靠 frame_type 区分, 否则全局命令被误标为 cluster 命令。
+
+    frame_type=None/未知 (含厂商特定 0b10/0b11) → 保持历史回退逻辑 (先 cluster 后
+    global), 兼容未提供 frame_type 的旧调用。"""
+    if frame_type == 0:
+        return GLOBAL_COMMANDS.get(cmd_id)
+    if frame_type == 1:
+        if cluster_id is not None and cluster_id in CLUSTER_COMMANDS:
+            return CLUSTER_COMMANDS[cluster_id].get(cmd_id)
+        return None
+    # None/未知: 现有回退逻辑
     if cluster_id is not None and cluster_id in CLUSTER_COMMANDS:
         if cmd_id in CLUSTER_COMMANDS[cluster_id]:
             return CLUSTER_COMMANDS[cluster_id][cmd_id]

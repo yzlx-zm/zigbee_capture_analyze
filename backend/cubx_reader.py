@@ -653,8 +653,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                 result["zcl_direction"] = (
                     "Server→Client" if (zcl_fcf >> 3) & 1 else "Client→Server")
                 if result["zcl_cmd_id"] is not None:
+                    # frame type = FCF bits0-1: 0=全局命令, 1=cluster-specific
                     result["zcl_cmd_name"] = zcl_defs.get_command_name(
-                        result["aps_cluster"], result["zcl_cmd_id"])
+                        result["aps_cluster"], result["zcl_cmd_id"],
+                        zcl_fcf & 0x03)
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":

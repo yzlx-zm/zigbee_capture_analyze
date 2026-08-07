@@ -40,6 +40,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [L2-1 检测闭环](issues/01-L2场景拆解.md) — 文档 v1.0 + 检测器 R1/R2a/R2b/R3;素材实证: **被踢重入循环 (TC→737D rejoin=1 Leave ×336)** = 频繁离线形态之一;健康轮询基线 (poll 间隔 ≤5.5s);R1 (poll>320s)/R2a/R3 待素材
 - [中继状态异常分析](issues/09-中继状态异常分析.md) — 中继素材库 (DA13 系列 + G32 + FEED) 专项;模式 1: DA13 网络中继 0x0B 下行 (入网后 2-5s, 与 838D 同构);模式 2: G32 中继 0xBE5A 0x0C 双向失败 (dest 细分) + 0x06; **L3-5-R2 素材验证通过**;模式 4: 08031620 无 NS 但 MTORR 高频 (3.4s/次)
 - [L6-S3 检测闭环](issues/10-L6-S3间接事务过期.md) — 文档 v1.0 + 检测器 R1/R2/R3;素材实证: **下行投递失败型** (G32 0xEE48 poll 活跃仍过期 ×38, 0x06 距 poll 2.5s, 与 0x0C 交叉 = L3-5 SED 侧表现);睡眠型待素材
+- [P5 ZCL 命令名 FCF 误标修复](issues/P5-字段缺口工单流.md) — get_command_name 增加 frame_type 参数 (0=全局/1=cluster-specific);cubx 传 zcl_fcf&0x03, tshark 解析 zbee_zcl.type (tshark -G fields 确认);Basic 0x0000 全局 Read Attributes 不再被误标 Reset to Factory Defaults (中继素材例证帧实证);回归: 素材 12/12 + unit 8/8 + p1 15/15;test_parser_verify 9/3 为基线既有失败 (stash 对照确认, 非本次引入)
 
 ## 解析器工程模块 (2026-08-05 拆分)
 
