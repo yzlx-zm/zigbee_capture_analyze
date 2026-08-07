@@ -21,7 +21,8 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 
 ## Decisions so far
 
-- [L3-1 检测闭环](issues/11-L3-1发送命令无APS-Ack.md) — 文档 v1.0 + 检测器 R1-R4 (提交 6c1b517); 素材实证: **中继 838D 下行 ×42 R2 高 + L3-5 交叉 (0x0B×39)**, G32 BE5A 上行 ×45 + 0x0C×1043 交叉, 第七次 C1F5 ×32; 配对抽共享模块 aps_pairing.py; 事务级判定 + 重复捕获去重; L3-5/L1-3 回归不变
+- [L3-1 检测闭环](issues/11-L3-1发送命令无APS-Ack.md) — 文档 v1.0 + 检测器 R1-R4 (提交 6c1b517); 素材实证: **中继 838D 下行 ×42 R2 高 + L3-5 交叉 (0x0B×39)**, G32 BE5A 上行 ×45 + 0x0C×216 交叉, 第七次 C1F5 ×32; 配对抽共享模块 aps_pairing.py; 事务级判定 + 重复捕获去重; L3-5/L1-3 回归不变
+- [L3-1 判定修正 (08-07)](issues/11-L3-1发送命令无APS-Ack.md) — **"无独立 ack"≠"命令未送达"** (用户指出 + 自审): 部分设备固件 (含中继) 不回独立 ack 帧, 以 ZCL 应用层响应确认 (Silicon Labs 官方 reply attached to ACK, nonstandard extension); 判定改为 **无 ack + 2s 无应用层响应** (反向数据帧: 同 ZCL tsn / 同 cluster / cluster 缺失降级); 三素材计数回填: 中继 838D ×42→**×34**, G32 BE5A ×45→**×36** (EFC2 ×2 保留, 反向帧未解密), 第七次 48→**37 候选 / 设备级仅 C1F5 ×32** (17266/96A8/CE77 全排除); **0x0C 1043→216 错记修正** (台账口径, 无素材支持 1043); L3-5 (0x0B×39/0x0C×216) + L1-3 (B2-LOOP) 回归不变
 - [L1-1/L1-2 检测闭环](issues/01-...) — 文档 v1.2 + 检测器 + 素材验证;判定规则: 允许单次MISS/1s窗口/AssocResp 200-500ms
 - [L1-3 检测闭环](issues/02-...) — 文档 v1.3 + B2-LOOP/B2-LOOP-ROUTE;真实素材根因 = Confirm 经中继转发失败 (Source Route Failure, L3 路由层, 非密钥问题)
 - [协议语义破解] — VerifyKey 16B = keyed_hash(TCLK,3);0x0F/0x10 = Zigbee 3.0 标准命令 (Ubiqua Reserved 是库过时);Confirm = [0x10][status=0x00 SUCCESS][key_type][dst]

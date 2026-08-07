@@ -314,6 +314,16 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
 L31_MIN_NO_ACK_PER_DEV = 2   # 设备级收敛: 同设备同方向无 ack ≥2 才输出 (排除单帧瞬态)
 L31_RETRY_THRESHOLD = 2      # R2 高置信: 同 counter 重发 ≥2 (栈内重传证据)
 L31_CROSS_WINDOW_S = 10.0    # 交叉归因窗口: 0x0B/0x06/Leave 在无 ack 帧前后 ±10s
+# 2026-08-07 自审修正 (用户指出): "无独立 ack 帧" ≠ "命令未送达" —
+# 素材实证部分设备固件 (含中继) 以应用层响应 (ZCL 响应/状态报告) 作为端到端确认,
+# 不回独立 APS Ack 帧 (Silicon Labs 官方: sl_zigbee_send_reply 的 reply 附着于 ACK,
+# "nonstandard extension" — 应用回复替代独立 ack 是生态内认可模式)。
+# 判定改为 "无 ack 且无应用层响应" 才算命令无确认; 响应证据按强度分级:
+#   ① 同 ZCL tsn (事务级铁证: Write Attrs→Write Attrs Rsp / On→On 报告同 tsn, 素材实证)
+#   ② 同 cluster 反向数据帧 (应用层响应/状态报告)
+#   ③ 命令帧 cluster 不可解析 → 任一反向数据帧 (降级; 素材 591 例 cluster=None)
+L31_APP_RESP_WINDOW_S = 2.0  # 应用层响应窗口 (素材实测 <0.4s; G32 SED 边界 ~1.9s)
+                             # ⚠️ SED 响应可能延迟到 poll 周期 >2s — 边界情况保留计数 (诚实标注)
 
 
 def _cross_signals(packets: list[dict], ts: float) -> dict:
@@ -334,6 +344,36 @@ def _cross_signals(packets: list[dict], ts: float) -> dict:
         elif p.get("nwk_cmd_id") == NWK_CMD_LEAVE:
             out["leave"] += 1
     return out
+
+
+def _has_app_response(packets: list[dict], p: dict) -> bool:
+    """命令帧 p 的接收方是否有应用层响应 (2s 窗口内反向数据帧).
+
+    返回 True = 命令送达且接收方有应用层交互 (设备以响应确认, 非"命令无确认")。
+    三级证据 (素材实证, 2026-08-07): 同 ZCL tsn 铁证 / 同 cluster / cluster 缺失降级。
+    """
+    src, dst = p.get("nwk_src"), p.get("nwk_dst")
+    ts0 = p.get("ts", 0.0)
+    if src is None or dst is None or ts0 == 0.0:
+        return False
+    hi = ts0 + L31_APP_RESP_WINDOW_S
+    tsn = p.get("zcl_seq")
+    cluster = p.get("aps_cluster")
+    for q in packets:
+        if q.get("pkt_type") == "APS Ack":
+            continue
+        t = q.get("ts", 0.0)
+        if not (ts0 < t <= hi):
+            continue
+        if q.get("nwk_src") != dst or q.get("nwk_dst") != src:
+            continue  # 只认接收方 → 发送方的数据帧 (反向)
+        if tsn is not None and q.get("zcl_seq") == tsn:
+            return True  # ① 同 ZCL 事务序列号 (响应命令, 铁证)
+        if cluster is not None and q.get("aps_cluster") == cluster:
+            return True  # ② 同 cluster (应用层响应/状态报告)
+        if cluster is None:
+            return True  # ③ 命令帧 cluster 不可解析 → 任一反向数据帧 (降级)
+    return False
 
 
 def detect_l3_1(packets: list[dict]) -> dict:
@@ -360,6 +400,11 @@ def detect_l3_1(packets: list[dict]) -> dict:
         if p.get("aps_ack_req") and p.get("pkt_type") != "APS Ack" \
                 and (p.get("nwk_src"), p.get("aps_counter")) not in acked_txn:
             no_ack.append((i, p))
+
+    # 2026-08-07 自审修正: 排除"无独立 ack 但接收方回了应用层响应"的帧 —
+    # 设备固件以 ZCL 响应/状态报告确认送达, 不回独立 ack 帧 (设备行为差异, 非故障)
+    app_ack = [(i, p) for i, p in no_ack if _has_app_response(packets, p)]
+    no_ack = [(i, p) for i, p in no_ack if not _has_app_response(packets, p)]
 
     # 重传统计: 同 (nwk_src, aps_counter) 去重复捕获 (同 counter+mac_seq = 物理帧被抓两次)
     # 后的帧数 (栈内重传; 新 counter = 应用新事务不计)
@@ -441,15 +486,22 @@ def detect_l3_1(packets: list[dict]) -> dict:
     if results:
         verdict, conf = "L3-1_HIT", max(r["confidence"] for r in results)
         total = sum(r["no_ack_count"] for r in results)
+        excl = f"; 另有 {len(app_ack)} 帧无独立 ack 但接收方有应用层响应 (设备以响应确认, 未计入)" \
+            if app_ack else ""
         concl = (f"发送命令无 APS Ack ×{total} (方向: 下行 {sum(1 for r in results if r['direction']=='downlink')} 设备"
-                 f" / 上行 {sum(1 for r in results if r['direction']=='uplink')} 设备)")
+                 f" / 上行 {sum(1 for r in results if r['direction']=='uplink')} 设备){excl}")
     else:
         verdict, conf = ("HEALTHY", "高") if no_ack else ("INCONCLUSIVE", "低")
+        excl = (f"全部无 ack 帧均有应用层响应 ({len(app_ack)} 帧, 设备以响应确认, 非 L3-1)"
+                if app_ack else "")
         concl = "未发现命令无确认" if verdict == "HEALTHY" else "无 ack 候选帧 (需含 ack_req 字段素材)"
+        if excl:
+            concl = f"未发现命令无确认 ({excl})"
     return {
         "scenario": "L3-1", "verdict": verdict, "confidence": conf,
         "summary": concl, "conclusion": concl,
         "no_ack_total": len(no_ack), "devices": results,
+        "app_ack_absent_total": len(app_ack),  # 无独立 ack 但有应用层响应 (非故障, 2026-08-07)
         "evidence": ev, "evidence_total": ev_total,
     }
 
