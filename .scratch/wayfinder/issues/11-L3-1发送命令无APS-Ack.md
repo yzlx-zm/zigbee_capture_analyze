@@ -7,7 +7,7 @@
 
 **Blocked by:** None (APS 配对已提交)
 
-**Status:** ready-for-agent
+**Status:** ✅ 完成 (2026-08-06, 提交 6c1b517)
 
 **Type:** task | **AFK**
 
