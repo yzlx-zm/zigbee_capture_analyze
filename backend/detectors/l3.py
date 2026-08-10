@@ -512,19 +512,24 @@ def detect_l3_1(packets: list[dict]) -> dict:
 # out=0 初期正常 (2-3 次交换才有成本估计) — 持续性判定必须时间序列
 L39_COST_DIFF = 3        # R1: 双向 in_cost 差 ≥3 (cost 1-7 显著差)
 L39_MIN_REPORTS = 2      # R1: 双方各 ≥2 次报告 (排除单次交换噪声)
+L39_TIME_ALIGN_S = 60.0  # R1: 双方最新报告时间差 >60s 跳过 (LS 周期 15-16s, 60s≈4 次交换;
+                         # 自审 2026-08-10: 初版无时间对齐, 跨时段比较失真)
 L39_ONEWAY_MIN = 3       # R2: one-way 判定需报告 ≥3 次
 L39_ONEWAY_TAIL = 0.5    # R2: 最后 50% 报告 out_cost=0 才算持续 (排除初期未交换)
 L39_ONEWAY_REPORTS_MIN = 3  # R2 尾部至少 2 条
 
 
-def detect_l3_9(packets: list[dict]) -> dict:
+def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
     """非对称链路检测 (文档 L3-9.md v1.0).
 
     规则 (MCP 核对 2026-08-10):
       - R1 : 同一对节点双向 LS 报告 in_cost 差 ≥3 且双方各 ≥2 次 → 不对称候选 (中置信)
+            ⚠️ 双方最新报告时间差 >60s 跳过 (跨时段比较失真, 自审修正 2026-08-10)
       - R2 : (A,B) 报告 ≥3 次且最后 50% out_cost=0 → 持续 one-way 候选 (中置信)
-            ⚠️ out=0 初期正常 (2-3 次交换) — 必须时间序列持续判定
-      - R3 : 方向性失败交叉 (0x0B 下行/0x0C 上行) — 由 L3-5 结果提示, 本检测器只报链路候选
+            ⚠️ out=0 初期正常 (2-3 次交换) — 必须时间序列持续判定;
+            ⚠️ 目标邻居必须自己发过 LS (路由器) — 终端不参与 LS, out=0 正常态
+      - R3 : 方向性失败交叉 (0x0B 下行/0x0C 上行, 由 l3_5_result 传入) —
+            命中链路端点 ∩ L3-5 方向性失败设备 → 交叉提示 (不单独判 HIT)
       素材实证 (2026-08-10): 三素材无 R1/R2 正例 (待素材); G32 BE5A↔协调器
       对称 in=1/out=1 ×187/40min 负例不误报
     """
@@ -544,14 +549,17 @@ def detect_l3_9(packets: list[dict]) -> dict:
     oneway_links: list[dict] = []
 
     # 2. R1: 双向 in_cost 差 ≥3 (用最新报告 — LS in_cost 是滚动平均, 当前状态)
+    # 自审 2026-08-10: 加时间对齐 — 双方最新报告时间差 >60s 跳过 (跨时段比较失真)
     done: set = set()
     for (a, b), costs in rep.items():
-        if (b, a) not in rep or (a, b) in done:
+        if (b, a) not in rep or tuple(sorted((a, b))) in done:
             continue
-        done.add((a, b))
+        done.add(tuple(sorted((a, b))))  # 排序对去重 (自审单测发现: 初版同序去重, 双向遍历会重复输出)
         ra, rb = rep[(a, b)], rep[(b, a)]
         if len(ra) < L39_MIN_REPORTS or len(rb) < L39_MIN_REPORTS:
             continue
+        if abs(ra[-1][2] - rb[-1][2]) > L39_TIME_ALIGN_S:
+            continue  # 最新报告时间差过大, 不比较 (时间对齐失败)
         a_in = ra[-1][0]   # a 报告 b 的 in_cost = a→b 接收质量
         b_in = rb[-1][0]   # b 报告 a 的 in_cost = b→a 接收质量
         if abs(a_in - b_in) >= L39_COST_DIFF:
@@ -579,7 +587,18 @@ def detect_l3_9(packets: list[dict]) -> dict:
                 "evidence": tail[-1][3], "ts": tail[-1][2],
             })
 
-    # 4. 结论
+    # 4. R3: 方向性失败交叉 (自审 2026-08-10 补实现 — 文档 v1.0 第 4 层规则, 初版代码缺失)
+    # 命中链路端点 ∩ L3-5 方向性失败设备 → 交叉提示 (不单独判 HIT; 需现场确认)
+    r3_hits: list[int] = []
+    if l3_5_result:
+        l35_devs = {d.get("device") for d in (l3_5_result.get("devices") or [])
+                    if (d.get("verdict") or "").startswith("L3-5_HIT")}
+        link_devs = set()
+        for ln in asym_links + oneway_links:
+            link_devs.update((ln["a"], ln["b"]))
+        r3_hits = sorted(l35_devs & link_devs)
+
+    # 5. 结论
     evidence = []
     for ln in asym_links:
         for pid in ln["evidence"]:
@@ -592,6 +611,10 @@ def detect_l3_9(packets: list[dict]) -> dict:
             f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告, 尾部{ln['tail_zero']}条全 0)"))
 
     ev, ev_total = _cut(evidence)
+    r3_txt = ""
+    if r3_hits:
+        r3_txt = ("; ⚠️ 方向性失败交叉 (L3-5): " + ", ".join(_addr4(d) for d in r3_hits)
+                  + " 同时命中路由失效 — 非对称为候选根因之一 (需现场确认)")
     if asym_links or oneway_links:
         verdict, conf = "L3-9_HIT", "中"
         parts = []
@@ -600,12 +623,12 @@ def detect_l3_9(packets: list[dict]) -> dict:
         for ln in oneway_links:
             parts.append(f"{_addr4(ln['a'])}→{_addr4(ln['b'])} 持续 one-way (out=0)")
         summary = "非对称链路候选: " + "; ".join(parts)
-        conclusion = summary + " — 需现场确认 (发射功率/灵敏度差异等设备侧因素)"
+        conclusion = summary + " — 需现场确认 (发射功率/灵敏度差异等设备侧因素)" + r3_txt
     elif rep:
         # 有 LS 双向数据 (检测可行) 且无命中 → 负例
         verdict, conf = "HEALTHY", "高"
         summary = f"未发现非对称链路 (LS 双向报告 {len(rep)} 对, in/out 成本对称)"
-        conclusion = "未发现链路质量不对称"
+        conclusion = "未发现链路质量不对称" + r3_txt
     else:
         verdict, conf = "INCONCLUSIVE", "低"
         summary = "无 Link Status 双向报告 (需含 LS 帧素材或 ≥2 台路由器)"
@@ -615,6 +638,7 @@ def detect_l3_9(packets: list[dict]) -> dict:
         "scenario": "L3-9", "verdict": verdict, "confidence": conf,
         "summary": summary, "conclusion": conclusion,
         "asymmetric_links": asym_links, "oneway_links": oneway_links,
+        "cross": {"directional_failure": r3_hits},  # R3 交叉 (L3-5 方向性失败设备)
         "evidence": ev, "evidence_total": ev_total,
     }
 
@@ -623,8 +647,9 @@ def detect_l3_9(packets: list[dict]) -> dict:
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
     """运行全部 L3 检测 → 汇总报告."""
+    l3_5 = detect_l3_5(packets, l1_result)
     return {
-        "l3_5": detect_l3_5(packets, l1_result),
+        "l3_5": l3_5,
         "l3_1": detect_l3_1(packets),
-        "l3_9": detect_l3_9(packets),
+        "l3_9": detect_l3_9(packets, l3_5),  # R3 交叉需要 L3-5 结果 (自审修正 2026-08-10)
     }
