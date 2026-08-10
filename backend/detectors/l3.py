@@ -507,6 +507,118 @@ def detect_l3_1(packets: list[dict]) -> dict:
     }
 
 
+# ── L3-9 判定参数 (MCP 核对 2026-08-10, 见 L3-9.md v1.0) ──
+# LS 机制: 路由器 15-16s 周期 1-hop 广播 (官方); in_cost 1-7 本地测量, out_cost 0=未知;
+# out=0 初期正常 (2-3 次交换才有成本估计) — 持续性判定必须时间序列
+L39_COST_DIFF = 3        # R1: 双向 in_cost 差 ≥3 (cost 1-7 显著差)
+L39_MIN_REPORTS = 2      # R1: 双方各 ≥2 次报告 (排除单次交换噪声)
+L39_ONEWAY_MIN = 3       # R2: one-way 判定需报告 ≥3 次
+L39_ONEWAY_TAIL = 0.5    # R2: 最后 50% 报告 out_cost=0 才算持续 (排除初期未交换)
+L39_ONEWAY_REPORTS_MIN = 3  # R2 尾部至少 2 条
+
+
+def detect_l3_9(packets: list[dict]) -> dict:
+    """非对称链路检测 (文档 L3-9.md v1.0).
+
+    规则 (MCP 核对 2026-08-10):
+      - R1 : 同一对节点双向 LS 报告 in_cost 差 ≥3 且双方各 ≥2 次 → 不对称候选 (中置信)
+      - R2 : (A,B) 报告 ≥3 次且最后 50% out_cost=0 → 持续 one-way 候选 (中置信)
+            ⚠️ out=0 初期正常 (2-3 次交换) — 必须时间序列持续判定
+      - R3 : 方向性失败交叉 (0x0B 下行/0x0C 上行) — 由 L3-5 结果提示, 本检测器只报链路候选
+      素材实证 (2026-08-10): 三素材无 R1/R2 正例 (待素材); G32 BE5A↔协调器
+      对称 in=1/out=1 ×187/40min 负例不误报
+    """
+    # 1. 收集 (sender, neighbor) -> [(in_cost, out_cost, ts, packet_id)]
+    rep: dict[tuple, list] = defaultdict(list)
+    for p in packets:
+        if p.get("nwk_cmd_id") == 8 and p.get("link_status_neighbors"):
+            src = p.get("nwk_src")
+            if src is None:
+                continue
+            for nb in p["link_status_neighbors"]:
+                key = (src, nb["addr"])
+                rep[key].append((nb["in_cost"], nb["out_cost"],
+                                 p.get("ts", 0.0), p.get("packet_id")))
+
+    asym_links: list[dict] = []
+    oneway_links: list[dict] = []
+
+    # 2. R1: 双向 in_cost 差 ≥3 (用最新报告 — LS in_cost 是滚动平均, 当前状态)
+    done: set = set()
+    for (a, b), costs in rep.items():
+        if (b, a) not in rep or (a, b) in done:
+            continue
+        done.add((a, b))
+        ra, rb = rep[(a, b)], rep[(b, a)]
+        if len(ra) < L39_MIN_REPORTS or len(rb) < L39_MIN_REPORTS:
+            continue
+        a_in = ra[-1][0]   # a 报告 b 的 in_cost = a→b 接收质量
+        b_in = rb[-1][0]   # b 报告 a 的 in_cost = b→a 接收质量
+        if abs(a_in - b_in) >= L39_COST_DIFF:
+            asym_links.append({
+                "a": a, "b": b,
+                "a_in": a_in, "b_in": b_in, "diff": abs(a_in - b_in),
+                "reports": (len(ra), len(rb)),
+                "evidence": (ra[-1][3], rb[-1][3]), "ts": ra[-1][2],
+            })
+
+    # 3. R2: 持续 one-way (最后 50% 报告 out=0)
+    # ⚠️ 前提: 目标邻居 b 自己也是路由器 (发过 LS) — 终端不发 LS (官方), out=0 对非路由器是正常态
+    # (自审 2026-08-10: 初版对 0x8C13/0xF95F 等非路由器邻居误报 one-way, 已加该守卫)
+    ls_senders = {k[0] for k in rep}
+    for (a, b), costs in rep.items():
+        if len(costs) < L39_ONEWAY_MIN or b not in ls_senders:
+            continue
+        n_tail = max(L39_ONEWAY_REPORTS_MIN, int(len(costs) * L39_ONEWAY_TAIL))
+        tail = costs[-n_tail:]
+        if all(c[1] == 0 for c in tail):
+            oneway_links.append({
+                "a": a, "b": b,
+                "in_cost": tail[-1][0], "out_cost": 0,
+                "reports": len(costs), "tail_zero": len(tail),
+                "evidence": tail[-1][3], "ts": tail[-1][2],
+            })
+
+    # 4. 结论
+    evidence = []
+    for ln in asym_links:
+        for pid in ln["evidence"]:
+            evidence.append(_ev(
+                ln["ts"], pid, "Link Status",
+                f"不对称: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['a_in']} vs {_addr4(ln['b'])}→{_addr4(ln['a'])} in={ln['b_in']} (差{ln['diff']})"))
+    for ln in oneway_links:
+        evidence.append(_ev(
+            ln["ts"], ln["evidence"], "Link Status",
+            f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告, 尾部{ln['tail_zero']}条全 0)"))
+
+    ev, ev_total = _cut(evidence)
+    if asym_links or oneway_links:
+        verdict, conf = "L3-9_HIT", "中"
+        parts = []
+        for ln in asym_links:
+            parts.append(f"{_addr4(ln['a'])}↔{_addr4(ln['b'])} 双向成本不对称 (in {ln['a_in']} vs {ln['b_in']})")
+        for ln in oneway_links:
+            parts.append(f"{_addr4(ln['a'])}→{_addr4(ln['b'])} 持续 one-way (out=0)")
+        summary = "非对称链路候选: " + "; ".join(parts)
+        conclusion = summary + " — 需现场确认 (发射功率/灵敏度差异等设备侧因素)"
+    elif rep:
+        # 有 LS 双向数据 (检测可行) 且无命中 → 负例
+        verdict, conf = "HEALTHY", "高"
+        summary = f"未发现非对称链路 (LS 双向报告 {len(rep)} 对, in/out 成本对称)"
+        conclusion = "未发现链路质量不对称"
+    else:
+        verdict, conf = "INCONCLUSIVE", "低"
+        summary = "无 Link Status 双向报告 (需含 LS 帧素材或 ≥2 台路由器)"
+        conclusion = "无法判定链路对称性: 素材无 Link Status 数据"
+
+    return {
+        "scenario": "L3-9", "verdict": verdict, "confidence": conf,
+        "summary": summary, "conclusion": conclusion,
+        "asymmetric_links": asym_links, "oneway_links": oneway_links,
+        "evidence": ev, "evidence_total": ev_total,
+    }
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
@@ -514,4 +626,5 @@ def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
     return {
         "l3_5": detect_l3_5(packets, l1_result),
         "l3_1": detect_l3_1(packets),
+        "l3_9": detect_l3_9(packets),
     }
