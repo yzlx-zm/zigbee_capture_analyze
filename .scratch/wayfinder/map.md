@@ -33,6 +33,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [场景体系全景调研](issues/00-场景体系全景调研.md) — taxonomy v1.0 已定义 8 大类 55 场景;验证状态总表见 docs/scenarios/OVERVIEW.md;838D 案例 = L3-5 源路由失效 (场景交叉)
 - [L1-4 检测闭环](issues/05-L1-4TC拒绝.md) — 文档 v1.2 (自审修正) + 检测器 R1/R2a/R2b/R3;素材实证: 运营期踢人路径 = **ZDO Mgmt Leave Req (0x0034) 指令可见** (leave_question ×12) + 设备广播 Leave 响应 (rejoin=0);R2b 高置信验证通过, R1/R2a/R3 待素材
 - [L3-5 检测闭环](issues/07-L3-5源路由失效.md) — 文档 v1.1 (自审修正) + 检测器 R1 (0x0B 轮次判定) / R2 (0x0C);838D 素材实证: 39 条 0x0B 全 src=1885→838D (7 轮/34s, 检测器实测), **L1-3 交叉双报** (密钥循环 = 本场景表象);路由活动未恢复 (Route Request ×161, MTORR 计数待解析);R2 待素材
+- [L3-5 verdict 语义修正 (08-10)](issues/07-L3-5源路由失效.md) — 诊断页自审: 无 0x0B/0x0C 时原判 HEALTHY(绿) 但结论"无法判定" — 自相矛盾;用户裁定**无证据 = INCONCLUSIVE 琥珀** (撤回负例; 0x0B 缺失 ≠ 无失败, message.h);提交 a5c3e86;回归: 中继 0x0B×39 / G32 0x0C×216 不变
 - [解析器字段扩展] — tshark/cubx 对齐补 nwk_cmd_id + Leave 标志 + Remove Device target (0x07) / Update Device status (0x06);tshark.py 此前缺 nwk_cmd_id 提取 (pcap 路径 L1-3 Leave 判定缺口, 已补齐)
 - [P6 导入解析校验工具](issues/P6-导入解析校验工具.md) — parser_verify.py: pcap 权威对比 (全量/分层) + cubx 自洽, 分类型失败 (错位锁定/缺key警告); 导入自动跑 + 导入页卡片; 破坏测试 12/12 (抓错能力证明); 健康素材权威匹配 255/255
 - [P1 契约修复 + 帧去重](issues/P1-双路径字段契约对齐.md) — 0x28 伪命令清零 (1266→1: 其他 PAN 命令帧解密失败读密文, plain_valid 守卫);nwk_dst 广播保留 (0xFFFC, _addr_nwk 对齐 tshark) + 邻居表 ≥0xFFF0 过滤连带修复;新增 backend/frame_dedup.py 同跳去重 (Unlock 帧 27% 物理重复 + 10% 重传, 全局 8.5%; **不能用 (nwk_src,dst,nwk_seq) 事务键 — 8 位回绕错误合并独立事务, 实锤 (54995,seq=12) 相隔 421s**);**自审修正 (08-06)**: 方向位协议自洽 (锁上行 190 条全 Server→Client, 早期"设备非规范"结论系并发写文件中间态污染, 撤回);回归 15/15 (p1-contract/p1_regression.py)
