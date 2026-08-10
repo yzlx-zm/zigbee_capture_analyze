@@ -383,20 +383,28 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     aps_cmd_remove_target = None
     aps_cmd_update_status = None
     aps_cmd_name = None
-    for akey in aps:
-        if akey.startswith("Command Frame:"):
-            aps_cmd_name = akey.split(":", 1)[1].strip()   # "Transport Key" → 命令名
-            aps_cmd = aps[akey]
-            if isinstance(aps_cmd, dict):
-                aps_cmd_id = _h(aps_cmd.get("zbee_aps.cmd.id", ""))
-                aps_cmd_key_type = _h(aps_cmd.get("zbee_aps.cmd.key_type", ""))
-                # L1-4: Remove Device (0x07) target EUI64 / Update Device (0x06) status
-                # 字段官方名: zbee_aps.cmd.device / zbee_aps.cmd.update_status
-                if aps_cmd_id == 0x07:
-                    aps_cmd_remove_target = _hex_colon(aps_cmd.get("zbee_aps.cmd.device", ""))
-                elif aps_cmd_id == 0x06:
-                    aps_cmd_update_status = _h(aps_cmd.get("zbee_aps.cmd.update_status", ""))
-            break
+    # 解密判断 — 加密帧 (nwk_secure) 且 APS 层可见 (有 Counter/cluster 字段) 才算解密成功.
+    # 曾无 nwk_secure 条件: 非加密明文 APS 帧被误判 decrypted=True (cubx 语义: 解密成功才 True)
+    decrypted = bool(nwk_secure and (aps_counter is not None
+                                     or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster")))
+    # ⚠️ 仅解密帧提取 APS 命令 — 未解密帧 tshark 的 "Command Frame" 是密文误读
+    # (0x20/0x38 同类; cubx 路径 P1 已加 plain_valid 守卫, tshark 路径遗漏 —
+    # test2-export.pcap 4 帧密文误读 → P6 锁定根因, 08-10 修复)
+    if decrypted:
+        for akey in aps:
+            if akey.startswith("Command Frame:"):
+                aps_cmd_name = akey.split(":", 1)[1].strip()   # "Transport Key" → 命令名
+                aps_cmd = aps[akey]
+                if isinstance(aps_cmd, dict):
+                    aps_cmd_id = _h(aps_cmd.get("zbee_aps.cmd.id", ""))
+                    aps_cmd_key_type = _h(aps_cmd.get("zbee_aps.cmd.key_type", ""))
+                    # L1-4: Remove Device (0x07) target EUI64 / Update Device (0x06) status
+                    # 字段官方名: zbee_aps.cmd.device / zbee_aps.cmd.update_status
+                    if aps_cmd_id == 0x07:
+                        aps_cmd_remove_target = _hex_colon(aps_cmd.get("zbee_aps.cmd.device", ""))
+                    elif aps_cmd_id == 0x06:
+                        aps_cmd_update_status = _h(aps_cmd.get("zbee_aps.cmd.update_status", ""))
+                break
     # APS ack request / ack format — pcap 路径占位 (tshark zbee_aps 对 ack 帧输出结构待素材实证, P5)
 
     # ZCL 层
@@ -404,11 +412,6 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     zcl_cmd_id = _h(zcl.get("zbee_zcl.cmd.id", ""))
     zcl_seq = _num(zcl.get("zbee_zcl.cmd.tsn", ""))
     zcl_dir = _zcl_direction(zcl)
-
-    # 解密判断 — 加密帧 (nwk_secure) 且 APS 层可见 (有 Counter/cluster 字段) 才算解密成功.
-    # 曾无 nwk_secure 条件: 非加密明文 APS 帧被误判 decrypted=True (cubx 语义: 解密成功才 True)
-    decrypted = bool(nwk_secure and (aps_counter is not None
-                                     or aps.get("zbee_aps.cluster") or aps.get("zbee_aps.zdp_cluster")))
 
     # 包类型 — 检查 ZDP/NWK/MAC 逐层确定
     pkt_type = _pkt_type(mac_frame_type, nwk, aps, decrypted)
