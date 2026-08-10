@@ -275,16 +275,22 @@ reg('diag', function () {
     },
   ];
 
-  // 主流程: 各模块独立请求 + 独立失败容错; 全部完成 → 摘要+卡片统一渲染 → 离线诊断
-  Promise.all(MODULES.map(function (m) {
-    return A.get(m.api).then(function (d) {
+  // 主流程 (2026-08-10 U8-1 自审修正): 每模块完成即渲染 (渐进, 恢复原嵌套行为) —
+  // ⚠️ 初版用 Promise.all 统一渲染: 单模块请求挂起 (无超时) 会整页空白 (实测复现);
+  // 改为独立超时 (15s 兜底) + 完成即 renderH, 挂起模块最终超时不阻塞其余模块。
+  function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise(function (_, reject) {
+      setTimeout(function () { reject(new Error('请求超时')); }, ms);
+    })]);
+  }
+  MODULES.forEach(function (m) {
+    withTimeout(A.get(m.api), 15000).then(function (d) {
       var html = m.render(d, checks);
       if (html) h += html;
-    }).catch(function () { /* 单模块失败不阻塞 (原嵌套 catch 链行为) */ });
-  })).then(function () {
-    renderH();
-    renderOffline();
+    }).catch(function () { /* 单模块失败/超时不阻塞 (原嵌套 catch 链行为) */ })
+      .then(function () { renderH(); });  // 每模块 settle 后即渲染 (渐进)
   });
+  renderOffline();
 
   function renderOffline() {
     A.get('/api/diag/offline').then(function (d) {
