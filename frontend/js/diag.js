@@ -84,6 +84,11 @@ var PLAIN_TITLES = {
 };
 var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L1-4', 'L3-5': 'L3-5', 'OFF': 'OFF' };
 
+// 覆盖范围提示 (2026-08-10 U8-3): 防"未发现明显问题"误信 —
+// 检测体系 8 大类 55 场景, 本页仅覆盖 8 个检测场景 + 离线总览, 其余 47 个未检测
+var COVERAGE_NOTE = '⚠️ 覆盖范围: 本页仅检测 8/55 场景 (L1-1/2/3/4 · L2-1 · L3-1/5 · L6-3 · 离线总览), '
+  + '其余 47 个场景未检测 — "未发现明显问题"≠"网络没问题"';
+
 function summaryCard(checks) {
   // checks: [{scenario, verdict, conclusion}]
   var probs = (checks || []).filter(function (c) {
@@ -104,10 +109,14 @@ function summaryCard(checks) {
       h += '<li><b>' + title + '</b>：' + (p.conclusion || '') + '</li>';
     });
     h += '</ul>';
-  } else if (unknown.length) {
-    h += '<p style="font-size:12px;color:#b45309;margin:4px 0 0">⚠️ 部分检测因数据不足无法判定 ('
-      + unknown.map(function (u) { return PLAIN_TITLES[u.scenario] || u.scenario; }).join('、')
-      + ')，未排除问题的存在。</p>';
+  } else {
+    if (unknown.length) {
+      h += '<p style="font-size:12px;color:#b45309;margin:4px 0 0">⚠️ 部分检测因数据不足无法判定 ('
+        + unknown.map(function (u) { return PLAIN_TITLES[u.scenario] || u.scenario; }).join('、')
+        + ')，未排除问题的存在。</p>';
+    }
+    // 无 HIT 时显示覆盖提示 (有问题时页面已醒目, 提示冗余)
+    h += '<p class="text-dim" style="font-size:11px;color:#64748b;margin:6px 0 0">' + COVERAGE_NOTE + '</p>';
   }
   h += '</div>';
   return h;
