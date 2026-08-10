@@ -1,0 +1,55 @@
+{
+ "kept_frames": 2321,
+ "stats": {
+  "pkt_type": {
+   "APS Ack": 55,
+   "APS Cmd": 5,
+   "Beacon": 635,
+   "Data": 736,
+   "End Device Timeout Request": 1,
+   "End Device Timeout Response": 1,
+   "Link Status": 17,
+   "MAC Cmd": 393,
+   "NWK Cmd": 397,
+   "Route Record": 1,
+   "Route Request": 29,
+   "ZDP Cmd": 16,
+   "ZDP: Active EP Req": 1,
+   "ZDP: Active EP Resp": 1,
+   "ZDP: Device Announce": 3,
+   "ZDP: Match Desc Req": 1,
+   "ZDP: NWK Addr Req": 26,
+   "ZDP: Node Desc Req": 1,
+   "ZDP: Node Desc Resp": 1,
+   "ZDP: Simple Desc Req": 1
+  },
+  "security": {
+   "": 1031,
+   "Decrypted": 637,
+   "Encrypted": 653
+  },
+  "nwk_cmd_id": {
+   "0x01": 29,
+   "0x05": 1,
+   "0x08": 17,
+   "0x0B": 1,
+   "0x0C": 1,
+   "0x56": 1,
+   "0x58": 1
+  },
+  "aps_cmd_id": {
+   "0x05": 2,
+   "0x08": 1,
+   "0x0F": 1,
+   "0x44": 1
+  },
+  "nwk_status_code": {},
+  "leave_rejoin": 0,
+  "leave_request": 0,
+  "zcl_frames": 477,
+  "nodes_src": 39,
+  "nodes_dst": 22
+ },
+ "frames_sha256": "5cc497e3eef6b7c7698e30161767cdd1e59e8bb7985a17ecf0b0a740a87033f9",
+ "parser_commit": "5c2ae08"
+}

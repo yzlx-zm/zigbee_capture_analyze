@@ -1,0 +1,40 @@
+{
+ "kept_frames": 54403,
+ "stats": {
+  "pkt_type": {
+   "APS Ack": 2555,
+   "APS Cmd": 1,
+   "Beacon": 896,
+   "Data": 4668,
+   "Link Status": 362,
+   "MAC Cmd": 43193,
+   "NWK Cmd": 1267,
+   "Route Record": 148,
+   "Route Request": 771,
+   "ZDP: IEEE Addr Req": 522,
+   "ZDP: IEEE Addr Resp": 20
+  },
+  "security": {
+   "": 44092,
+   "Decrypted": 8727,
+   "Encrypted": 1584
+  },
+  "nwk_cmd_id": {
+   "0x01": 771,
+   "0x05": 148,
+   "0x08": 362,
+   "0x28": 1
+  },
+  "aps_cmd_id": {
+   "0xDD": 1
+  },
+  "nwk_status_code": {},
+  "leave_rejoin": 0,
+  "leave_request": 0,
+  "zcl_frames": 4349,
+  "nodes_src": 32,
+  "nodes_dst": 35
+ },
+ "frames_sha256": "03368331d1fde4f112765f1cc23a69dc8a83489924b2b1542ddf7ba4e53b0ed6",
+ "parser_commit": "5c2ae08"
+}

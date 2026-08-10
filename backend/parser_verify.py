@@ -247,11 +247,14 @@ def _check_against_tshark(packets: list[dict], pcap_path: str, tshark: str, repo
             want = f"0x{p['nwk_dst']:04X}"
             if auth_dst and auth_dst.lower() != want.lower():
                 f_diffs.append(f"nwk_dst {want} vs {auth_dst}")
-        # nwk_seq
+        # nwk_seq — tshark 4.6 对 seq 类数值字段输出十进制 ('198'), 地址类才带 0x
+        # 前缀 (tshark.py _num 已处理同源问题); 曾按 int(x, 16) 解析十进制串 →
+        # '198'→408 系统性误判 (基准 255 帧仅 10 匹配根因, 08-10 P2 排查确认)
         auth_seq = nwk.get("zbee_nwk.seqno", "")
         if p.get("nwk_seq") is not None and auth_seq:
             try:
-                if int(auth_seq, 16) != p["nwk_seq"]:
+                auth_seq_v = int(auth_seq, 16) if auth_seq.lower().startswith("0x") else int(auth_seq, 10)
+                if auth_seq_v != p["nwk_seq"]:
                     f_diffs.append(f"nwk_seq {p['nwk_seq']} vs {auth_seq}")
             except ValueError:
                 pass
