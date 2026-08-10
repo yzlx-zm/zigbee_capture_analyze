@@ -46,12 +46,29 @@ function evTable(evidence, evTotal) {
 }
 
 function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
+  // 2026-08-10 (U8-2): 设备地址跳转 (U4 联动落地) — ⏱ 时间线过滤该设备 / 🗺 拓扑高亮该节点
+  // 复用 S.topoAddr 跨页契约 (U5 topoAddr→tlNode 同步); inline onclick 需 window.S (app.js 已暴露)
   var dc = vClass(verdict, hitPrefix || 'L1');
-  return '<div class="dev"><b>0x' + dev.toString(16).toUpperCase().padStart(4, '0') + '</b>: '
+  var addrTxt = '0x' + dev.toString(16).toUpperCase().padStart(4, '0');
+  var jump = '<a class="dev-jump" href="#tl" title="时间线查看该设备" '
+    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">⏱</a>'
+    + '<a class="dev-jump" href="#topo" title="拓扑高亮该设备" '
+    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';">🗺</a>';
+  return '<div class="dev"><b>' + addrTxt + '</b> ' + jump + ': '
     + '<span class="' + dc + '">' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '</span> '
     + '<span class="text-dim">' + statsHtml + '</span>'
     + (summary ? '<div class="sum">' + summary + '</div>' : '')
     + '</div>';
+}
+
+// ── 跨卡片事件链 (2026-08-10 U8-2): 同设备多检测命中 → 提示可能是同一问题链 ──
+// 各模块 render 命中时调 collectHit 登记; renderH 生成事件链卡 (≥2 项命中触发)
+var hitDevices = {};
+function collectHit(device, scenario, rule, summary) {
+  if (device == null) return;
+  (hitDevices[device] = hitDevices[device] || []).push({
+    scenario: scenario, rule: rule, summary: summary,
+  });
 }
 
 // ── 顶部诊断摘要 (通俗结论, 2026-08-05 需求) ──
@@ -98,6 +115,7 @@ function summaryCard(checks) {
 }
 
 reg('diag', function () {
+  hitDevices = {};  // 重置事件链登记 (页面可重复进入)
   document.getElementById('mc').style.padding = '16px';
   var h = '<div class="card"><h3>🩺 网络诊断</h3>'
     + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>'
@@ -108,6 +126,22 @@ reg('diag', function () {
   var checks = {};
   function renderH() {
     var summaryHtml = Object.keys(checks).length ? summaryCard(Object.keys(checks).map(function (k) { return checks[k]; })) : '';
+    // 跨卡片事件链 (2026-08-10 U8-2): 同设备 ≥2 项检测命中 → 提示可能同一问题链
+    var chainDevs = Object.keys(hitDevices).filter(function (dev) { return hitDevices[dev].length >= 2; });
+    if (chainDevs.length) {
+      summaryHtml += '<div class="card" style="margin-bottom:12px;border-left:4px solid #7c3aed">'
+        + '<h3 style="font-size:13px;margin-bottom:6px">🔗 事件链提示: 同设备多检测命中, 可能是同一问题链</h3>'
+        + '<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.8">';
+      chainDevs.forEach(function (dev) {
+        var hits = hitDevices[dev];
+        summaryHtml += '<li><b>0x' + parseInt(dev).toString(16).toUpperCase().padStart(4, '0') + '</b>: '
+          + hits.map(function (hit) {
+              return '<span class="v-bad">' + hit.scenario + '</span>' + (hit.rule ? '(' + hit.rule + ')' : '');
+            }).join(' × ')
+          + ' <span class="text-dim">' + (hits[0].summary || '') + '</span></li>';
+      });
+      summaryHtml += '</ul></div>';
+    }
     document.getElementById('mc').innerHTML = h.replace('<!--DIAG-SUMMARY-->', summaryHtml);
   }
 
@@ -132,6 +166,13 @@ reg('diag', function () {
         checks['L1-2'] = { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion };
         checks['L1-3'] = { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion };
         checks['L1-4'] = { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion };
+        // 事件链登记: L1-3/L1-4 命中设备 (2026-08-10 U8-2)
+        (l3.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L1-3_HIT') === 0) collectHit(h.device, 'L1-3', h.sub_rule, h.summary);
+        });
+        (l4.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L1-4_HIT') === 0) collectHit(h.device, 'L1-4', h.sub_rule, h.summary);
+        });
 
         // ── L1-1 卡片 ──
         var b1 = 'Beacon Request: <b>' + (l1.beacon_request_count || 0) + '</b> 个 | 命中 <b class="' + vClass(l1.verdict, 'L1-1') + '">'
@@ -194,6 +235,9 @@ reg('diag', function () {
       render: function (d, checks) {
         var l21 = d && !d.error ? (d.l2_1 || {}) : {};
         checks['L2-1'] = { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion };
+        (l21.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L2-1_HIT') === 0) collectHit(h.device, 'L2-1', h.sub_rule, h.summary);
+        });
         var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
           + '<span class="text-muted">' + (l21.summary || '') + '</span>'
           + ((l21.devices || []).length ? '<div class="divider">'
@@ -216,6 +260,12 @@ reg('diag', function () {
         var l31 = d && !d.error ? (d.l3_1 || {}) : {};
         checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
         checks['L3-1'] = { scenario: 'L3-1', verdict: l31.verdict, conclusion: l31.conclusion };
+        (l35.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L3-5_HIT') === 0) collectHit(h.device, 'L3-5', h.sub_rule, h.summary);
+        });
+        (l31.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L3-1_HIT') === 0) collectHit(h.device, 'L3-1', h.sub_rule, h.summary);
+        });
         var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
           + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
           + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
@@ -258,6 +308,10 @@ reg('diag', function () {
       render: function (d, checks) {
         var l63 = d && !d.error ? (d.l6_3 || {}) : {};
         checks['L6-3'] = { scenario: 'L6-3', verdict: l63.verdict, conclusion: l63.conclusion };
+        (l63.devices || []).forEach(function (h) {
+          // ⚠️ 检测器 verdict 为 L6-S3_HIT (场景编号 L6-S3, 非卡片名 L6-3)
+          if ((h.verdict || '').indexOf('L6-S3_HIT') === 0) collectHit(h.device, 'L6-S3', h.sub_rule, h.summary);
+        });
         var b6x = '0x06 间接过期: <b>' + (l63.expiry_count || 0) + '</b> 帧 | 0x05 队列满: <b>' + (l63.no_indirect_capacity_count || 0) + '</b><br>'
           + '<span class="text-muted">' + (l63.summary || '') + '</span>'
           + ((l63.devices || []).length ? '<div class="divider">'
@@ -314,6 +368,8 @@ reg('diag', function () {
           + '</div>';
         for (var i = 0; i < devs.length; i++) {
           var dev = devs[i];
+          // 事件链登记: 离网设备 (OFF) — 与 L1-4 被踢 / L1-3 密钥循环等跨卡关联 (2026-08-10 U8-2)
+          collectHit(dev.aid, 'OFF', null, (dev.diagnosis || {}).summary);
           var typeLabel = dev.device_type === 'coordinator' ? '协调器' : dev.device_type === 'router' ? '路由器' : '终端设备';
           var eui = dev.eui64 || '未知';
           if (eui.length === 16) { eui = eui.slice(0, 2) + ':' + eui.slice(2, 4) + ':' + eui.slice(4, 6) + ':' + eui.slice(6, 8) + ':' + eui.slice(8, 10) + ':' + eui.slice(10, 12) + ':' + eui.slice(12, 14) + ':' + eui.slice(14, 16); }
