@@ -59,6 +59,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [U7 拓扑页优化](issues/U7-拓扑页优化.md) — 形状分类 (协调器六边/路由菱形/终端圆/未知三角) + 死控件修复 (taddr 定位 / 静默节点切换) + 播放按钮 + 时间刻度条 + 图实例复用 (时间过滤不再重建, 性能提升); 截图见 .scratch/verification/u7-topo/; **终端设备判定修正 (08-06)**: 素材实证两方向误判 — ①SED 误判 router (Route Request/Record 发送者非 FFD 信号: 群控锁 0x82A0/0xD6D3, G32 0xEE48 实证 SED 也发) ②无信号整网误判终端 (test2 2628 节点); 重构为协议级信号: LS/RREP→router, MAC poll→end_device (修复 poll 帧被 NWK 过滤排除), DA capability 权威声明 (cubx), 无信号→unknown; 验证 34/34 + P1 回归 15/15; ⚠️ 需重导素材生效 (device_type 为导入时快照); **cubx 事件提取缺口修复 (08-06)**: extract_* 只认 tshark raw_layers, cubx 路径 raw_layers={} → RREQ/NS 事件全丢 → 拓扑空 (设备添加失败包实证); 回退 cubx route_req/nwk_status_code/nwk_status_target 字段, 中继包事件 0→140/0→20, 拓扑 nodes=7
 - [U3 节点页补齐](issues/U3-节点页补齐.md) — 行内展开详情 (首末时间/帧类型计数/EUI64/LQI-RSSI 统计/邻居表+不对称标记) + 设备类型列 + 🎯 定位按钮; 后端 /api/nodes 加 detail (EUI64/LQI-RSSI 仅 cubx); seen 计数单遍 O(pkts); CDP 17/17; 截图见 .scratch/verification/u3-nodes/; CSV 路径未实测
 - [U5 时间线优化](issues/U5-时间线优化.md) — 类型下拉动态化 (/api/packets/types 全量统计) + 事件标记 (⛔Leave 按 rejoin 区分 / 🔄Rejoin / ⚠️NetStatus, 协议依据: NWK 0x04 标志位) + 2 bug 修复 (详情 TypeError: nwk undefined for-in; 联动时间全零: S.topoT0/T1 契约统一 tlToTs 兼容 + isNaN 兜底 + 跳转重置抓包范围) + 跳转节点过滤 (topoAddr→tlNode 同步); 验证: 徽章 DOM/详情/跳转端到端 ✅, 详情崩溃修复待含 MAC 帧素材; 截图见 .scratch/verification/u5-timeline/
+- [U8 诊断页优化](issues/U8-诊断页优化.md) — 批次 1 完成 (08-10): **diag.js 嵌套 → 检测器注册表** (MODULES 数据驱动, 加检测 = 注册条目+render 函数; Promise.all + 独立 catch 失败不阻塞); CDP 对比重构前后 DOM/bodyText 逐字符一致; 待做: 批次 2 设备地址跳转+跨卡片事件链 / 批次 3 覆盖提示
 
 ## Not yet specified
 

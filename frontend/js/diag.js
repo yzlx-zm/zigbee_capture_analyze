@@ -1,5 +1,7 @@
 // diag.js — 诊断页面模块 (ES module)
 // UI 对齐 (2026-08-04): L1-1/2/3/4 卡片统一模板 + None 防御 + 视觉规范 (.l1-card)
+// 2026-08-10 (U8-1): 四层 then 嵌套 → 检测器注册表 (数据驱动) —
+//   新增检测只需注册表加条目 + 一个 render 函数, 主流程 (Promise.all + renderH) 不动。
 import { S, A } from './state.js';
 
 // ── L1 卡片统一渲染工具 ──
@@ -109,144 +111,152 @@ reg('diag', function () {
     document.getElementById('mc').innerHTML = h.replace('<!--DIAG-SUMMARY-->', summaryHtml);
   }
 
-  // ── L1 入网检测区 (文档→测试→工具工作流验证) ──
-  A.get('/api/diag/l1').then(function (l1d) {
-    if (l1d && l1d.error) {
-      h += '<div class="card card-danger">'
-        + '<h3 class="text-danger">L1 入网检测</h3>'
-        + '<p class="hint">' + l1d.error + ' (L1 检测需要 .cubx 或含 MAC 帧的 pcap)</p></div>';
-      renderH();
-      renderOffline();
-      return;
-    }
-    var l1 = l1d ? (l1d.l1_1 || {}) : {};
-    var l2 = l1d ? (l1d.l1_2 || {}) : {};
-    var l3 = l1d ? (l1d.l1_3 || {}) : {};
-    var l4 = l1d ? (l1d.l1_4 || {}) : {};
+  // ── 检测器注册表 (2026-08-10 U8-1: 四层嵌套 → 数据驱动) ──
+  // 每模块 = {api, render(d, checks) -> section html}; render 内部更新 checks 并返回该区 html。
+  // 单模块失败不阻塞整页 (catch 保留原嵌套链行为); 全部完成统一 renderH + 离线诊断。
+  var MODULES = [
+    {
+      api: '/api/diag/l1',
+      render: function (d, checks) {
+        if (d && d.error) {
+          return '<div class="card card-danger">'
+            + '<h3 class="text-danger">L1 入网检测</h3>'
+            + '<p class="hint">' + d.error + ' (L1 检测需要 .cubx 或含 MAC 帧的 pcap)</p></div>';
+        }
+        var l1 = d ? (d.l1_1 || {}) : {};
+        var l2 = d ? (d.l1_2 || {}) : {};
+        var l3 = d ? (d.l1_3 || {}) : {};
+        var l4 = d ? (d.l1_4 || {}) : {};
 
-    // 摘要独立收集: 每层检测成功即写入, renderH() 动态渲染 (2026-08-06)
-    checks['L1-1'] = { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion };
-    checks['L1-2'] = { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion };
-    checks['L1-3'] = { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion };
-    checks['L1-4'] = { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion };
+        checks['L1-1'] = { scenario: 'L1-1', verdict: l1.verdict, conclusion: l1.conclusion };
+        checks['L1-2'] = { scenario: 'L1-2', verdict: l2.verdict, conclusion: l2.conclusion };
+        checks['L1-3'] = { scenario: 'L1-3', verdict: l3.verdict, conclusion: l3.conclusion };
+        checks['L1-4'] = { scenario: 'L1-4', verdict: l4.verdict, conclusion: l4.conclusion };
 
-    // ── L1-1 卡片 ──
-    var b1 = 'Beacon Request: <b>' + (l1.beacon_request_count || 0) + '</b> 个 | 命中 <b class="' + vClass(l1.verdict, 'L1-1') + '">'
-      + (l1.hit_count || 0) + '/' + (l1.beacon_request_count || 0) + '</b> '
-      + '(' + Math.round((l1.hit_rate || 0) * 100) + '%)<br>'
-      + '最大连续MISS: <b>' + (l1.max_consecutive_miss || 0) + '</b> (判定阈值≥2)<br>'
-      + (l1.delay_summary_ms ? '响应延迟: <b>' + l1.delay_summary_ms.min + '~' + l1.delay_summary_ms.max + '</b>ms (median ' + l1.delay_summary_ms.median + ')' : '');
+        // ── L1-1 卡片 ──
+        var b1 = 'Beacon Request: <b>' + (l1.beacon_request_count || 0) + '</b> 个 | 命中 <b class="' + vClass(l1.verdict, 'L1-1') + '">'
+          + (l1.hit_count || 0) + '/' + (l1.beacon_request_count || 0) + '</b> '
+          + '(' + Math.round((l1.hit_rate || 0) * 100) + '%)<br>'
+          + '最大连续MISS: <b>' + (l1.max_consecutive_miss || 0) + '</b> (判定阈值≥2)<br>'
+          + (l1.delay_summary_ms ? '响应延迟: <b>' + l1.delay_summary_ms.min + '~' + l1.delay_summary_ms.max + '</b>ms (median ' + l1.delay_summary_ms.median + ')' : '');
 
-    // ── L1-2 卡片 ──
-    var b2 = 'AssocReq: <b>' + (l2.assoc_req_count || 0) + '</b> | 成功 <b class="v-ok">' + (l2.success_count || 0)
-      + '</b> | 无响应 <b class="v-warn">' + (l2.no_response_count || 0)
-      + '</b> | 拒绝 <b class="v-bad">' + (l2.rejected_count || 0) + '</b><br>'
-      + '<span class="text-muted">' + (l2.summary || '') + '</span>';
+        // ── L1-2 卡片 ──
+        var b2 = 'AssocReq: <b>' + (l2.assoc_req_count || 0) + '</b> | 成功 <b class="v-ok">' + (l2.success_count || 0)
+          + '</b> | 无响应 <b class="v-warn">' + (l2.no_response_count || 0)
+          + '</b> | 拒绝 <b class="v-bad">' + (l2.rejected_count || 0) + '</b><br>'
+          + '<span class="text-muted">' + (l2.summary || '') + '</span>';
 
-    // ── L1-3 卡片 ──
-    var b3 = '入网设备: <b>' + (l3.joined_device_count || 0) + '</b> 台<br>'
-      + '<span class="text-muted">' + (l3.summary || '') + '</span>'
-      + ((l3.devices || []).length ? '<div class="divider">'
-        + (l3.devices || []).map(function (d) {
-            return devLine(d.device, d.verdict, d.sub_rule,
-              'T' + (d.transport_nwk || 0) + '/RQ' + (d.request_key || 0)
-              + '/Tclk' + (d.transport_tclk || 0) + '/V' + (d.verify || 0)
-              + '/C' + (d.confirm || 0) + '/L' + (d.leave || 0)
-              + (d.route_error ? '/R' + d.route_error : ''),
-              d.summary);
-          }).join('')
-        + '</div>' : '');
+        // ── L1-3 卡片 ──
+        var b3 = '入网设备: <b>' + (l3.joined_device_count || 0) + '</b> 台<br>'
+          + '<span class="text-muted">' + (l3.summary || '') + '</span>'
+          + ((l3.devices || []).length ? '<div class="divider">'
+            + (l3.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  'T' + (d.transport_nwk || 0) + '/RQ' + (d.request_key || 0)
+                  + '/Tclk' + (d.transport_tclk || 0) + '/V' + (d.verify || 0)
+                  + '/C' + (d.confirm || 0) + '/L' + (d.leave || 0)
+                  + (d.route_error ? '/R' + d.route_error : ''),
+                  d.summary);
+              }).join('')
+            + '</div>' : '');
 
-    // ── L1-4 卡片 ──
-    var b4 = 'Remove Device(0x07): <b>' + (l4.remove_event_count || 0) + '</b> 帧 | 入网设备: <b>' + (l4.joined_device_count || 0) + '</b> 台<br>'
-      + '<span class="text-muted">' + (l4.summary || '') + '</span>'
-      + ((l4.remove_events || []).length ? '<div class="divider">'
-        + (l4.remove_events || []).map(function (r) {
-            var d = r.nwk_dst != null ? '0x' + r.nwk_dst.toString(16).toUpperCase().padStart(4, '0') : '0x?';
-            var s = r.nwk_src != null ? '0x' + r.nwk_src.toString(16).toUpperCase().padStart(4, '0') : '0x?';
-            return '<div class="dev mono">' + d + ' ← ' + s
-              + (r.target_eui64 ? ' → ' + r.target_eui64 : '') + '</div>';
-          }).join('')
-        + '</div>' : '')
-      + ((l4.devices || []).length ? '<div class="divider">'
-        + (l4.devices || []).map(function (d) {
-            return devLine(d.device, d.verdict, d.sub_rule,
-              'Rm' + (d.remove_device || 0) + '/Ann' + (d.announce || 0) + '/Lv' + (d.leave || 0),
-              d.summary);
-          }).join('')
-        + '</div>' : '');
+        // ── L1-4 卡片 ──
+        var b4 = 'Remove Device(0x07): <b>' + (l4.remove_event_count || 0) + '</b> 帧 | 入网设备: <b>' + (l4.joined_device_count || 0) + '</b> 台<br>'
+          + '<span class="text-muted">' + (l4.summary || '') + '</span>'
+          + ((l4.remove_events || []).length ? '<div class="divider">'
+            + (l4.remove_events || []).map(function (r) {
+                var dd = r.nwk_dst != null ? '0x' + r.nwk_dst.toString(16).toUpperCase().padStart(4, '0') : '0x?';
+                var ss = r.nwk_src != null ? '0x' + r.nwk_src.toString(16).toUpperCase().padStart(4, '0') : '0x?';
+                return '<div class="dev mono">' + dd + ' ← ' + ss
+                  + (r.target_eui64 ? ' → ' + r.target_eui64 : '') + '</div>';
+              }).join('')
+            + '</div>' : '')
+          + ((l4.devices || []).length ? '<div class="divider">'
+            + (l4.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  'Rm' + (d.remove_device || 0) + '/Ann' + (d.announce || 0) + '/Lv' + (d.leave || 0),
+                  d.summary);
+              }).join('')
+            + '</div>' : '');
 
-    h += '<div class="card l1-sec">'
-      + '<h3>🔍 L1 入网检测 <span class="conf">(文档→测试→工具)</span></h3>'
-      + '<div class="l1-cards">'
-      + l1Card('L1-1', '发现失败', l1.verdict, l1.confidence, b1, l1.conclusion, l1.evidence, l1.evidence_total)
-      + l1Card('L1-2', 'Association', l2.verdict, l2.confidence, b2, l2.conclusion, l2.evidence, l2.evidence_total)
-      + l1Card('L1-3', '密钥分发', l3.verdict, l3.confidence, b3, l3.conclusion, l3.evidence, l3.evidence_total)
-      + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4, l4.conclusion, l4.evidence, l4.evidence_total)
-      + '</div></div>';
-
-    // ── L2 在线维持检测区 (L2-1 终端频繁离线) ──
-    A.get('/api/diag/l2').then(function (l2d) {
-      var l21 = l2d && !l2d.error ? (l2d.l2_1 || {}) : {};
-      checks['L2-1'] = { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion };
-      var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
-        + '<span class="text-muted">' + (l21.summary || '') + '</span>'
-        + ((l21.devices || []).length ? '<div class="divider">'
-          + (l21.devices || []).map(function (d) {
-              return devLine(d.device, d.verdict, d.sub_rule,
-                'poll' + (d.poll_count || 0), d.summary, 'L2-1');
-            }).join('')
-          + '</div>' : '');
-      h += '<div class="card l1-sec">'
-        + '<h3>📡 L2 在线维持检测 <span class="conf">(文档→测试→工具)</span></h3>'
-        + '<div class="l1-cards">'
-        + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
-        + '</div></div>';
-
-    // ── L3 运营期检测区 (L3-5 源路由/MTORR 失效 + L3-1 命令无 APS Ack) ──
-    A.get('/api/diag/l3').then(function (l3d) {
-      var l35 = l3d && !l3d.error ? (l3d.l3_5 || {}) : {};
-      var l31 = l3d && !l3d.error ? (l3d.l3_1 || {}) : {};
-      checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
-      checks['L3-1'] = { scenario: 'L3-1', verdict: l31.verdict, conclusion: l31.conclusion };
-      var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
-        + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
-        + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
-        + '<span class="text-muted">' + (l35.summary || '') + '</span>'
-        + (l35.network_status_codes ? '<br><span class="text-dim">全码分布: ' + Object.keys(l35.network_status_codes).map(function (c) { return c + '×' + l35.network_status_codes[c]; }).join(' ') + '</span>' : '')
-        + (l35.self_heal ? '<br><span class="text-dim">自愈: ' + l35.self_heal.note + '</span>' : '')
-        + ((l35.devices || []).length ? '<div class="divider">'
-          + (l35.devices || []).map(function (d) {
-              return devLine(d.device, d.verdict, d.sub_rule,
-                'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary, 'L3-5');
-            }).join('')
-          + '</div>' : '');
-      // ── L3-1 卡片 (2026-08-06: 发送命令无 APS Ack, APS 配对能力支撑) ──
-      var b31 = '无 ack 事务: <b class="' + vClass(l31.verdict, 'L3-1') + '">' + (l31.no_ack_total || 0) + '</b>'
-        + '<br><span class="text-muted">' + (l31.summary || '') + '</span>'
-        + ((l31.devices || []).length ? '<div class="divider">'
-          + (l31.devices || []).map(function (d) {
-              var cross = '';
-              if (d.cross && (d.cross.route_error || d.cross.indirect_expiry || d.cross.leave)) {
-                cross = '<span class="text-dim"> ' + (d.cross.route_error ? 'L3-5×' + d.cross.route_error : '')
-                  + (d.cross.indirect_expiry ? ' L6-S3×' + d.cross.indirect_expiry : '')
-                  + (d.cross.leave ? ' Lv×' + d.cross.leave : '') + '</span>';
-              }
-              return devLine(d.device, d.verdict, d.sub_rule,
-                (d.direction === 'downlink' ? '↓下行' : '↑上行') + '×' + (d.no_ack_count || 0)
-                + '/重发' + (d.retry_max || 0) + cross,
-                d.summary, 'L3-1');
-            }).join('')
-          + '</div>' : '');
-      h += '<div class="card l1-sec">'
-        + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
-        + '<div class="l1-cards">'
-        + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
-        + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
-        + '</div></div>';
-      // ── L6 SED 专项检测区 (L6-S3 间接事务过期) ──
-      A.get('/api/diag/l6').then(function (l6d) {
-        var l63 = l6d && !l6d.error ? (l6d.l6_3 || {}) : {};
+        return '<div class="card l1-sec">'
+          + '<h3>🔍 L1 入网检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<div class="l1-cards">'
+          + l1Card('L1-1', '发现失败', l1.verdict, l1.confidence, b1, l1.conclusion, l1.evidence, l1.evidence_total)
+          + l1Card('L1-2', 'Association', l2.verdict, l2.confidence, b2, l2.conclusion, l2.evidence, l2.evidence_total)
+          + l1Card('L1-3', '密钥分发', l3.verdict, l3.confidence, b3, l3.conclusion, l3.evidence, l3.evidence_total)
+          + l1Card('L1-4', 'TC 拒绝/踢人', l4.verdict, l4.confidence, b4, l4.conclusion, l4.evidence, l4.evidence_total)
+          + '</div></div>';
+      },
+    },
+    {
+      api: '/api/diag/l2',
+      render: function (d, checks) {
+        var l21 = d && !d.error ? (d.l2_1 || {}) : {};
+        checks['L2-1'] = { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion };
+        var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
+          + '<span class="text-muted">' + (l21.summary || '') + '</span>'
+          + ((l21.devices || []).length ? '<div class="divider">'
+            + (l21.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  'poll' + (d.poll_count || 0), d.summary, 'L2-1');
+              }).join('')
+            + '</div>' : '');
+        return '<div class="card l1-sec">'
+          + '<h3>📡 L2 在线维持检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<div class="l1-cards">'
+          + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
+          + '</div></div>';
+      },
+    },
+    {
+      api: '/api/diag/l3',
+      render: function (d, checks) {
+        var l35 = d && !d.error ? (d.l3_5 || {}) : {};
+        var l31 = d && !d.error ? (d.l3_1 || {}) : {};
+        checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
+        checks['L3-1'] = { scenario: 'L3-1', verdict: l31.verdict, conclusion: l31.conclusion };
+        var b5 = 'Network Status: <b>' + (l35.network_status_total || 0) + '</b> 帧'
+          + ' | 0x0B 源路由: <b class="' + vClass(l35.verdict, 'L3-5') + '">' + (l35.source_route_failure_count || 0) + '</b>'
+          + ' | 0x0C MTORR: <b>' + (l35.mto_route_failure_count || 0) + '</b><br>'
+          + '<span class="text-muted">' + (l35.summary || '') + '</span>'
+          + (l35.network_status_codes ? '<br><span class="text-dim">全码分布: ' + Object.keys(l35.network_status_codes).map(function (c) { return c + '×' + l35.network_status_codes[c]; }).join(' ') + '</span>' : '')
+          + (l35.self_heal ? '<br><span class="text-dim">自愈: ' + l35.self_heal.note + '</span>' : '')
+          + ((l35.devices || []).length ? '<div class="divider">'
+            + (l35.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  'NS' + (d.route_error_count || 0) + '/轮' + (d.rounds || 0), d.summary, 'L3-5');
+              }).join('')
+            + '</div>' : '');
+        // ── L3-1 卡片 (2026-08-06: 发送命令无 APS Ack, APS 配对能力支撑) ──
+        var b31 = '无 ack 事务: <b class="' + vClass(l31.verdict, 'L3-1') + '">' + (l31.no_ack_total || 0) + '</b>'
+          + '<br><span class="text-muted">' + (l31.summary || '') + '</span>'
+          + ((l31.devices || []).length ? '<div class="divider">'
+            + (l31.devices || []).map(function (d) {
+                var cross = '';
+                if (d.cross && (d.cross.route_error || d.cross.indirect_expiry || d.cross.leave)) {
+                  cross = '<span class="text-dim"> ' + (d.cross.route_error ? 'L3-5×' + d.cross.route_error : '')
+                    + (d.cross.indirect_expiry ? ' L6-S3×' + d.cross.indirect_expiry : '')
+                    + (d.cross.leave ? ' Lv×' + d.cross.leave : '') + '</span>';
+                }
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  (d.direction === 'downlink' ? '↓下行' : '↑上行') + '×' + (d.no_ack_count || 0)
+                  + '/重发' + (d.retry_max || 0) + cross,
+                  d.summary, 'L3-1');
+              }).join('')
+            + '</div>' : '');
+        return '<div class="card l1-sec">'
+          + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<div class="l1-cards">'
+          + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
+          + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
+          + '</div></div>';
+      },
+    },
+    {
+      api: '/api/diag/l6',
+      render: function (d, checks) {
+        var l63 = d && !d.error ? (d.l6_3 || {}) : {};
         checks['L6-3'] = { scenario: 'L6-3', verdict: l63.verdict, conclusion: l63.conclusion };
         var b6x = '0x06 间接过期: <b>' + (l63.expiry_count || 0) + '</b> 帧 | 0x05 队列满: <b>' + (l63.no_indirect_capacity_count || 0) + '</b><br>'
           + '<span class="text-muted">' + (l63.summary || '') + '</span>'
@@ -256,29 +266,22 @@ reg('diag', function () {
                   '0x06×' + (d.expiry_count || 0), d.summary, 'L6-3');
               }).join('')
             + '</div>' : '');
-        h += '<div class="card l1-sec">'
+        return '<div class="card l1-sec">'
           + '<h3>🌙 L6 SED 专项检测 <span class="conf">(文档→测试→工具)</span></h3>'
           + '<div class="l1-cards">'
           + l1Card('L6-3', '间接事务过期', l63.verdict, l63.confidence, b6x, l63.conclusion, l63.evidence, l63.evidence_total)
           + '</div></div>';
+      },
+    },
+  ];
 
-        // 摘要已独立渲染 (checks 收集 + renderH 动态生成), 此处只需渲染卡片与离线区
-        renderH();
-        renderOffline();
-      }).catch(function () {  // L6 失败不阻塞
-        renderH();
-        renderOffline();
-      });
-    }).catch(function () {
-      renderH();
-      renderOffline();
-    });
-    }).catch(function () {  // L2 失败不阻塞
-      renderH();
-      renderOffline();
-    });
-  }).catch(function () {
-    // L1 失败不阻塞离线诊断
+  // 主流程: 各模块独立请求 + 独立失败容错; 全部完成 → 摘要+卡片统一渲染 → 离线诊断
+  Promise.all(MODULES.map(function (m) {
+    return A.get(m.api).then(function (d) {
+      var html = m.render(d, checks);
+      if (html) h += html;
+    }).catch(function () { /* 单模块失败不阻塞 (原嵌套 catch 链行为) */ });
+  })).then(function () {
     renderH();
     renderOffline();
   });
