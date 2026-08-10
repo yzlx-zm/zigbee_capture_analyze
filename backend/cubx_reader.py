@@ -7,9 +7,11 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Iterable
@@ -666,6 +668,79 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     return result
 
 
+# ── 大包性能: bytes 级预筛 + 多进程并行 (P3) ──
+
+# 并行阈值: 候选帧数低于此值走串行 (进程启动开销不值得)
+_PARALLEL_MIN_ROWS = 8000
+# 并行块大小 (IPC 传输粒度)
+_PARALLEL_CHUNK = 1000
+
+
+def _cubx_prefilter(raw: bytes, include_mac_frames: bool) -> bool:
+    """bytes 级预筛 (不构造 scapy): 只返回可能被主循环保留的帧。
+
+    依据 scapy dot15d4.py 源码级确认 (cubx_reader.py:30 conf.dot15d4_protocol):
+    fcf_frametype 0→Dot15d4Beacon, 1→Dot15d4Data, 2→Dot15d4Ack, 3→Dot15d4Cmd,
+    4-7→Raw (默认); 且 Dot15d4Data.guess_payload_class 无条件返回 ZigbeeNWK →
+    **NWK 层只存在于 Data 帧 (frame_type=1)**。
+
+    规则 (保守超集, 不做任何推断):
+    - ft==1 (Data): 保留完整解析 (解析后仍走原 is_nwk 过滤, 与现状逐位一致)
+    - ft∈{0,3} (Beacon/MAC Cmd): 仅 include_mac_frames=True 时保留 (L1-1/L1-2
+      入网检测 + 节点 SED poll 判定 + 详情 MAC 明细需要; 短 payload 帧由完整
+      解析兜底过滤)
+    - ft∈{2,4-7} (Ack/reserved): 排除 — 对应 scapy 类无 NWK 无 MAC 命令字段,
+      主循环确定不保留
+    - raw<3 无法读 FCF: 保守保留 (超集安全, 完整解析兜底; 实测素材短帧=0)
+    """
+    if len(raw) < 3:
+        return True
+    ft = raw[0] & 0x07
+    if ft == 1:
+        return True
+    if ft in (0, 3):
+        return include_mac_frames
+    return False
+
+
+# 并行 worker 进程内 keys (initializer 注入, 每进程一次 — KeyRecord 可 pickle)
+_W_NWK_KEYS: list = []
+_W_LINK_KEYS: list = []
+
+
+def _init_parallel_worker(nwk_keys: list, link_keys: list) -> None:
+    global _W_NWK_KEYS, _W_LINK_KEYS
+    _W_NWK_KEYS = nwk_keys
+    _W_LINK_KEYS = link_keys
+
+
+def _parallel_work_row(row: tuple) -> dict:
+    """worker: 单帧完整解析 (与串行 _raw_to_dict 逐位一致 — 同一函数).
+
+    row = (idx, raw_bytes, pkt_id, ts, ch, lqi, rssi) — 与 parse_cubx 候选帧同构.
+    """
+    _idx, raw, pkt_id, ts, ch, lqi, rssi = row
+    return _raw_to_dict(raw, pkt_id, ts, ch, lqi, rssi,
+                        _W_NWK_KEYS, _W_LINK_KEYS)
+
+
+def _parse_rows_parallel(rows: list[tuple], nwk_keys: list, link_keys: list) -> list[dict]:
+    """候选帧多进程解析; 失败自动回退串行 (主循环兜底, 不丢数据).
+
+    rows 元素 = (idx, raw_bytes, pkt_id, ts, ch, lqi, rssi) — ex.map 保持输入顺序,
+    idx 仅占位不参与解析.
+    """
+    try:
+        workers = max(2, min(4, os.cpu_count() or 2))
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_parallel_worker,
+                                 initargs=(nwk_keys, link_keys)) as ex:
+            return list(ex.map(_parallel_work_row, rows, chunksize=_PARALLEL_CHUNK))
+    except Exception:
+        # 并行失败 (spawn/pickle/环境) → 串行回退, 行为与旧版完全一致
+        return [_raw_to_dict(raw, pkt_id, ts, ch, lqi, rssi, nwk_keys, link_keys)
+                for _idx, raw, pkt_id, ts, ch, lqi, rssi in rows]
+
+
 # ── Public API ──
 
 
@@ -699,15 +774,27 @@ def parse_cubx(path: str, include_mac_frames: bool = False,
         rows = db.execute(
             "SELECT Id, Raw, Timestamp, Channel, LQI, RSSI FROM Packets ORDER BY Id"
         ).fetchall()
-        packets: list[dict] = []
         total_rows = len(rows)
+        # bytes 级预筛 (P3): 跳过确定不保留的帧 (Ack/reserved — 对应 scapy 类无
+        # NWK 无 MAC 命令字段, 主循环确定丢弃), 其余候选帧完整解析.
+        # 候选帧 = 旧路径保留集合的保守超集, 主循环过滤逻辑不变 → 结果逐位一致.
+        cand: list[tuple] = []
+        for idx, (pkt_id, raw, ts, ch, lqi, rssi) in enumerate(rows):
+            raw_b = bytes(raw)
+            if not _cubx_prefilter(raw_b, include_mac_frames):
+                continue
+            cand.append((idx, raw_b, int(pkt_id), float(ts), int(ch), int(lqi), int(rssi)))
+        # 候选帧解析: 大包多进程并行, 小包串行 (进程启动开销不值得)
+        if len(cand) >= _PARALLEL_MIN_ROWS:
+            parsed = {c[0]: pkt for c, pkt in zip(cand, _parse_rows_parallel(cand, nwk_keys, link_keys))}
+        else:
+            parsed = {c[0]: _raw_to_dict(c[1], c[2], c[3], c[4], c[5], c[6], nwk_keys, link_keys)
+                      for c in cand}
+        packets: list[dict] = []
         for idx, row in enumerate(rows):
-            pkt_id, raw, ts, ch, lqi, rssi = row
-            pkt = _raw_to_dict(
-                bytes(raw), int(pkt_id), float(ts),
-                int(ch), int(lqi), int(rssi),
-                nwk_keys, link_keys,
-            )
+            pkt = parsed.get(idx)
+            if pkt is None:
+                continue  # 预筛排除帧 (旧路径解析后同样不保留)
             # 只保留 NWK 帧 (与 tshark -Y zbee_nwk 对齐), 除非 include_mac_frames
             is_nwk = pkt.get("nwk_src") is not None or pkt.get("nwk_dst") is not None
             is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None)
