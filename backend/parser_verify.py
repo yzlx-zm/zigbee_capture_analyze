@@ -112,6 +112,14 @@ def _check_consistency(packets: list[dict], report: dict):
     nwk_undecrypted = sum(1 for p in packets
                           if p.get("nwk_security") and p.get("status") == "Encrypted")
     undec_rate = round(nwk_undecrypted / nwk_secure, 4) if nwk_secure else 0
+    # P4 (08-10): 失败原因按新字段 decrypt_note 分类 (cubx 路径提供) —
+    # missing_key (候选为空) / mic_fail (有候选不匹配: key 不对或他网络) / parse_error
+    from collections import Counter as _Counter
+    fail_notes = _Counter(p.get("decrypt_note") for p in packets
+                          if p.get("nwk_security") and p.get("status") == "Encrypted")
+    note_detail = ""
+    if fail_notes:
+        note_detail = " [" + ", ".join(f"{k}:{v}" for k, v in sorted(fail_notes.items())) + "]"
     # 阈值: >30% 未解密 → 缺 key (警告); 但若连帧头字段都缺失 → 解析错位 (锁定)
     # 缺 key 特征: nwk_src/nwk_dst 仍可读 (帧头未加密), 仅 payload 不可解
     missing_key_like = nwk_undecrypted > 0 and undec_rate > 0.30
@@ -125,7 +133,7 @@ def _check_consistency(packets: list[dict], report: dict):
         "label": "NWK 解密健康度",
         "expected": f"未解密率 ≤ 5% ({nwk_secure} 帧加密)",
         "actual": f"{nwk_undecrypted}/{nwk_secure} 未解密 ({undec_rate*100:.1f}%)"
-                  + (" [疑似缺 key]" if missing_key_like else ""),
+                  + (" [疑似缺 key]" if missing_key_like else "") + note_detail,
         "passed": passed,
         "failure_type": ftype,
     }

@@ -360,6 +360,8 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
     sec_key = _hex_colon(sec.get("zbee.sec.key", ""))
     sec_key_label = sec.get("zbee.sec.decryption_key", "")
     sec_mic = _hex_colon(sec.get("zbee.sec.mic", ""))
+    # P4: key_type (tshark -G fields: zbee.sec.key_id; 对齐 cubx sec_key_type)
+    sec_key_type = _h(sec.get("zbee.sec.key_id", ""))
     # nwk_src64 缺失时从安全头补 (对齐 cubx: 安全头含源 EUI64, zbee.sec.src64)
     if nwk_src64 is None:
         nwk_src64 = _hex_colon(sec.get("zbee.sec.src64", ""))
@@ -454,6 +456,8 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "sec_key_label": sec_key_label,
         "sec_frame_counter": sec_frame_counter,
         "sec_mic": sec_mic,
+        "sec_key_type": sec_key_type,
+        "decrypt_note": None,   # pcap 路径: tshark 内部解密, 失败原因不可从输出判定 (诚实占位)
         "decrypted": decrypted,
         "nwk_radius": nwk_radius,
         "nwk_src64": nwk_src64,

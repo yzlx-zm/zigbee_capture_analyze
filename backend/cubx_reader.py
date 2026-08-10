@@ -79,6 +79,11 @@ def _security_candidates(
             yield KeyRecord(f"{record.label}/transport", _zigbee_key_hash(record.value, 0x00))
         elif key_type == 3:
             yield KeyRecord(f"{record.label}/load", _zigbee_key_hash(record.value, 0x02))
+        elif key_type == 4:
+            # Verify Key = keyed_hash(TC Link Key, selector 0x03) — 协议级补全
+            # (map 协议语义破解记录 VerifyKey 16B = keyed_hash(TCLK,3));
+            # 素材暂无 key_type=4 帧, 候选待素材验证
+            yield KeyRecord(f"{record.label}/verify", _zigbee_key_hash(record.value, 0x03))
         else:
             yield record
 
@@ -392,6 +397,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "zcl_cmd_id": None, "zcl_cmd_name": None,
         "sec_level": None, "sec_key": None, "sec_key_label": None,
         "sec_frame_counter": None, "sec_mic": None,
+        "sec_key_type": None,        # 安全头 key_type (0=Data/Link, 1=NWK, 2=Transport, 3=Load, 4=Verify)
+        "decrypt_note": None,        # 解密失败原因: missing_key / mic_fail / parse_error (成功=None)
         "nwk_radius": None, "nwk_src64": None, "nwk_security": False,
         "mac_fcs_ok": True, "mac_frame_type": 1,
         "mac_cmd_id": None,          # MAC 命令帧 ID (1=AssocReq, 2=AssocResp, 4=DataReq, 7=BeaconReq...)
@@ -502,6 +509,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             sec_bytes = bytes(sec)
             if len(sec_bytes) >= 4:
                 result["sec_mic"] = sec_bytes[-4:].hex()
+            # P4: key_type (aux header control bits1-2; 素材实证 08-10: 中继包安全帧
+            # 99.98% 为 key_type=0 — 设备唯一 TC link key 加密)
+            result["sec_key_type"] = (sec_bytes[0] >> 1) & 0x03 if sec_bytes else None
         try:
             plaintext, key_label, key_value = _decrypt_nwk(nwk, network_keys, link_keys)
             plain_valid = True
@@ -516,6 +526,16 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         except Exception:
             result["security"] = "Encrypted"
             result["status"] = "Encrypted"
+            # P4: 解密失败原因可观测 — 候选 key 为空 (缺 key) vs 有候选但 MIC 全失败
+            # (key 不匹配/其他网络) vs 安全头解析异常
+            if result["sec_key_type"] is not None:
+                try:
+                    cands = list(_security_candidates(result["sec_key_type"], network_keys, link_keys))
+                except Exception:
+                    cands = []
+                result["decrypt_note"] = "missing_key" if not cands else "mic_fail"
+            else:
+                result["decrypt_note"] = "parse_error"
     else:
         # 非加密 NWK 帧可能仍含可识别 payload
         pass
