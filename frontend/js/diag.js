@@ -146,12 +146,15 @@ function summaryCard(checks) {
 reg('diag', function () {
   hitDevices = {};  // 重置事件链登记 (页面可重复进入)
   document.getElementById('mc').style.padding = '16px';
-  var h = '<div class="card"><h3>🩺 网络诊断</h3>'
-    + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>'
-    + '<!--DIAG-SUMMARY-->';
   // ⚠️ 2026-08-05 修复: 摘要区被 innerHTML 重建覆盖 (先填旧 DOM 再整体重渲)
   // 改用注释占位 + 统一渲染; 2026-08-06 摘要独立渲染:
   // 各检测完成即写入 checks, renderH() 动态生成 — 不再依赖最内层回调 (L6 失败曾致摘要丢失)
+  // 2026-08-10 修复 (用户反馈: L2/L3 被移动到最下方): 模块完成存 sections slot,
+  // renderH 按注册表顺序拼接 — 渐进渲染保留, 但顺序固定, 不再受响应完成顺序影响
+  var headerHtml = '<div class="card"><h3>🩺 网络诊断</h3>'
+    + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>';
+  var sections = {};       // 模块 key → section html (完成即存)
+  var offlineHtml = '';    // 离线区 (独立请求)
   var checks = {};
   function renderH() {
     var summaryHtml = Object.keys(checks).length ? summaryCard(Object.keys(checks).map(function (k) { return checks[k]; })) : '';
@@ -172,7 +175,9 @@ reg('diag', function () {
       });
       summaryHtml += '</ul></div>';
     }
-    document.getElementById('mc').innerHTML = h.replace('<!--DIAG-SUMMARY-->', summaryHtml);
+    // 按注册表顺序拼接 section (未完成模块留空, 完成即渐进出现)
+    var bodyHtml = MODULES.map(function (m) { return sections[m.key] || ''; }).join('');
+    document.getElementById('mc').innerHTML = headerHtml + summaryHtml + bodyHtml + offlineHtml;
   }
 
   // ── 检测器注册表 (2026-08-10 U8-1: 四层嵌套 → 数据驱动) ──
@@ -180,6 +185,7 @@ reg('diag', function () {
   // 单模块失败不阻塞整页 (catch 保留原嵌套链行为); 全部完成统一 renderH + 离线诊断。
   var MODULES = [
     {
+      key: 'l1',
       api: '/api/diag/l1',
       render: function (d, checks) {
         if (d && d.error) {
@@ -261,6 +267,7 @@ reg('diag', function () {
       },
     },
     {
+      key: 'l2',
       api: '/api/diag/l2',
       render: function (d, checks) {
         var l21 = d && !d.error ? (d.l2_1 || {}) : {};
@@ -284,6 +291,7 @@ reg('diag', function () {
       },
     },
     {
+      key: 'l3',
       api: '/api/diag/l3',
       render: function (d, checks) {
         var l35 = d && !d.error ? (d.l3_5 || {}) : {};
@@ -363,6 +371,7 @@ reg('diag', function () {
       },
     },
     {
+      key: 'l6',
       api: '/api/diag/l6',
       render: function (d, checks) {
         var l63 = d && !d.error ? (d.l6_3 || {}) : {};
@@ -396,10 +405,12 @@ reg('diag', function () {
       setTimeout(function () { reject(new Error('请求超时')); }, ms);
     })]);
   }
+  // 顺序修复 (08-10 用户反馈: L2/L3 被移动到最下方): 完成即存 sections[key],
+  // renderH 按注册表顺序拼接 — 渐进渲染保留, 顺序固定, 不受响应完成顺序影响
   MODULES.forEach(function (m) {
     withTimeout(A.get(m.api), 15000).then(function (d) {
       var html = m.render(d, checks);
-      if (html) h += html;
+      if (html) sections[m.key] = html;   // 存 slot 而非追加
     }).catch(function () { /* 单模块失败/超时不阻塞 (原嵌套 catch 链行为) */ })
       .then(function () { renderH(); });  // 每模块 settle 后即渲染 (渐进)
   });
@@ -409,12 +420,12 @@ reg('diag', function () {
     A.get('/api/diag/offline').then(function (d) {
       var devs = d.devices || [];
       if (!devs.length) {
-        h += '<div class="card empty">'
+        offlineHtml += '<div class="card empty">'
           + '<p>✅ ' + (d.conclusion || '未发现设备离网事件') + '</p>'
           + '<p class="sub">当前抓包中没有 NWK Leave 或 Device Announce 帧</p></div>';
       } else {
         var s = d.summary || {};
-        h += '<div class="card card-info">'
+        offlineHtml += '<div class="card card-info">'
           + '<div class="text-strong t-13">📊 设备离线总览</div>'
           + (d.conclusion ? '<div class="conclusion" style="font-size:12px;font-weight:600;color:#1e293b;background:#f1f5f9;border-radius:4px;padding:6px 8px;margin:6px 0">💬 ' + d.conclusion + '</div>' : '')
           + '<div class="stats t-12">'
@@ -433,7 +444,7 @@ reg('diag', function () {
           var eui = dev.eui64 || '未知';
           if (eui.length === 16) { eui = eui.slice(0, 2) + ':' + eui.slice(2, 4) + ':' + eui.slice(4, 6) + ':' + eui.slice(6, 8) + ':' + eui.slice(8, 10) + ':' + eui.slice(10, 12) + ':' + eui.slice(12, 14) + ':' + eui.slice(14, 16); }
 
-          h += '<div class="card diag-card">'
+          offlineHtml += '<div class="card diag-card">'
             + '<div class="diag-header">'
             + '<span class="dev-label">' + dev.label + '</span>'
             + '<span class="dev-eui">' + eui + '</span>'
@@ -441,29 +452,29 @@ reg('diag', function () {
             + '</div>';
 
           var pe = dev.pre_events || {};
-          h += '<div class="diag-timeline">';
-          h += '<div class="diag-ev"><span class="diag-ic diag-ic-com">▸</span> 正常通信 (Link Status, Route Record, Data)</div>';
-          if (pe.network_status_count > 0) { h += '<div class="diag-ev"><span class="diag-ic diag-ic-warn">⚠</span> Network Status ×' + pe.network_status_count + ' (路由层异常前置信号)</div>'; }
-          if (pe.ieee_addr_req_count > 0) { h += '<div class="diag-ev"><span class="diag-ic diag-ic-info">🔍</span> IEEE Addr Req ×' + pe.ieee_addr_req_count + ' (协调器查询设备身份)</div>'; }
+          offlineHtml += '<div class="diag-timeline">';
+          offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-com">▸</span> 正常通信 (Link Status, Route Record, Data)</div>';
+          if (pe.network_status_count > 0) { offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-warn">⚠</span> Network Status ×' + pe.network_status_count + ' (路由层异常前置信号)</div>'; }
+          if (pe.ieee_addr_req_count > 0) { offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-info">🔍</span> IEEE Addr Req ×' + pe.ieee_addr_req_count + ' (协调器查询设备身份)</div>'; }
           var bursts = dev.leave_bursts || [];
           for (var b = 0; b < bursts.length; b++) {
             var burst = bursts[b];
             var bt = burst.burst_index === 1 ? '第一波' : burst.burst_index === 2 ? '第二波' : ('第' + burst.burst_index + '波');
             var bc = burst.count > 1 ? (' ×' + burst.count) : '';
             var typeName = burst.type === 'kicked' ? '[被踢]' : burst.type === 'voluntary_permanent' ? '[主动永久]' : burst.type === 'voluntary_rejoin' ? '[主动暂离]' : '[被踢·可重入]';
-            h += '<div class="diag-ev"><span class="diag-ic diag-ic-leave">✕</span> ' + bt + ' Leave' + bc + ' ' + typeName + '</div>';
+            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-leave">✕</span> ' + bt + ' Leave' + bc + ' ' + typeName + '</div>';
           }
           var rej = dev.rejoin_attempts || [];
           for (var r = 0; r < rej.length; r++) {
             var rj = rej[r];
-            h += '<div class="diag-ev"><span class="diag-ic diag-ic-join">📢</span> Device Announce ×' + rj.announce_count + ' (第' + rj.after_burst + '波Leave后 ' + rj.delay_seconds + 's) ← 重入网尝试</div>';
+            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-join">📢</span> Device Announce ×' + rj.announce_count + ' (第' + rj.after_burst + '波Leave后 ' + rj.delay_seconds + 's) ← 重入网尝试</div>';
           }
-          h += '</div>';
+          offlineHtml += '</div>';
           var diag = dev.diagnosis || {};
-          h += '<div class="diag-conclusion">'
+          offlineHtml += '<div class="diag-conclusion">'
             + '<b>诊断: </b>' + diag.summary
             + '</div>';
-          h += '</div>';
+          offlineHtml += '</div>';
         }
       }
       renderH();
