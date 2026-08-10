@@ -5,7 +5,7 @@
    "APS Ack": 221,
    "APS Cmd": 65,
    "Beacon": 1454,
-   "Data": 1580,
+   "Data": 1582,
    "End Device Timeout Request": 1,
    "Leave": 342,
    "Link Status": 123,
@@ -23,7 +23,7 @@
    "ZDP: IEEE Addr Req": 15,
    "ZDP: IEEE Addr Resp": 3,
    "ZDP: Match Desc Req": 13,
-   "ZDP: NWK Addr Req": 42,
+   "ZDP: NWK Addr Req": 40,
    "ZDP: Node Desc Req": 31,
    "ZDP: Node Desc Resp": 26,
    "ZDP: Simple Desc Req": 11
@@ -59,6 +59,6 @@
   "nodes_src": 107,
   "nodes_dst": 94
  },
- "frames_sha256": "ba41e9bce92ca5f3716fd9c7c06c96a726bd653fcd91ec4725976cca5e1b2cfd",
- "parser_commit": "458bb2d"
+ "frames_sha256": "8b443064a5b2170ca23208c6a8cfbee47a34fc525916df7b0e14827497ae5c39",
+ "parser_commit": "4063cc7"
 }

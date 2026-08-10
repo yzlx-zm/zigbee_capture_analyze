@@ -156,17 +156,34 @@ def _check_consistency(packets: list[dict], report: dict):
         report["ok"] = False
 
     # 1d. APS 命令识别率 (命令帧 ID 未知/保留区 — 0x20/0x38 教训的直接检测)
+    # 08-10 修正: 锁定只针对"密文误读"特征 (加密帧解密失败 + 未知 ID — 密文首字节
+    # 被当命令 ID); 明文帧 (nwk_security=False) 或解密成功帧的非标准命令是真实
+    # 素材内容, 非解析错误 → 最多警告. (test2-export 双路径 4+44 帧误读修复后,
+    # 明文 0xFF/0xFE 等非标准命令不再误锁)
     aps_cmds = [p for p in packets if p.get("aps_cmd_id") is not None]
-    known_aps = {0x05, 0x06, 0x07, 0x08, 0x09, 0x0F, 0x10}
-    unknown_aps = sum(1 for p in aps_cmds if p["aps_cmd_id"] not in known_aps)
-    aps_rate = (unknown_aps / len(aps_cmds)) if aps_cmds else 0
+    # 标准 APS 命令 (Zigbee spec 2.4.8): 0x05-0x11; 0x12-0x7F 保留区; 0x80+ 厂商
+    known_aps = {0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+                 0x0E, 0x0F, 0x10, 0x11}
+    cipher_bad = [p for p in aps_cmds
+                  if p["aps_cmd_id"] not in known_aps
+                  and p.get("nwk_security") and not p.get("decrypted")]
+    # 加密帧 (含解密成功) 的保留区命令 ID — 0x20/0x38 教训直接对象 (误读/篡改特征);
+    # 明文帧 (nwk_security=False) 的保留区命令是素材真实内容 → 不锁
+    reserved_bad = [p for p in aps_cmds
+                    if 0x12 <= p["aps_cmd_id"] <= 0x7F
+                    and p.get("nwk_security") and p not in cipher_bad]
+    bad = cipher_bad + reserved_bad
+    plain_unknown = [p for p in aps_cmds if p not in bad
+                     and p["aps_cmd_id"] not in known_aps]
     check = {
         "label": "APS 命令识别率",
-        "expected": "未知命令 ≤ 10%",
-        "actual": f"{unknown_aps}/{len(aps_cmds)} 未知" if aps_cmds else "无命令帧",
-        "passed": aps_rate <= 0.1 if aps_cmds else True,
-        # 未知命令占比高 = 命令 ID 误读 (0x20/0x38 类) → 锁定
-        "failure_type": "parse_mismatch" if (aps_cmds and aps_rate > 0.3) else "warn",
+        "expected": "无密文误读/保留区命令",
+        "actual": (f"异常 {len(bad)} (密文误读 {len(cipher_bad)} + 保留区 {len(reserved_bad)})"
+                   f" + 明文非标准 {len(plain_unknown)}"
+                   if aps_cmds else "无命令帧"),
+        "passed": not bad,
+        # 密文误读/加密帧保留区 = 命令 ID 异常 (0x20/0x38 类) → 锁定
+        "failure_type": "parse_mismatch" if bad else "warn",
     }
     report["checks"]["aps_cmd"] = check
     if not check["passed"]:

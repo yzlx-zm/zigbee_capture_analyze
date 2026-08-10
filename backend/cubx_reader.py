@@ -569,8 +569,11 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             result["nwk_leave_children"] = (opts >> 7) & 1
 
     # APS / ZDP parsing (only for NWK Data frames, not NWK commands)
+    # ⚠️ plain_valid 守卫: NWK 解密失败帧 plaintext 是密文, scapy 从密文解析出
+    # 假 APS 层 (aps_frametype/命令 ID 误读 — 0x20/0x38 同类; 0x28 修复只守了
+    # NWK 命令解析, APS 层遗漏 — test2-export.cubx 44/44 密文命令实证 08-10)
     aps = None
-    if int(nwk.frametype) == 0:
+    if int(nwk.frametype) == 0 and plain_valid:
         try:
             aps = ZigbeeAppDataPayload(plaintext)
         except Exception:
