@@ -205,17 +205,18 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
         confidence = "高"
         summary = f"无持续源路由失败 ({len(healthies)}/{len(results)} 组仅瞬态或无 0x0B/0x0C)"
     elif not groups:
-        # 无任何 0x0B/0x0C: 有网络活动 → 健康 (负例); 无活动 → 不可判定
+        # 无任何 0x0B/0x0C: 一律不可判定 (2026-08-10 自审裁定, 用户拍板) —
+        # 原"有活动→HEALTHY 负例"导致 verdict=健康但 conclusion=无法判定的自相矛盾
+        # (绿卡误信"路由没问题", 838D 案例正是 0x0B 缺失期); route error 不保证送达 (message.h),
+        # 0x0B 缺失 ≠ 绝对无失败 → 琥珀"无法判定"才与语义一致
         has_activity = any(p.get("nwk_src") is not None or p.get("nwk_dst") is not None for p in packets)
+        verdict = "INCONCLUSIVE"
+        confidence = "低"
         if has_activity:
-            verdict = "HEALTHY"
-            confidence = "高"
-            summary = ("无源路由失败证据 (Network Status 0x0B/0x0C = 0 帧); "
-                       "⚠️ 盲区: route error 不保证送达 (message.h), 0x0B 缺失 ≠ 绝对无失败")
+            summary = ("无法判定: 无 Network Status 0x0B/0x0C 证据 (网络有活动; "
+                       "⚠️ 盲区: route error 不保证送达, 0x0B 缺失 ≠ 绝对无失败)")
         else:
-            verdict = "INCONCLUSIVE"
-            confidence = "低"
-            summary = "无网络活动 (需断链链路覆盖)"
+            summary = "无法判定: 无网络活动 (需断链链路覆盖)"
     else:
         verdict = "INCONCLUSIVE"
         confidence = "低"
