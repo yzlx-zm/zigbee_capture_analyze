@@ -15,9 +15,12 @@ function vClass(verdict, hitPrefix) {
 }
 
 function l1Card(scenario, title, verdict, confidence, bodyHtml, conclusion, evidence, evTotal) {
+  // 白话化 (08-10): 编号降级小角标, 标题/verdict 用 PLAIN_TITLES 白话; vClass 用 hitPrefixOf (修 L6-S3 前缀)
+  var displayTitle = PLAIN_TITLES[scenario] || title;
+  var scTag = '<span class="sc-tag" title="场景编号 ' + scenario + '">' + scenario + '</span> ';
   return '<div class="l1-card">'
-    + '<h4>' + scenario + ' ' + title + ': '
-    + '<span class="' + vClass(verdict, scenario) + '">' + (verdict || '—') + '</span> '
+    + '<h4>' + scTag + displayTitle + ': '
+    + '<span class="' + vClass(verdict, hitPrefixOf(scenario)) + '" title="' + (verdict || '—') + '">' + verdictText(scenario, verdict) + '</span> '
     + '<span class="conf" title="' + CONF_TITLE + '">置信度:' + (confidence || '—') + '</span></h4>'
     + (conclusion ? '<div class="conclusion" style="font-size:12px;font-weight:600;color:#1e293b;background:#f1f5f9;border-radius:4px;padding:6px 8px;margin:6px 0">💬 ' + conclusion + '</div>' : '')
     + '<div class="body">' + bodyHtml + '</div>'
@@ -45,16 +48,19 @@ function evTable(evidence, evTotal) {
     + '<tbody>' + rows + '</tbody></table></details>';
 }
 
-function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
+function devLine(dev, verdict, subRule, statsHtml, summary, scenario) {
   // 2026-08-10 (U8-2): 设备地址跳转 (U4 联动落地) — 时间线过滤该设备
   // 复用 S.topoAddr 跨页契约 (U5 topoAddr→tlNode 同步); inline onclick 需 window.S (app.js 已暴露)
   // ⚠️ 08-10 用户反馈: 拓扑跳转无意义已移除, 仅保留时间线; emoji 用项目已验证的 🔍
-  var dc = vClass(verdict, hitPrefix || 'L1');
+  // 白话化 (08-10): verdict 显示白话 (修 L1-3 传 'L1' 前缀不匹配显示琥珀 bug), 规则码进 title
+  var sc = scenario || 'L1';
+  var dc = vClass(verdict, hitPrefixOf(sc));
   var addrTxt = '0x' + dev.toString(16).toUpperCase().padStart(4, '0');
   var jump = '<a class="dev-jump" href="#tl" title="时间线查看该设备" '
     + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">🔍时间线</a>';
   return '<div class="dev"><b>' + addrTxt + '</b> ' + jump + ': '
-    + '<span class="' + dc + '">' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '</span> '
+    + '<span class="' + dc + '" title="' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '">'
+    + verdictText(sc, verdict) + '</span> '
     + '<span class="text-dim">' + statsHtml + '</span>'
     + (summary ? '<div class="sum">' + summary + '</div>' : '')
     + '</div>';
@@ -83,6 +89,20 @@ var PLAIN_TITLES = {
   'OFF': '设备离网',
 };
 var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L1-4', 'L3-5': 'L3-5', 'OFF': 'OFF' };
+
+// ── 白话化 (2026-08-10, 用户反馈: "L1-3" 等编号对外人难懂) ──
+// 编号保留为小角标 (研发/文档追溯), 主表述用 PLAIN_TITLES 白话;
+// verdict 也显示白话 ("密钥分发或验证出问题" 而非 "L1-3_HIT"), 规则码进 title 提示。
+var VERDICT_PREFIX = { 'L6-3': 'L6-S3' };  // 卡片名 → 检测器 verdict 前缀 (仅不一致的; ⚠️ L6 场景号)
+function hitPrefixOf(scenario) { return VERDICT_PREFIX[scenario] || scenario; }
+function verdictText(scenario, verdict) {
+  if (verdict === 'HEALTHY') return '正常';
+  if (verdict === 'INCONCLUSIVE') return '无法判定';
+  if (verdict && verdict.indexOf(hitPrefixOf(scenario) + '_HIT') === 0) {
+    return PLAIN_TITLES[scenario] || verdict;
+  }
+  return verdict || '—';
+}
 
 // 覆盖范围提示 (2026-08-10 U8-3): 防"未发现明显问题"误信 —
 // 检测体系 8 大类 55 场景, 本页仅覆盖 8 个检测场景 + 离线总览, 其余 47 个未检测
@@ -144,7 +164,8 @@ reg('diag', function () {
         var hits = hitDevices[dev];
         summaryHtml += '<li><b>0x' + parseInt(dev).toString(16).toUpperCase().padStart(4, '0') + '</b>: '
           + hits.map(function (hit) {
-              return '<span class="v-bad">' + hit.scenario + '</span>' + (hit.rule ? '(' + hit.rule + ')' : '');
+              return '<span class="v-bad" title="' + hit.scenario + (hit.rule ? ' (' + hit.rule + ')' : '') + '">'
+                + (PLAIN_TITLES[hit.scenario] || hit.scenario) + '</span>';
             }).join(' × ')
           + ' <span class="text-dim">' + (hits[0].summary || '') + '</span></li>';
       });
@@ -205,7 +226,7 @@ reg('diag', function () {
                   + '/Tclk' + (d.transport_tclk || 0) + '/V' + (d.verify || 0)
                   + '/C' + (d.confirm || 0) + '/L' + (d.leave || 0)
                   + (d.route_error ? '/R' + d.route_error : ''),
-                  d.summary);
+                  d.summary, 'L1-3');
               }).join('')
             + '</div>' : '');
 
@@ -224,7 +245,7 @@ reg('diag', function () {
             + (l4.devices || []).map(function (d) {
                 return devLine(d.device, d.verdict, d.sub_rule,
                   'Rm' + (d.remove_device || 0) + '/Ann' + (d.announce || 0) + '/Lv' + (d.leave || 0),
-                  d.summary);
+                  d.summary, 'L1-4');
               }).join('')
             + '</div>' : '');
 
