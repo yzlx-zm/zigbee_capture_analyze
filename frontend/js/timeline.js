@@ -674,7 +674,11 @@ reg('tl', function(){
   function _tlZclCmd(zcl){
     var cid=zcl['zbee_zcl.cmd.id'];
     if(!cid)return '-';
-    var names={0x00:'Read Attributes',0x01:'Read Attributes Resp',0x02:'Write Attributes',0x04:'Write Attributes Resp',0x06:'Config Report',0x07:'Config Report Resp',0x0A:'Report Attributes',0x0B:'Default Resp',0x00:'OTA: Image Notify',0x01:'OTA: Query Next Image',0x02:'OTA: Query Next Image Resp',0x03:'OTA: Image Block Req',0x05:'OTA: Image Block Resp',0x06:'OTA: Upgrade End Req',0x07:'OTA: Upgrade End Resp'};
+    // ⚠️ 兜底只保留全局命令表 (ZCL spec 2.3.1 frame type=0), 不得混入簇/OTA 命令:
+    // 此前 0x00/0x01/0x02 重复键被 OTA 表覆盖 (0x00 → 'OTA: Image Notify' 等),
+    // 且无 cluster/frame_type 维度无法正确命名 — 簇命令名由后端 zcl_defs
+    // (zcl_cmd_name, frame_type 区分) 提供, 兜底仅为后端无名字时的原始 ID 展示
+    var names={0x00:'Read Attributes',0x01:'Read Attributes Response',0x02:'Write Attributes',0x03:'Write Attributes Undivided',0x04:'Write Attributes Response',0x05:'Write Attributes No Response',0x06:'Configure Reporting',0x07:'Configure Reporting Response',0x08:'Read Reporting Configuration',0x09:'Read Reporting Configuration Response',0x0A:'Report Attributes',0x0B:'Default Response',0x0C:'Discover Attributes',0x0D:'Discover Attributes Response'};
     var num=parseInt(cid,16);
     return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
   }
