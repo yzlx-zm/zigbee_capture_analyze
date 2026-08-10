@@ -570,22 +570,28 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
                 "evidence": (ra[-1][3], rb[-1][3]), "ts": ra[-1][2],
             })
 
-    # 3. R2: 持续 one-way (最后 50% 报告 out=0)
-    # ⚠️ 前提: 目标邻居 b 自己也是路由器 (发过 LS) — 终端不发 LS (官方), out=0 对非路由器是正常态
-    # (自审 2026-08-10: 初版对 0x8C13/0xF95F 等非路由器邻居误报 one-way, 已加该守卫)
+    # 3. R2: 持续 one-way (全程 out=0)
+    # ⚠️ 前提 1: 目标邻居 b 自己也是路由器 (发过 LS) — 终端不发 LS (官方), out=0 对非路由器是正常态
+    # ⚠️ 前提 2 (自审修正 2026-08-10): 双向数据可见 — (b,a) 也存在于 rep
+    #    (b 的 LS 被抓到且列出 a)。out=0 成因: b 未发 LS / b 的 LS 未捕获 (稀疏覆盖) /
+    #    b 未列 a / a 收不到 b 的 LS。test2 pcap 素材 68% out=0 大规模误报 —
+    #    大网络每个路由器仅 ~1.3 条 LS, 无 2-3 次交换 (官方: 交换前 out=0 是初始态),
+    #    加上单抓包器覆盖不足 — out=0 是正常态; 仅当双向数据可见时 out=0 才有故障性判定意义
+    # ⚠️ 前提 3 (自审修正 2026-08-10): 全程 out=0 — 前段有值后归 0 是 stale 重置
+    #    (官方: age>6 时 outgoing cost 重置为 0) = 邻居停止发 LS (静默/离线, L2-6 场景),
+    #    非 one-way; test2 剩余 5 条全为 stale 模式 (0xA92C 曾 out=1, 7F5D 停发后归 0)
     ls_senders = {k[0] for k in rep}
     for (a, b), costs in rep.items():
-        if len(costs) < L39_ONEWAY_MIN or b not in ls_senders:
+        if len(costs) < L39_ONEWAY_MIN or b not in ls_senders or (b, a) not in rep:
             continue
-        n_tail = max(L39_ONEWAY_REPORTS_MIN, int(len(costs) * L39_ONEWAY_TAIL))
-        tail = costs[-n_tail:]
-        if all(c[1] == 0 for c in tail):
-            oneway_links.append({
-                "a": a, "b": b,
-                "in_cost": tail[-1][0], "out_cost": 0,
-                "reports": len(costs), "tail_zero": len(tail),
-                "evidence": tail[-1][3], "ts": tail[-1][2],
-            })
+        if not all(c[1] == 0 for c in costs):
+            continue  # 前段 out>0 = stale 重置, 非 one-way
+        oneway_links.append({
+            "a": a, "b": b,
+            "in_cost": costs[-1][0], "out_cost": 0,
+            "reports": len(costs),
+            "evidence": costs[-1][3], "ts": costs[-1][2],
+        })
 
     # 4. R3: 方向性失败交叉 (自审 2026-08-10 补实现 — 文档 v1.0 第 4 层规则, 初版代码缺失)
     # 命中链路端点 ∩ L3-5 方向性失败设备 → 交叉提示 (不单独判 HIT; 需现场确认)
