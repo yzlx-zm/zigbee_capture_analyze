@@ -46,14 +46,15 @@ function evTable(evidence, evTotal) {
 }
 
 function devLine(dev, verdict, subRule, statsHtml, summary, hitPrefix) {
-  // 2026-08-10 (U8-2): 设备地址跳转 (U4 联动落地) — ⏱ 时间线过滤该设备 / 🗺 拓扑高亮该节点
+  // 2026-08-10 (U8-2): 设备地址跳转 (U4 联动落地) — 时间线过滤该设备 / 拓扑高亮该节点
   // 复用 S.topoAddr 跨页契约 (U5 topoAddr→tlNode 同步); inline onclick 需 window.S (app.js 已暴露)
+  // ⚠️ emoji 兼容 (08-10 用户反馈): ⏱/🗺 为生僻码点 Windows 字体缺失显示破碎 — 换项目已验证的 🔍/🎯
   var dc = vClass(verdict, hitPrefix || 'L1');
   var addrTxt = '0x' + dev.toString(16).toUpperCase().padStart(4, '0');
   var jump = '<a class="dev-jump" href="#tl" title="时间线查看该设备" '
-    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">⏱</a>'
+    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">🔍时间线</a>'
     + '<a class="dev-jump" href="#topo" title="拓扑高亮该设备" '
-    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';">🗺</a>';
+    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';">🎯拓扑</a>';
   return '<div class="dev"><b>' + addrTxt + '</b> ' + jump + ': '
     + '<span class="' + dc + '">' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '</span> '
     + '<span class="text-dim">' + statsHtml + '</span>'
