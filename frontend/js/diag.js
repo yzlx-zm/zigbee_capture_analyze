@@ -83,6 +83,7 @@ var PLAIN_TITLES = {
   'L1-3': '密钥分发或验证出问题',
   'L1-4': '设备被网关拒绝或踢出',
   'L2-1': '终端频繁离线',
+  'L2-6': '设备静默失联',
   'L3-5': '设备收不到网关下发',
   'L3-1': '命令收不到确认',
   'L3-9': '链路质量不对称',
@@ -271,9 +272,14 @@ reg('diag', function () {
       api: '/api/diag/l2',
       render: function (d, checks) {
         var l21 = d && !d.error ? (d.l2_1 || {}) : {};
+        var l26 = d && !d.error ? (d.l2_6 || {}) : {};
         checks['L2-1'] = { scenario: 'L2-1', verdict: l21.verdict, conclusion: l21.conclusion };
+        checks['L2-6'] = { scenario: 'L2-6', verdict: l26.verdict, conclusion: l26.conclusion };
         (l21.devices || []).forEach(function (h) {
           if ((h.verdict || '').indexOf('L2-1_HIT') === 0) collectHit(h.device, 'L2-1', h.sub_rule, h.summary);
+        });
+        (l26.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L2-6_HIT') === 0) collectHit(h.device, 'L2-6', h.sub_rule, h.summary);
         });
         var b2x = 'poll 设备: <b>' + (l21.poll_device_count || 0) + '</b> 台 | poll 帧: <b>' + (l21.poll_total || 0) + '</b> | rejoin=1 Leave: <b>' + (l21.leave_rejoin_total || 0) + '</b><br>'
           + '<span class="text-muted">' + (l21.summary || '') + '</span>'
@@ -283,10 +289,23 @@ reg('diag', function () {
                   'poll' + (d.poll_count || 0), d.summary, 'L2-1');
               }).join('')
             + '</div>' : '');
+        // ── L2-6 卡片 (2026-08-11: 设备静默失联 — poll 停止 / LS 邻居消失) ──
+        var b26 = '<span class="text-muted">' + (l26.summary || '') + '</span>'
+          + ((l26.devices || []).length ? '<div class="divider">'
+            + (l26.devices || []).map(function (d) {
+                var stats = d.sub_rule === 'R1'
+                  ? ('poll' + (d.poll_count || 0) + '/沉默' + (d.silent_s || 0) + 's')
+                  : ('LS消失×' + (d.ls_gone || 0));
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  stats + (d.left_leave ? ' Lv' : '') + (d.edge_uncertain ? ' ⚠️边缘' : ''),
+                  d.summary, 'L2-6');
+              }).join('')
+            + '</div>' : '');
         return '<div class="card l1-sec">'
           + '<h3>📡 L2 在线维持检测 <span class="conf">(文档→测试→工具)</span></h3>'
           + '<div class="l1-cards">'
           + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
+          + l1Card('L2-6', '设备静默失联', l26.verdict, l26.confidence, b26, l26.conclusion, l26.evidence, l26.evidence_total)
           + '</div></div>';
       },
     },
