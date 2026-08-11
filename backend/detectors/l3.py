@@ -614,7 +614,7 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
     for ln in oneway_links:
         evidence.append(_ev(
             ln["ts"], ln["evidence"], "Link Status",
-            f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告, 尾部{ln['tail_zero']}条全 0)"))
+            f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告全程 out=0)"))
 
     ev, ev_total = _cut(evidence)
     r3_txt = ""
