@@ -236,7 +236,9 @@ def detect_l2_6(packets: list[dict]) -> dict:
     results: list[dict] = []
     evidence: list[dict] = []
 
-    # ── R1: 规律 poll 后沉默 (SED 失联候选) ──
+    # ── R1: 规律 poll 后完全沉默 (SED 失联候选) ──
+    # ⚠️ 自审修正 (2026-08-11): silent 用"全局最后活跃"而非"最后 poll" —
+    # poll 停止但设备仍发数据帧 (非睡眠设备/漏抓 poll) = 仍在通信, 非失联
     for dev, seq in polls.items():
         if len(seq) < L26_MIN_POLLS:
             continue
@@ -246,7 +248,7 @@ def detect_l2_6(packets: list[dict]) -> dict:
         med = gaps[len(gaps) // 2]
         if med > L26_POLL_MEDIAN_MAX_S:
             continue  # 非规律活跃 (长轮询设备, 沉默是常态)
-        silent = t_end - seq[-1]
+        silent = t_end - last_act.get(dev, seq[-1])
         thr = max(L26_SILENT_MULT * med, L26_SILENT_MIN_S)
         if silent < thr:
             continue
@@ -305,7 +307,7 @@ def detect_l2_6(packets: list[dict]) -> dict:
         total = len(hits)
         names = ", ".join(f"0x{r['device']:04X}({r['sub_rule']})" for r in hits)
         conclusion = (f"设备静默失联候选 {total} 台: {names} — 需现场确认 "
-                      "(失联无官方通知, 官方; 沉默到抓包末尾的标注边缘不确定)")
+                      "(失联无官方通知; 沉默到抓包末尾的标注边缘不确定)")
     elif has_poll_data or has_ls_data:
         verdict, conf = "HEALTHY", "高"
         conclusion = "未发现设备静默失联 (poll 规律保持 / LS 邻居条目未消失)"
