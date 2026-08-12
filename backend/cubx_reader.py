@@ -682,6 +682,28 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                     result["zcl_cmd_name"] = zcl_defs.get_command_name(
                         result["aps_cluster"], result["zcl_cmd_id"],
                         zcl_fcf & 0x03)
+                    # ZCL status (L3-2 命令送达未执行): 仅**全局命令 (frame type=0)** 的响应有
+                    # status 字段 — ⚠️ 自审修正 2026-08-12: cluster-specific 命令 (如 OTA
+                    # Query Next Image 0x01) 结构完全不同, 曾误提取 (0x10×6 误报实锤)
+                    # 官方结构 (ZCL spec 2.3.1 + 各响应命令定义), status 在 cmd_id 之后:
+                    #   0x04 Write Attr Rsp / 0x08 Cfg Report Rsp / 0x09 Read Cfg Rsp:
+                    #     [cmd][status] — status = cmd 后 1 字节
+                    #   0x0B Default Rsp: [cmd][被响应命令 ID][status] — status = cmd 后 2 字节
+                    #     (ZCL spec 2.4.2; ⚠️ 自审修正: 初版把 command_id 当 status,
+                    #      0x51/0xB1 等非标值实为被响应命令 ID)
+                    #   0x01 Read Attr Rsp: [attr_id:2][status] — status = cmd 后 3 字节
+                    # (0x0D Discover Attrs Rsp 等无 status — 不提取; pcap 路径待 P5,
+                    #  tshark 版本未注册 zbee_zcl.status 字段)
+                    st_off = None
+                    if (zcl_fcf & 0x03) == 0:  # 仅全局命令
+                        if result["zcl_cmd_id"] in (0x04, 0x08, 0x09):
+                            st_off = zcl_off + 2
+                        elif result["zcl_cmd_id"] == 0x0B:
+                            st_off = zcl_off + 3
+                        elif result["zcl_cmd_id"] == 0x01:
+                            st_off = zcl_off + 4
+                    if st_off is not None and st_off < len(aps_plain):
+                        result["zcl_status"] = aps_plain[st_off]
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":

@@ -649,6 +649,110 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
     }
 
 
+# ── L3-2 判定参数 (MCP 核对 2026-08-12, 见 L3-2.md) ──
+# ZCL status 码 (EmberAfStatus 枚举, MCP 官方): 0x00=SUCCESS, 0x01=FAILURE,
+# 0x86=UNSUPPORTED_ATTRIBUTE, 0x87=INVALID_VALUE, 0x88=READ_ONLY, 0x8B=NOT_FOUND,
+# 0xC0=HARDWARE_FAILURE, 0xC1=SOFTWARE_FAILURE, 0xC3=UNSUPPORTED_CLUSTER
+L32_MIN_ERR_PER_DEV = 2   # 同设备错误响应 ≥2 才输出 (排除单帧瞬态)
+
+ZCL_STATUS_NAMES = {
+    0x00: "成功", 0x01: "失败", 0x86: "属性不支持", 0x87: "值无效",
+    0x88: "只读", 0x89: "空间不足", 0x8B: "未找到", 0x8C: "属性不可上报",
+    0x8D: "数据类型无效", 0x80: "命令格式错误", 0x81: "不支持簇命令",
+    0x82: "不支持通用命令", 0x85: "字段无效", 0xC0: "硬件故障",
+    0xC1: "软件故障", 0xC2: "校准错误", 0xC3: "不支持簇",
+}
+
+
+def detect_l3_2(packets: list[dict]) -> dict:
+    """命令送达未执行检测 (文档 L3-2.md v1.0).
+
+    规则 (MCP 核对 2026-08-12):
+      - R1 : ZCL 响应 status ≠ 0 → 命令送达但设备未执行 (候选)
+            status 分类: 0x86 属性不支持 (应用层固件问题) / 0x01 通用失败 /
+            0x80-0x8D 格式/字段问题 / 0xC0/C1 硬件软件故障
+      - R2 : 方向细分 — 下行命令 (协调器→设备) 错误响应 = 控制失败 (用户可感知);
+            上行 = 设备上报失败
+      收敛: 同设备错误响应 ≥2 才输出 (排除单帧瞬态)
+      交叉: 有错误响应 = 命令送达 (与 L3-1 无 ack 互补 — 设备回复了, 只是拒绝执行)
+      素材实证 (2026-08-12): 第七次 Write Attr Rsp status=0x86 ×16 (含 0xFFDE 厂商属性被拒)
+    """
+    # 1. 收集错误响应帧
+    err_frames: list[tuple[int, dict]] = []
+    for i, p in enumerate(packets):
+        st = p.get("zcl_status")
+        if st is not None and st != 0:
+            err_frames.append((i, p))
+
+    # 2. 按设备聚合 (响应者 = nwk_src)
+    dev_map: dict[int, dict] = {}
+    for i, p in err_frames:
+        dev = p.get("nwk_src")
+        if dev is None:
+            continue
+        downlink = p.get("nwk_dst") == 0x0000  # 响应者不是协调器 = 设备响应下行命令
+        agg = dev_map.setdefault(dev, {
+            "device": dev, "direction": "downlink" if downlink else "uplink",
+            "count": 0, "status": {}, "clusters": {}, "first_ts": p.get("ts", 0.0),
+            "last_ts": p.get("ts", 0.0), "first_pid": None,
+        })
+        agg["count"] += 1
+        s = p.get("zcl_status")
+        agg["status"][s] = agg["status"].get(s, 0) + 1
+        cl = p.get("aps_cluster_name") or "?"
+        agg["clusters"][cl] = agg["clusters"].get(cl, 0) + 1
+        agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
+        if agg["first_pid"] is None:
+            agg["first_pid"] = p.get("packet_id")
+
+    # 3. 判定
+    results = []
+    evidence = []
+    for dev, agg in sorted(dev_map.items()):
+        if agg["count"] < L32_MIN_ERR_PER_DEV:
+            continue
+        # status 白话汇总
+        st_parts = []
+        for s, n in sorted(agg["status"].items()):
+            name = ZCL_STATUS_NAMES.get(s, f"0x{s:02X}")
+            st_parts.append(f"{name}×{n}")
+        dir_txt = "下行命令" if agg["direction"] == "downlink" else "上行上报"
+        cluster_txt = ", ".join(f"{k}×{v}" for k, v in
+                                sorted(agg["clusters"].items(), key=lambda x: -x[1])[:3])
+        summary = (f"命令送达但设备未执行: ZCL 错误响应 ×{agg['count']} "
+                   f"({', '.join(st_parts)}, {dir_txt}, {cluster_txt})")
+        results.append({
+            "device": dev, "verdict": "L3-2_HIT", "sub_rule": "R1",
+            "confidence": "中", "direction": agg["direction"],
+            "error_count": agg["count"], "status": agg["status"],
+            "clusters": agg["clusters"], "summary": summary,
+        })
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-2", summary))
+
+    ev, ev_total = _cut(evidence)
+    if results:
+        verdict, conf = "L3-2_HIT", "中"
+        total = sum(r["error_count"] for r in results)
+        names = ", ".join(f"0x{r['device']:04X}" for r in results)
+        conclusion = f"命令送达但设备未执行 ×{total} ({names}) — 应用层拒绝 (固件/配置), 需设备侧确认"
+    elif err_frames:
+        # 有错误响应但设备级 <2 → 瞬态
+        verdict, conf = "HEALTHY", "高"
+        conclusion = f"仅 {len(err_frames)} 帧 ZCL 错误响应 (单帧瞬态, 未收敛)"
+    elif any(p.get("zcl_status") is not None for p in packets):
+        verdict, conf = "HEALTHY", "高"
+        conclusion = "未发现命令送达未执行 (ZCL 响应全部成功)"
+    else:
+        verdict, conf = "INCONCLUSIVE", "低"
+        conclusion = "无法判定: 素材无 ZCL 响应 status 数据 (cubx 支持; pcap 待 P5)"
+
+    return {
+        "scenario": "L3-2", "verdict": verdict, "confidence": conf,
+        "summary": conclusion, "conclusion": conclusion,
+        "devices": results, "evidence": ev, "evidence_total": ev_total,
+    }
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
@@ -658,4 +762,5 @@ def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
         "l3_5": l3_5,
         "l3_1": detect_l3_1(packets),
         "l3_9": detect_l3_9(packets, l3_5),  # R3 交叉需要 L3-5 结果 (自审修正 2026-08-10)
+        "l3_2": detect_l3_2(packets),
     }
