@@ -355,8 +355,8 @@ input.mono, select.mono { font-family: var(--font-mono); }
 
 /* L1 检测卡片 (2026-08-04 统一模板) */
 .l1-sec { background: #f8fafc; border-left: 3px solid var(--c-primary); }
-.l1-cards { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
-.l1-card { flex: 1; min-width: 280px; background: var(--c-surface); border-radius: var(--r-md);
+.l1-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); /* 一行最多 3 卡 (2026-08-12 用户反馈; flex 无法强制列数) */ }
+.l1-card { min-width: 0; background: var(--c-surface); border-radius: var(--r-md);
   padding: 10px; border: 1px solid var(--c-border); }
 .l1-card h4 { font-size: var(--fs-md); margin: 0 0 var(--sp-1); font-weight: 600; color: var(--c-text); }
 .l1-card .conf, .l1-sec h3 .conf { color: var(--c-text-4); font-size: var(--fs-xs); font-weight: 400; cursor: help; }

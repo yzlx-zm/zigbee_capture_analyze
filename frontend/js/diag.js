@@ -2,7 +2,7 @@
 // UI 对齐 (2026-08-04): L1-1/2/3/4 卡片统一模板 + None 防御 + 视觉规范 (.l1-card)
 // 2026-08-10 (U8-1): 四层 then 嵌套 → 检测器注册表 (数据驱动) —
 //   新增检测只需注册表加条目 + 一个 render 函数, 主流程 (Promise.all + renderH) 不动。
-import { S, A } from './state.js';
+import { S, A, fmtTs } from './state.js';
 
 // ── L1 卡片统一渲染工具 ──
 var CONF_TITLE = '置信度: 高=直接证据/中=帧模式/低=推断/不可判定=数据不足';
@@ -32,7 +32,8 @@ function l1Card(scenario, title, verdict, confidence, bodyHtml, conclusion, evid
 function evTable(evidence, evTotal) {
   if (!evidence || !evidence.length) return '';
   var rows = (evidence || []).map(function (e) {
-    return '<tr><td class="mono" style="font-family:monospace;font-size:10px">' + (e.ts != null ? e.ts.toFixed(3) : '—') + '</td>'
+    // 2026-08-12 用户反馈: 绝对时间戳 13 位挤在一起 — 改时钟时间 (fmtTs, 与时间线一致)
+    return '<tr><td class="mono" style="font-family:monospace;font-size:10px">' + (e.ts != null ? fmtTs(e.ts) : '—') + '</td>'
       + '<td class="mono" style="font-family:monospace;font-size:10px">' + (e.packet_id != null ? e.packet_id : '—') + '</td>'
       + '<td style="font-size:10px">' + (e.type || '') + '</td>'
       + '<td class="text-dim" style="font-size:10px;color:#64748b">' + (e.detail || '') + '</td></tr>';
