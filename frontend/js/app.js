@@ -11,8 +11,8 @@ window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 import './topo.js';
 import './import.js';
 import './timeline.js';
-import './nodes.js';
-import './diag.js?v=20260812';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
+import './nodes.js?v=20260812';  // 缓存破坏: U9 节点页重构 (6 列 + 展开小节), 改版递增
+import './diag.js?v=20260812b';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
 
 // ── 初始路由 ──
 if (window.rt) window.rt();

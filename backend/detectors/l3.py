@@ -766,6 +766,99 @@ def detect_l3_2(packets: list[dict]) -> dict:
     }
 
 
+# ── L3-3 判定参数 (MCP 核对 2026-08-12, 见 L3-3.md) ──
+# ZCL 上报机制 (官方): 属性变化 + minInterval 已过 / maxInterval 到 才触发 Report;
+# playbook P1-3: Write → Report 正常 <1s; taxonomy: >10s 或无 Report = 滞后
+L33_WRITE_REPORT_GAP_S = 10.0   # Write 成功 → 同 cluster Report 间隔阈值
+L33_LOOKAHEAD_S = 300.0         # Write 后观察窗口 (5min)
+L33_MIN_WRITES = 2              # 设备级: 滞后 Write ≥2 次才输出 (排除单次偶发)
+
+
+def detect_l3_3(packets: list[dict]) -> dict:
+    """状态上报滞后检测 (文档 L3-3.md v1.0).
+
+    规则 (MCP 核对 2026-08-12):
+      - R1 : Write Attributes (0x02, 协调器→设备) **成功**后, 设备首个 Report
+            Attributes (0x0A, 任何 cluster) 间隔 >10s → 滞后候选 (taxonomy 阈值)
+            ⚠️ 前提 1: Write 必须成功 — 被拒 (Write Attr Rsp status≠0) 后不上报是
+            正常的 (状态没变, 第七次素材 Write 全被拒 → 不报, 负例实证)
+            ⚠️ 前提 2 (自审修正 2026-08-12): **不要求同 cluster** — Basic 等属性
+            上报稀疏 (0xCE93 案例: Write Basic 后 15.4s 才 Basic Report, 但设备
+            4.9s 已在 On/Off/Color 上报 — 同 cluster 匹配误报); 设备级沉默才是
+            滞后信号 (命令执行后设备完全无任何状态上报)
+      - R2 : 无 Report (Write 成功后 300s 无任何上报) → 状态不一致候选 (R1 覆盖,
+            标注弱信号: 设备可能未配置上报)
+      素材实证 (2026-08-12): 中继 Write 成功 + 0.0-4.9s 上报 (不误报负例);
+      正例 (Write 成功但设备 10s+ 完全无上报 + 现场确认) 待素材
+    """
+    writes = [p for p in packets
+              if p.get("zcl_cmd_id") == 0x02 and p.get("nwk_src") == 0
+              and p.get("nwk_dst") is not None and 0 < p.get("nwk_dst", 0) < 0xFFF0]
+    reports = [p for p in packets if p.get("zcl_cmd_id") == 0x0A]
+    # Write 被拒集合: Write Attr Rsp (0x04) status≠0 的 (设备, cluster)
+    rejected: set[tuple] = set()
+    for p in packets:
+        if p.get("zcl_cmd_id") == 0x04 and p.get("zcl_status") not in (None, 0):
+            rejected.add((p.get("nwk_src"), p.get("aps_cluster")))
+
+    lag_dev: dict[int, dict] = {}
+    for w in writes:
+        dev, cl = w.get("nwk_dst"), w.get("aps_cluster")
+        if (dev, cl) in rejected:
+            continue  # Write 被拒 — 状态未变, 不上报正常
+        t = w["ts"]
+        # 设备级: Write 后首个 Report (任何 cluster)
+        nxt = [r for r in reports
+               if r.get("nwk_src") == dev
+               and t < r["ts"] <= t + L33_LOOKAHEAD_S]
+        if nxt:
+            gap = nxt[0]["ts"] - t
+            if gap > L33_WRITE_REPORT_GAP_S:
+                agg = lag_dev.setdefault(dev, {
+                    "device": dev, "lag_count": 0, "max_gap_s": 0.0,
+                    "clusters": {}, "first_ts": t, "first_pid": w.get("packet_id"),
+                })
+                agg["lag_count"] += 1
+                agg["max_gap_s"] = max(agg["max_gap_s"], gap)
+                agg["clusters"][nxt[0].get("aps_cluster")] = \
+                    agg["clusters"].get(nxt[0].get("aps_cluster"), 0) + 1
+        # else: 300s 无任何上报 — R2 弱信号 (设备可能未配置上报), 不单独触发
+
+    results = []
+    evidence = []
+    for dev, agg in sorted(lag_dev.items()):
+        if agg["lag_count"] < L33_MIN_WRITES:
+            continue
+        cluster_txt = ", ".join(f"{hex(k or 0)}×{v}" for k, v in
+                                sorted(agg["clusters"].items(), key=lambda x: -x[1]))
+        summary = (f"状态上报滞后: Write 成功 {agg['lag_count']} 次后上报间隔 "
+                   f"{round(agg['max_gap_s'],1)}s (阈值 >{L33_WRITE_REPORT_GAP_S}s, {cluster_txt})")
+        results.append({"device": dev, "verdict": "L3-3_HIT", "sub_rule": "R1",
+                        "confidence": "中", "lag_count": agg["lag_count"],
+                        "max_gap_s": round(agg["max_gap_s"], 1),
+                        "clusters": agg["clusters"], "summary": summary})
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-3", summary))
+
+    ev, ev_total = _cut(evidence)
+    if results:
+        verdict, conf = "L3-3_HIT", "中"
+        names = ", ".join(f"0x{r['device']:04X}" for r in results)
+        conclusion = (f"状态上报滞后 ×{len(results)} 台 ({names}) — 命令执行后状态上报延迟, "
+                      "需现场确认 (上报配置/设备固件)")
+    elif writes:
+        verdict, conf = "HEALTHY", "高"
+        conclusion = "未发现状态上报滞后 (Write 成功后的上报间隔正常)"
+    else:
+        verdict, conf = "INCONCLUSIVE", "低"
+        conclusion = "无法判定: 素材无 Write Attributes 命令 (需含控制命令的抓包)"
+
+    return {
+        "scenario": "L3-3", "verdict": verdict, "confidence": conf,
+        "summary": conclusion, "conclusion": conclusion,
+        "devices": results, "evidence": ev, "evidence_total": ev_total,
+    }
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
@@ -776,4 +869,5 @@ def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
         "l3_1": detect_l3_1(packets),
         "l3_9": detect_l3_9(packets, l3_5),  # R3 交叉需要 L3-5 结果 (自审修正 2026-08-10)
         "l3_2": detect_l3_2(packets),
+        "l3_3": detect_l3_3(packets),
     }

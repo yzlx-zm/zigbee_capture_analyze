@@ -88,6 +88,7 @@ var PLAIN_TITLES = {
   'L3-5': '设备收不到网关下发',
   'L3-1': '命令收不到确认',
   'L3-2': '命令送达但未执行',
+  'L3-3': '状态上报滞后',
   'L3-9': '链路质量不对称',
   'L6-3': 'SED 消息收不到',
   'OFF': '设备离网',
@@ -318,10 +319,12 @@ reg('diag', function () {
         var l35 = d && !d.error ? (d.l3_5 || {}) : {};
         var l31 = d && !d.error ? (d.l3_1 || {}) : {};
         var l32 = d && !d.error ? (d.l3_2 || {}) : {};
+        var l33 = d && !d.error ? (d.l3_3 || {}) : {};
         var l39 = d && !d.error ? (d.l3_9 || {}) : {};
         checks['L3-5'] = { scenario: 'L3-5', verdict: l35.verdict, conclusion: l35.conclusion };
         checks['L3-1'] = { scenario: 'L3-1', verdict: l31.verdict, conclusion: l31.conclusion };
         checks['L3-2'] = { scenario: 'L3-2', verdict: l32.verdict, conclusion: l32.conclusion };
+        checks['L3-3'] = { scenario: 'L3-3', verdict: l33.verdict, conclusion: l33.conclusion };
         checks['L3-9'] = { scenario: 'L3-9', verdict: l39.verdict, conclusion: l39.conclusion };
         (l35.devices || []).forEach(function (h) {
           if ((h.verdict || '').indexOf('L3-5_HIT') === 0) collectHit(h.device, 'L3-5', h.sub_rule, h.summary);
@@ -331,6 +334,9 @@ reg('diag', function () {
         });
         (l32.devices || []).forEach(function (h) {
           if ((h.verdict || '').indexOf('L3-2_HIT') === 0) collectHit(h.device, 'L3-2', h.sub_rule, h.summary);
+        });
+        (l33.devices || []).forEach(function (h) {
+          if ((h.verdict || '').indexOf('L3-3_HIT') === 0) collectHit(h.device, 'L3-3', h.sub_rule, h.summary);
         });
         // L3-9 事件链登记: 链路两端设备 (2026-08-10)
         (l39.asymmetric_links || []).forEach(function (ln) {
@@ -382,6 +388,16 @@ reg('diag', function () {
                   d.summary, 'L3-2');
               }).join('')
             + '</div>' : '');
+        // ── L3-3 卡片 (2026-08-12: 状态上报滞后 — Write 成功后设备无上报) ──
+        var b33 = '滞后设备: <b>' + (l33.devices || []).length + '</b> 台'
+          + '<br><span class="text-muted">' + (l33.summary || '') + '</span>'
+          + ((l33.devices || []).length ? '<div class="divider">'
+            + (l33.devices || []).map(function (d) {
+                return devLine(d.device, d.verdict, d.sub_rule,
+                  '滞后×' + (d.lag_count || 0) + '/最大' + (d.max_gap_s || 0) + 's',
+                  d.summary, 'L3-3');
+              }).join('')
+            + '</div>' : '');
         // ── L3-9 卡片 (2026-08-10: 非对称链路, LS 双向成本) ──
         var b39 = '不对称链路: <b>' + (l39.asymmetric_links || []).length + '</b> | one-way: <b>' + (l39.oneway_links || []).length + '</b>'
           + '<br><span class="text-muted">' + (l39.summary || '') + '</span>'
@@ -404,6 +420,7 @@ reg('diag', function () {
           + '<div class="l1-cards">'
           + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
           + l1Card('L3-2', '命令送达但未执行', l32.verdict, l32.confidence, b32, l32.conclusion, l32.evidence, l32.evidence_total)
+          + l1Card('L3-3', '状态上报滞后', l33.verdict, l33.confidence, b33, l33.conclusion, l33.evidence, l33.evidence_total)
           + l1Card('L3-5', '源路由/MTORR 失效', l35.verdict, l35.confidence, b5, l35.conclusion, l35.evidence, l35.evidence_total)
           + l1Card('L3-9', '链路质量不对称', l39.verdict, l39.confidence, b39, l39.conclusion, l39.evidence, l39.evidence_total)
           + '</div></div>';
