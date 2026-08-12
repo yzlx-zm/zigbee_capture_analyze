@@ -867,6 +867,98 @@ def detect_l3_3(packets: list[dict]) -> dict:
     }
 
 
+# ── L3-11 判定参数 (2026-08-12, 见 L3-11.md) ──
+# 应用层重传 = 同 (设备, cluster, 命令) 的新 APS counter 轮次 (与 L3-1 栈重传同 counter 区分)
+L311_MIN_ROUNDS = 3        # 重传轮次 ≥3 才输出 (1-2 次 = 单次失败重试, 官方预期行为)
+L311_CMD_EXCLUDE = {0x0A, 0x0B}  # 排除 Report/Default Rsp (非命令)
+# ⚠️ 自审修正 (2026-08-12): 区分"失败重试"与"周期轮询" —
+# 中继素材 0x4FBC/0x5285 Read ×3 轮 100s/轮 = 周期轮询 (正常读, 非重传);
+# 密集重试 (≤30s/轮) 直接报; 长间隔 (>30s) 需命令无成功响应才报
+L311_DENSE_S = 30.0        # 密集重试间隔阈值
+L311_RESP_WINDOW_S = 10.0  # 命令后成功响应窗口 (Read Rsp 0x01 / Write Rsp 0x04 status=0 / Default Rsp 0x0B status=0)
+
+
+def detect_l3_11(packets: list[dict]) -> dict:
+    """应用层重传频繁检测 (文档 L3-11.md v1.0).
+
+    规则 (2026-08-12):
+      - R1 : 协调器→设备 的同一命令 (同 cluster + 同 cmd_id) 出现 ≥3 个不同
+            APS counter 轮次 → 应用层重传频繁 (新 counter = 应用层重试, 官方:
+            应用可自行重试, 社区案例 23 条)
+      - 与 L3-1 区分: 同 counter 多帧 = 栈重传 (L3-1); 新 counter = 应用层 (L3-11)
+      - 交叉: 伴随无 ack (L3-1) → 命令持续失败; 伴随错误响应 (L3-2) → 被拒仍重试
+      素材实证 (2026-08-12): test2 0x89F9 16 轮 (25s 周期) / 第七次 0xCE77 12 轮密集;
+      0xC1F5 ×32 单 counter = 栈重传 (L3-1 范畴, 不误报)
+    """
+    rounds: dict[tuple, dict] = {}
+    for p in packets:
+        if p.get("nwk_src") != 0 or p.get("zcl_frame_type") != 0:
+            continue
+        cid = p.get("zcl_cmd_id")
+        dev = p.get("nwk_dst")
+        if cid is None or dev is None or dev >= 0xFFF0 or cid in L311_CMD_EXCLUDE:
+            continue
+        key = (dev, p.get("aps_cluster"), cid)
+        agg = rounds.setdefault(key, {
+            "device": dev, "cluster": p.get("aps_cluster"),
+            "cmd_id": cid, "cmd_name": p.get("zcl_cmd_name"),
+            "counters": set(), "frames": 0,
+            "first_ts": p.get("ts", 0.0), "last_ts": p.get("ts", 0.0),
+            "first_pid": p.get("packet_id"),
+        })
+        agg["counters"].add(p.get("aps_counter"))
+        agg["frames"] += 1
+        agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
+
+    # 成功响应集: 设备→协调器 的 0x01 Read Rsp / 0x04 Write Rsp status=0 / 0x0B Default Rsp status=0
+    ok_resp: set[tuple] = set()
+    for p in packets:
+        if p.get("nwk_src") in (None, 0) or p.get("zcl_frame_type") != 0:
+            continue
+        cid = p.get("zcl_cmd_id")
+        if cid == 0x01 or (cid in (0x04, 0x0B) and p.get("zcl_status") == 0):
+            ok_resp.add((p.get("nwk_src"), p.get("aps_cluster")))
+
+    results = []
+    evidence = []
+    for (dev, cl, cid), agg in sorted(rounds.items(), key=lambda kv: -len(kv[1]["counters"])):
+        n_rounds = len(agg["counters"])
+        if n_rounds < L311_MIN_ROUNDS:
+            continue
+        span = agg["last_ts"] - agg["first_ts"]
+        per = round(span / max(n_rounds - 1, 1), 1) if n_rounds > 1 else 0.0
+        # ⚠️ 周期轮询排除 (自审修正): 长间隔 (>30s/轮) 且设备有成功响应 = 正常轮询
+        if per > L311_DENSE_S and (dev, cl) in ok_resp:
+            continue
+        name = agg["cmd_name"] or f"0x{cid:02X}"
+        summary = (f"应用层重传频繁: {name} ×{n_rounds} 轮 (共 {agg['frames']} 帧, "
+                   f"平均 {per}s/轮, {hex(cl or 0)})")
+        results.append({"device": dev, "verdict": "L3-11_HIT", "sub_rule": "R1",
+                        "confidence": "中", "cmd_id": cid, "cmd_name": name,
+                        "cluster": cl, "rounds": n_rounds, "frames": agg["frames"],
+                        "interval_s": per, "summary": summary})
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-11", summary))
+
+    ev, ev_total = _cut(evidence)
+    if results:
+        verdict, conf = "L3-11_HIT", "中"
+        names = ", ".join(f"0x{r['device']:04X}({r['cmd_name']}×{r['rounds']})" for r in results[:5])
+        conclusion = (f"应用层重传频繁: {names} — 命令持续失败且应用层在重试, "
+                      "交叉 L3-1 (无确认) / L3-2 (被拒) 定位根因")
+    elif rounds:
+        verdict, conf = "HEALTHY", "高"
+        conclusion = "未发现应用层重传频繁 (命令轮次正常)"
+    else:
+        verdict, conf = "INCONCLUSIVE", "低"
+        conclusion = "无法判定: 素材无协调器下行命令"
+
+    return {
+        "scenario": "L3-11", "verdict": verdict, "confidence": conf,
+        "summary": conclusion, "conclusion": conclusion,
+        "devices": results, "evidence": ev, "evidence_total": ev_total,
+    }
+
+
 # ── 入口 ──
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
@@ -878,4 +970,5 @@ def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
         "l3_9": detect_l3_9(packets, l3_5),  # R3 交叉需要 L3-5 结果 (自审修正 2026-08-10)
         "l3_2": detect_l3_2(packets),
         "l3_3": detect_l3_3(packets),
+        "l3_11": detect_l3_11(packets),
     }
