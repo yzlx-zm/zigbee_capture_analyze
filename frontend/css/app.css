@@ -418,6 +418,10 @@ input.mono, select.mono { font-family: var(--font-mono); }
 /* 11.6 节点页 */
 .nodes-search { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 .nodes-table-wrap { max-height: calc(100vh - 200px); overflow: auto; }
+/* U9: 展开详情行视觉区分 (用户反馈边界模糊 08-12) — 浅蓝底 + 上下强边框 */
+.nd-detail td { background: var(--c-primary-bg); border-top: 1px solid var(--c-border-strong);
+  border-bottom: 1px solid var(--c-border-strong); }
+.nd-detail .tbl th { background: #dbeafe; }
 
 /* ── 12. Range 滑块 ── */
 input[type=range] { -webkit-appearance: none; appearance: none; }

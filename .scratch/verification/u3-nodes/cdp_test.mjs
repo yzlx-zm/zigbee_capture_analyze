@@ -51,6 +51,11 @@ check('设备类型列有中文值', /协调器|路由|终端|未知/.test(first
 // 厂商/型号列 (有 Basic Read Attr Rsp 的节点; 无 → '-' 兜底)
 const manufCol = await evaluate(page, `[...document.querySelectorAll('#ntb .nd-row')].map(r=>r.children[2].textContent).filter(v=>v!=='-').length`);
 check('厂商名列有非空值 (Basic 属性提取)', manufCol > 0, `非空=${manufCol}`);
+// U9 (08-12): 有厂商/型号节点置顶 (用户要求)
+const sortOk = await evaluate(page, `(()=>{const rows=[...document.querySelectorAll('#ntb .nd-row')];
+  const hasId=rows.map(r=>r.children[2].textContent!=='-'||r.children[3].textContent!=='-');
+  const firstNo=hasId.indexOf(false); return firstNo<0 || hasId.slice(firstNo).every(v=>!v);})()`);
+check('有厂商/型号节点置顶', sortOk === true);
 const modelCol = await evaluate(page, `[...document.querySelectorAll('#ntb .nd-row')].map(r=>r.children[3].textContent).filter(v=>v!=='-').length`);
 check('型号列有非空值', modelCol > 0, `非空=${modelCol}`);
 check('🎯 定位按钮 = 112 个', await evaluate(page, `document.querySelectorAll('#ntb .nd-locate').length`) === 112);

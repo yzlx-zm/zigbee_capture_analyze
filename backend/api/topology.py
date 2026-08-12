@@ -286,6 +286,7 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
             "device_type": n.get("device_type", "unknown"),
             "manufacturer_name": st["manufacturer_name"] if st else None,
             "model_id": st["model_id"] if st else None,
+            "_has_id": bool(st and (st["manufacturer_name"] or st["model_id"])),  # U9 排序键
             "detail": {
                 "first_ts": st["first"] if st else None,
                 "last_ts": st["last"] if st else None,
@@ -298,4 +299,8 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
                 "clusters": clusters_out,
             },
         })
+    # U9 (08-12, 用户要求): 有厂商/型号的节点置顶 (免翻找), 稳定排序保持地址序
+    result.sort(key=lambda n: 0 if n.get("_has_id") else 1)
+    for n in result:
+        n.pop("_has_id", None)
     return result
