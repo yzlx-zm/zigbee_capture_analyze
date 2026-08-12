@@ -374,8 +374,10 @@ reg('diag', function () {
           + '<br><span class="text-muted">' + (l32.summary || '') + '</span>'
           + ((l32.devices || []).length ? '<div class="divider">'
             + (l32.devices || []).map(function (d) {
+                var dirTxt = d.direction === 'coordinator_reject' ? '协调器拒绝'
+                  : (d.direction === 'downlink' ? '↓下行' : '↑上行');
                 return devLine(d.device, d.verdict, d.sub_rule,
-                  (d.direction === 'downlink' ? '↓下行' : '↑上行') + '×' + (d.error_count || 0),
+                  dirTxt + '×' + (d.error_count || 0),
                   d.summary, 'L3-2');
               }).join('')
             + '</div>' : '');

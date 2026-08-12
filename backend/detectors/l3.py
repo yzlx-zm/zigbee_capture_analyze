@@ -690,9 +690,14 @@ def detect_l3_2(packets: list[dict]) -> dict:
         dev = p.get("nwk_src")
         if dev is None:
             continue
-        downlink = p.get("nwk_dst") == 0x0000  # 响应者不是协调器 = 设备响应下行命令
+        # 方向语义 (自审修正 2026-08-12): 响应者=协调器 → 协调器拒绝设备命令;
+        # 响应者=设备 → 设备拒绝协调器下行命令
+        if dev == 0x0000:
+            direction = "coordinator_reject"
+        else:
+            direction = "downlink" if p.get("nwk_dst") == 0x0000 else "uplink"
         agg = dev_map.setdefault(dev, {
-            "device": dev, "direction": "downlink" if downlink else "uplink",
+            "device": dev, "direction": direction,
             "count": 0, "status": {}, "clusters": {}, "first_ts": p.get("ts", 0.0),
             "last_ts": p.get("ts", 0.0), "first_pid": None,
         })
@@ -716,14 +721,22 @@ def detect_l3_2(packets: list[dict]) -> dict:
         for s, n in sorted(agg["status"].items()):
             name = ZCL_STATUS_NAMES.get(s, f"0x{s:02X}")
             st_parts.append(f"{name}×{n}")
-        dir_txt = "下行命令" if agg["direction"] == "downlink" else "上行上报"
+        if agg["direction"] == "coordinator_reject":
+            dir_txt = "协调器拒绝设备命令"
+        elif agg["direction"] == "downlink":
+            dir_txt = "设备拒绝下行命令"
+        else:
+            dir_txt = "上行响应"
         cluster_txt = ", ".join(f"{k}×{v}" for k, v in
                                 sorted(agg["clusters"].items(), key=lambda x: -x[1])[:3])
-        summary = (f"命令送达但设备未执行: ZCL 错误响应 ×{agg['count']} "
+        summary = (f"命令送达但未执行: ZCL 错误响应 ×{agg['count']} "
                    f"({', '.join(st_parts)}, {dir_txt}, {cluster_txt})")
+        # 置信度 (自审修正 2026-08-12): 仅 0x01 通用失败 = 弱信号 → 低;
+        # 含明确码 (0x86/0xC3/0xC0/C1 等) → 中
+        conf = "低" if set(agg["status"]) == {0x01} else "中"
         results.append({
             "device": dev, "verdict": "L3-2_HIT", "sub_rule": "R1",
-            "confidence": "中", "direction": agg["direction"],
+            "confidence": conf, "direction": agg["direction"],
             "error_count": agg["count"], "status": agg["status"],
             "clusters": agg["clusters"], "summary": summary,
         })
