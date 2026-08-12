@@ -791,10 +791,18 @@ def detect_l3_3(packets: list[dict]) -> dict:
       素材实证 (2026-08-12): 中继 Write 成功 + 0.0-4.9s 上报 (不误报负例);
       正例 (Write 成功但设备 10s+ 完全无上报 + 现场确认) 待素材
     """
+    # ⚠️ 自审修正 (2026-08-12): frame type 守卫 (cluster-specific 0x02/0x0A 与全局
+    # Write/Report 同 ID, 素材实测 56 条 cluster-specific 0x02 被误当 Write) +
+    # Write 重传去重 (同 nwk_dst+aps_counter, 素材 107→35 事务)
     writes = [p for p in packets
-              if p.get("zcl_cmd_id") == 0x02 and p.get("nwk_src") == 0
+              if p.get("zcl_cmd_id") == 0x02 and p.get("zcl_frame_type") == 0
+              and p.get("nwk_src") == 0
               and p.get("nwk_dst") is not None and 0 < p.get("nwk_dst", 0) < 0xFFF0]
-    reports = [p for p in packets if p.get("zcl_cmd_id") == 0x0A]
+    reports = [p for p in packets if p.get("zcl_cmd_id") == 0x0A and p.get("zcl_frame_type") == 0]
+    seen_w: set[tuple] = set()
+    writes = [w for w in writes
+              if not ((w.get("nwk_dst"), w.get("aps_counter")) in seen_w)
+              and not seen_w.add((w.get("nwk_dst"), w.get("aps_counter")))]
     # Write 被拒集合: Write Attr Rsp (0x04) status≠0 的 (设备, cluster)
     rejected: set[tuple] = set()
     for p in packets:

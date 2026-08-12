@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query
 from .files import get_packets, get_nodes, get_full_packets
 from .. import topology as topo
 from .. import route_events as rev
+from .. import zcl_defs
 
 router = APIRouter()
 
@@ -190,7 +191,10 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
             s = stats.get(aid)
             if s is None:
                 s = {"seen": 0, "first": None, "last": None,
-                     "type_counts": {}, "lqis": [], "rssis": [], "eui64": None}
+                     "type_counts": {}, "lqis": [], "rssis": [], "eui64": None,
+                     # U9: 端点 / 控制命令统计 / 设备身份 (Basic 属性)
+                     "endpoints": {}, "clusters": {},
+                     "manufacturer_name": None, "model_id": None}
                 stats[aid] = s
             s["seen"] += 1
             if s["first"] is None or ts < s["first"]:
@@ -208,6 +212,34 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
                     s["eui64"] = p["nwk_src64"]
                 elif aid == p.get("mac_src") and p.get("mac_src64"):
                     s["eui64"] = p["mac_src64"]
+        # ── U9: 端点 / 设备身份 / 控制命令统计 (按帧独立, aid 去重防重复 —
+        #    4-aid 循环里 mac_src==nwk_src 时同帧同 aid 会重复计数, 素材实证修正 08-12) ──
+        for aid in {p.get("nwk_src"), p.get("nwk_dst")} - {None}:
+            s = stats.get(aid)
+            if s is None:
+                continue
+            if aid == p.get("nwk_src"):
+                if p.get("aps_src_ep") is not None:
+                    ep = p["aps_src_ep"]
+                    s["endpoints"][ep] = s["endpoints"].get(ep, 0) + 1
+                # Basic 身份: 节点作为响方 (Read Attr Rsp) 的 0x0004/0x0005 首个非空
+                if s["manufacturer_name"] is None or s["model_id"] is None:
+                    for r in (p.get("zcl_attr_reads") or []):
+                        if r["status"] == 0 and isinstance(r["value"], str) and r["value"]:
+                            if r["attr_id"] == 0x0004 and s["manufacturer_name"] is None:
+                                s["manufacturer_name"] = r["value"]
+                            elif r["attr_id"] == 0x0005 and s["model_id"] is None:
+                                s["model_id"] = r["value"]
+            else:
+                if p.get("aps_dst_ep") is not None:
+                    ep = p["aps_dst_ep"]
+                    s["endpoints"][ep] = s["endpoints"].get(ep, 0) + 1
+            # ZCL 命令统计 (cluster, cmd, dir) — 命令名用解析层快照
+            if p.get("zcl_cmd_id") is not None:
+                key = (p.get("aps_cluster"), p["zcl_cmd_id"], p.get("zcl_direction"))
+                if key not in s["clusters"]:
+                    s["clusters"][key] = {"count": 0, "cmd_name": p.get("zcl_cmd_name")}
+                s["clusters"][key]["count"] += 1
 
     # 邻居表 + 不对称链路 (Phase 3 已验证逻辑, 含缓存)
     ls_tables, asym = _build_phase3_supplements(pkts, pan_int)
@@ -232,6 +264,19 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
              "asym": asym_levels.get(frozenset((aid, na)))}
             for na, v in sorted(ls_tables.get(aid, {}).items())
         ]
+        # U9: 端点/命令统计输出 (频率降序)
+        endpoints = sorted(st["endpoints"].items(), key=lambda kv: -kv[1]) if st else []
+        clusters_out = []
+        if st:
+            for (cl, cmd, d), v in sorted(st["clusters"].items(), key=lambda kv: -kv[1]["count"]):
+                clusters_out.append({
+                    "cluster": cl,
+                    "cluster_name": zcl_defs.get_cluster_name(cl),
+                    "cmd": cmd,
+                    "cmd_name": v["cmd_name"],
+                    "dir": d,
+                    "count": v["count"],
+                })
         result.append({
             "aid": aid, "label": label,
             "seen": st["seen"] if st else 0,
@@ -239,6 +284,8 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
             "is_coord": aid == 0,
             "type_list": n["type_list"][:8],
             "device_type": n.get("device_type", "unknown"),
+            "manufacturer_name": st["manufacturer_name"] if st else None,
+            "model_id": st["model_id"] if st else None,
             "detail": {
                 "first_ts": st["first"] if st else None,
                 "last_ts": st["last"] if st else None,
@@ -247,6 +294,8 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
                 "lqi": _metric_stats(st["lqis"]) if st else None,
                 "rssi": _metric_stats(st["rssis"]) if st else None,
                 "neighbors": neighbors,
+                "endpoints": [{"ep": ep, "count": c} for ep, c in endpoints],
+                "clusters": clusters_out,
             },
         })
     return result

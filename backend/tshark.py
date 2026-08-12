@@ -451,9 +451,11 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "nwk_leave_request": nwk_leave_request,
         "nwk_leave_children": nwk_leave_children,
         "zcl_cmd_id": zcl_cmd_id,
+        "zcl_frame_type": _zcl_frame_type(zcl),  # 0=全局命令, 1=cluster-specific (L3-3 守卫, 2026-08-12)
         "zcl_cmd_name": zcl_defs.get_command_name(aps_cluster, zcl_cmd_id, _zcl_frame_type(zcl)) if zcl_cmd_id is not None else None,
         "zcl_direction": zcl_dir,
         "zcl_seq": zcl_seq,
+        "zcl_attr_reads": None,  # pcap 路径占位 — Read Attr Rsp 属性提取待 P5 (cubx 已实现, U9)
         "sec_level": sec_level,
         "sec_key": sec_key,
         "sec_key_label": sec_key_label,

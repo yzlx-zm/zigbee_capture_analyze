@@ -378,6 +378,58 @@ def _parse_route_reply(plaintext: bytes) -> dict | None:
     }
 
 
+def _parse_read_attr_records(payload: bytes, start: int) -> list[dict] | None:
+    """解析 Read Attributes Response 属性记录 (ZCL spec 2.4.2.2.1, U9).
+
+    结构 (循环): [attr_id:2 LE][status:1][status==0 时: type:1 + data]
+    边界防护: 剩余 <4B 停; 记录上限 32; 越界/异常静默停止不 raise.
+    value 解码: 0x41/0x42 短字符串 (1B 长度前缀, utf-8 replace)、0x43/0x44 长字符串
+    (2B 前缀)、0x20 uint8 / 0x21 uint16 / 0x22 uint24 / 0x23 uint32 LE 数值;
+    其他 type → value=None (素材实证: Basic 0x0004/_TZE204_dayazmbk 0x42 str,
+    0x0005/TS6001; dimmer 入网包 7 帧 Rsp).
+    返回 [{attr_id, status, type, value}], 无记录返回 None.
+    """
+    records: list[dict] = []
+    off = start
+    while len(records) < 32 and off + 4 <= len(payload):
+        attr_id = int.from_bytes(payload[off:off + 2], "little")
+        status = payload[off + 2]
+        off += 3
+        rec: dict = {"attr_id": attr_id, "status": status, "type": None, "value": None}
+        if status == 0 and off < len(payload):
+            dtype = payload[off]
+            rec["type"] = dtype
+            off += 1
+            value: object = None
+            if dtype in (0x41, 0x42) and off + 1 <= len(payload):
+                ln = payload[off]
+                off += 1
+                if off + ln <= len(payload):
+                    value = payload[off:off + ln].decode("utf-8", "replace")
+                    off += ln
+            elif dtype in (0x43, 0x44) and off + 2 <= len(payload):
+                ln = int.from_bytes(payload[off:off + 2], "little")
+                off += 2
+                if off + ln <= len(payload):
+                    value = payload[off:off + ln].decode("utf-8", "replace")
+                    off += ln
+            elif dtype == 0x20 and off + 1 <= len(payload):
+                value = payload[off]
+                off += 1
+            elif dtype == 0x21 and off + 2 <= len(payload):
+                value = int.from_bytes(payload[off:off + 2], "little")
+                off += 2
+            elif dtype == 0x22 and off + 3 <= len(payload):
+                value = int.from_bytes(payload[off:off + 3], "little")
+                off += 3
+            elif dtype == 0x23 and off + 4 <= len(payload):
+                value = int.from_bytes(payload[off:off + 4], "little")
+                off += 4
+            rec["value"] = value
+        records.append(rec)
+    return records if records else None
+
+
 def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                  channel: int, lqi: int, rssi: int,
                  network_keys: list[KeyRecord],
@@ -385,7 +437,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     """单帧完整解析 → dict (兼容 tshark._frame_to_dict)."""
     result: dict = {
         "ts": timestamp, "ch": channel, "lqi": lqi, "rssi": rssi,
-        "packet_id": packet_id,
+        "packet_id": packet_id, "frame_len": len(raw),
         "pkt_type": "Unknown",
         "pan_src": None, "pan_dst": None,
         "mac_src": None, "mac_dst": None, "mac_seq": None,
@@ -399,7 +451,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "sec_frame_counter": None, "sec_mic": None,
         "sec_key_type": None,        # 安全头 key_type (0=Data/Link, 1=NWK, 2=Transport, 3=Load, 4=Verify)
         "decrypt_note": None,        # 解密失败原因: missing_key / mic_fail / parse_error (成功=None)
-        "nwk_radius": None, "nwk_src64": None, "nwk_security": False,
+        "nwk_radius": None, "nwk_src64": None, "nwk_dst64": None,
+        "nwk_security": False, "nwk_fcf": None, "nwk_flags": None,
+        "nwk_discover_route": None, "nwk_proto_version": None,
+        "nwk_relay_count": None, "nwk_relay_index": None, "nwk_relays": None,
         "mac_fcs_ok": True, "mac_frame_type": 1,
         "mac_cmd_id": None,          # MAC 命令帧 ID (1=AssocReq, 2=AssocResp, 4=DataReq, 7=BeaconReq...)
         "mac_src64": None,           # MAC 长地址 (EUI64, 字符串)
@@ -426,6 +481,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "nwk_leave_children": None,      # Leave options bit7=children
         "zcl_direction": None,           # ZCL 方向 (0=Client→Server, 1=Server→Client)
         "zcl_seq": None,                 # ZCL 事务序列号
+        "zcl_attr_reads": None,          # Read Attr Rsp 属性记录 (U9: 设备身份/型号提取)
+        "aps_fcf": None, "aps_security": None,
         "raw_layers": {},
     }
 
@@ -486,7 +543,20 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     result["nwk_radius"] = _h(getattr(nwk, "radius", None))
     result["nwk_seq"] = _h(getattr(nwk, "seqnum", None))
     result["nwk_src64"] = _format_eui(getattr(nwk, "ext_src", None))
+    result["nwk_dst64"] = _format_eui(getattr(nwk, "ext_dst", None))
     result["nwk_security"] = nwk_secure
+    nwk_bytes = bytes(nwk)
+    result["nwk_fcf"] = nwk_bytes[:2].hex() if len(nwk_bytes) >= 2 else None
+    result["nwk_flags"] = _h(getattr(nwk, "flags", None))
+    result["nwk_discover_route"] = _h(getattr(nwk, "discover_route", None))
+    result["nwk_proto_version"] = _h(getattr(nwk, "proto_version", None))
+    result["nwk_relay_count"] = _h(getattr(nwk, "relay_count", None))
+    result["nwk_relay_index"] = _h(getattr(nwk, "relay_index", None))
+    try:
+        relays = [_addr_nwk(a) for a in getattr(nwk, "relays", []) if a is not None]
+        result["nwk_relays"] = relays or None
+    except Exception:
+        pass
 
     nwk_cmd_id: int | None = None
     plaintext = bytes(nwk.payload)
@@ -619,6 +689,8 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         # APS FCF bit6 = ack request (数据帧要求 APS 确认; L3-1 配对基础)
         # 素材实测: scapy frame_control 含 ack_req 标志; 直接读 FCF 字节更可靠
         result["aps_ack_req"] = bool(bytes(aps)[0] & 0x40) if len(bytes(aps)) >= 1 else None
+        result["aps_fcf"] = bytes(aps)[0] if len(bytes(aps)) >= 1 else None
+        result["aps_security"] = bool(bytes(aps)[0] & 0x20) if len(bytes(aps)) >= 1 else None
 
         # APS Ack: aps_frametype==2 (scapy 字段, 不是 frame_control)
         if aps_ftype == 2:
@@ -679,6 +751,9 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                     "Server→Client" if (zcl_fcf >> 3) & 1 else "Client→Server")
                 if result["zcl_cmd_id"] is not None:
                     # frame type = FCF bits0-1: 0=全局命令, 1=cluster-specific
+                    # (2026-08-12 L3-3 自审: 检测器需区分全局/特定命令 — cluster-specific
+                    #  0x02 等命令与全局 Write Attributes 同 ID, 无守卫会误判)
+                    result["zcl_frame_type"] = zcl_fcf & 0x03
                     result["zcl_cmd_name"] = zcl_defs.get_command_name(
                         result["aps_cluster"], result["zcl_cmd_id"],
                         zcl_fcf & 0x03)
@@ -704,6 +779,14 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                             st_off = zcl_off + 4
                     if st_off is not None and st_off < len(aps_plain):
                         result["zcl_status"] = aps_plain[st_off]
+                    # U9: Read Attr Rsp (cmd 0x01, 全局命令) 属性记录 — 设备身份提取
+                    # (manufacturer_name attr 0x0004 / model_id 0x0005, Basic 簇);
+                    # 记录起点 = cmd 后 1 字节: zcl_off=tsn, +1=cmd, +2=attr 记录起始
+                    # (⚠️ 实现要点初稿写 +3 多跳 1 字节, 素材实测修正 08-12;
+                    #  st_off=+4 是 status 位置可佐证); pcap 路径 P5
+                    if (zcl_fcf & 0x03) == 0 and result["zcl_cmd_id"] == 0x01:
+                        result["zcl_attr_reads"] = _parse_read_attr_records(
+                            aps_plain, zcl_off + 2)
 
     # Final pkt_type
     if result["pkt_type"] == "Unknown":

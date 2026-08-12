@@ -12,9 +12,11 @@ function asymBadge(l){
 }
 
 reg('nodes',function(){
+  // U9 (2026-08-12): 精简 6 列 — 去掉 PAN/协调器/包类型 (拓扑页均有);
+  // 新增厂商名/型号 (Basic Read Attr Rsp 提取, 免人工查型号)
   document.getElementById('mc').innerHTML='<div class="card"><h3>📋 节点列表</h3><div class="nodes-search">'
     +'<input id="ns" placeholder="搜索地址 (如 0A11)" class="mono w-160"><button class="btn btn-p" id="ngo">搜索</button></div>'
-    +'<div class="nodes-table-wrap"><table class="tbl"><thead><tr><th>地址</th><th>设备类型</th><th>出现次数</th><th>PAN</th><th>协调器</th><th>包类型</th><th>操作</th></tr></thead><tbody id="ntb"></tbody></table></div></div>';
+    +'<div class="nodes-table-wrap"><table class="tbl"><thead><tr><th>地址</th><th>设备类型</th><th>厂商名</th><th>型号</th><th>出现次数</th><th>操作</th></tr></thead><tbody id="ntb"></tbody></table></div></div>';
 
   // 行内展开详情 (点击行切换; 🎯 定位按钮保留原跳转拓扑行为)
   function detailHtml(n,d){
@@ -41,6 +43,25 @@ reg('nodes',function(){
     }else{
       parts.push('<p class="hint mt-1">无 Link Status 邻居数据 (需含链路状态帧的导入, 如 cubx)</p>');
     }
+    // U9: 端点统计 + 控制命令统计 (设备身份/控制方式查询; 不做原始帧样本展示)
+    var eps=d.endpoints||[];
+    if(eps.length){
+      parts.push('<p class="t-11">端点: '+eps.map(function(e){
+        var hex=e.ep.toString(16).toUpperCase(); if(hex.length<2)hex='0'+hex;
+        return 'EP 0x'+hex+'×'+e.count;
+      }).join(' · ')+'</p>');
+    }
+    var cls=d.clusters||[];
+    if(cls.length){
+      parts.push('<table class="tbl t-11 mt-1"><thead><tr><th>簇</th><th>命令</th><th>方向</th><th>频率</th></tr></thead><tbody>');
+      for(var ci=0;ci<cls.length;ci++){var cc=cls[ci];
+        var clName=cc.cluster_name||'0x'+(cc.cluster==null?'?':cc.cluster.toString(16).toUpperCase());
+        var cmName=cc.cmd_name||'0x'+cc.cmd.toString(16).toUpperCase();
+        var dirTxt=cc.dir==='Server→Client'?'S→C':cc.dir==='Client→Server'?'C→S':(cc.dir||'-');
+        parts.push('<tr><td class="mono">'+clName+'</td><td class="mono">'+cmName+'</td><td class="t-10 text-muted">'+dirTxt+'</td><td>'+cc.count+'</td></tr>');
+      }
+      parts.push('</tbody></table>');
+    }
     return parts.join('');
   }
 
@@ -50,13 +71,12 @@ reg('nodes',function(){
       h+='<tr class="nd-row" data-aid="'+n.aid+'">'
         +'<td class="mono text-strong">'+n.label+'</td>'
         +'<td>'+devTypeName(n.device_type)+'</td>'
+        +'<td>'+(n.manufacturer_name||'-')+'</td>'
+        +'<td>'+(n.model_id||'-')+'</td>'
         +'<td>'+n.seen+'</td>'
-        +'<td>'+(n.pan!=null?'0x'+n.pan.toString(16).toUpperCase():'-')+'</td>'
-        +'<td>'+(n.is_coord?'✅':'')+'</td>'
-        +'<td class="t-11 text-muted">'+(n.type_list||[]).join(', ')+'</td>'
         +'<td><button class="btn btn-o btn-sm nd-locate" title="在拓扑页定位此节点">🎯</button></td>'
         +'</tr>'
-        +'<tr class="nd-detail hidden" data-for="'+n.aid+'"><td colspan="7">'+detailHtml(n,d)+'</td></tr>';
+        +'<tr class="nd-detail hidden" data-for="'+n.aid+'"><td colspan="6">'+detailHtml(n,d)+'</td></tr>';
     }
     tb.innerHTML=h;
     tb.querySelectorAll('.nd-row').forEach(function(tr){
