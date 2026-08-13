@@ -92,7 +92,7 @@ h3 { font-size: var(--fs-base); margin-bottom: var(--sp-2); }
 .scroll-y { overflow-y: auto; }
 .oh { overflow: hidden; }
 .hidden { display: none; }              /* 初始隐藏; JS 用 style.display 控制显隐 (inline 优先于本类) */
-.w-45 { width: 45px; } .w-90 { width: 90px; } .w-100 { width: 100px; }
+.w-40 { width: 40px; } .w-45 { width: 45px; } .w-90 { width: 90px; } .w-100 { width: 100px; }
 .w-130 { width: 130px; } .w-160 { width: 160px; } .w-80 { width: 80px; } .w-180 { width: 180px; }
 .mt-1 { margin-top: var(--sp-1); } .mt-2 { margin-top: var(--sp-2); }
 .ml-1 { margin-left: var(--sp-1); }

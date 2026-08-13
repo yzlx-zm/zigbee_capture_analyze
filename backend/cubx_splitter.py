@@ -97,8 +97,25 @@ def prescan_cubx(path: str) -> dict:
 
 
 def _fmt_window(ts: float) -> str:
-    """epoch → YYYYMMDD_HHMMSS (产物命名, 本地时间)"""
-    return datetime.fromtimestamp(ts).strftime("%Y%m%d_%H%M%S")
+    """epoch → MMDD_HHMM (产物命名, 本地时间; 用户定义 08-13: 分钟级窗口)"""
+    return datetime.fromtimestamp(ts).strftime("%m%d_%H%M")
+
+
+def _default_out_path(src_path: Path, ts_start: float, ts_end: float) -> str:
+    """默认产物路径: <原名>_MMDD_HHMM-MMDD_HHMM.cubx, 同源多子包带序号 _01_.
+
+    - 原名取源文件名 (拖拽暂存场景文件名已还原, 无随机前缀 — API 层处理)
+    - 序号: 目标目录已有同窗口前缀 → 找下一个空序号 (同一分钟窗口重复
+      拆分也递增不覆盖)
+    """
+    base = f"{src_path.stem}_{_fmt_window(ts_start)}-{_fmt_window(ts_end)}"
+    idx = 1
+    while True:
+        name = base if idx == 1 else f"{base}_{idx:02d}"
+        p = src_path.parent / f"{name}.cubx"
+        if not p.exists():
+            return str(p)
+        idx += 1
 
 
 def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str] = None,
@@ -110,14 +127,15 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
     - Packets 选 Timestamp ∈ [ts_start, ts_end], 保原 Id
     - sqlite_sequence 同步 (Packets Id 延续, Ubiqua 兼容)
     - progress_cb(done, total) 按扫描进度上报
+    命名规范 (用户定义 08-13): <原名>_MMDD_HHMM-MMDD_HHMM.cubx, 同源文件
+    多子包带序号 _01_/_02_ (同一分钟窗口重复拆分也递增不覆盖).
     返回 {in_frames, out_frames, out_path}
     """
     src_path = Path(src).expanduser().resolve()
     if not src_path.is_file():
         raise FileNotFoundError(f"cubx 文件不存在: {src_path}")
     if out_path is None:
-        out_path = str(src_path.parent / (
-            f"{src_path.stem}_{_fmt_window(ts_start)}-{_fmt_window(ts_end)}.cubx"))
+        out_path = _default_out_path(src_path, ts_start, ts_end)
     out_p = Path(out_path).expanduser().resolve()
     out_p.parent.mkdir(parents=True, exist_ok=True)
     if out_p.exists():

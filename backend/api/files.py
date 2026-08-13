@@ -104,7 +104,11 @@ async def cubx_upload_stage(file: UploadFile = File(...)):
             old.unlink()
         except OSError:
             pass
-    staged = os.path.join(_CUBX_STAGE_DIR, f"{uuid.uuid4().hex[:8]}_{fname}")
+    # 命名规范 (用户定义 08-13): 暂存文件名还原原文件名 (去掉随机前缀, 防
+    # 拆分产物命名带 bd106075_ 前缀); 暂存目录内同名会冲突, 冲突时保留前缀
+    staged = os.path.join(_CUBX_STAGE_DIR, fname)
+    if os.path.exists(staged):
+        staged = os.path.join(_CUBX_STAGE_DIR, f"{uuid.uuid4().hex[:8]}_{fname}")
     try:
         with open(staged, "wb") as out:
             while data := await file.read(1024 * 1024):

@@ -31,10 +31,22 @@ reg('import',function(){
         +'<input type="range" id="cs-s2" class="cs-range">'
       +'</div>'
       +'<div class="cs-time-inputs">'
-        +'<span class="t-11">精确时间 (MM-DD HH:MM):</span>'
-        +'<input id="cs-t1" class="mono w-140" placeholder="08-13 04:49">'
+        +'<span class="t-11">精确时间 (月-日 时:分):</span>'
+        +'<input id="cs-t1m" class="mono w-40" maxlength="2" placeholder="08">'
+        +'<span class="t-11">-</span>'
+        +'<input id="cs-t1d" class="mono w-40" maxlength="2" placeholder="13">'
+        +'<span class="t-11">&nbsp;</span>'
+        +'<input id="cs-t1h" class="mono w-40" maxlength="2" placeholder="04">'
+        +'<span class="t-11">:</span>'
+        +'<input id="cs-t1n" class="mono w-40" maxlength="2" placeholder="49">'
         +'<span class="t-11">→</span>'
-        +'<input id="cs-t2" class="mono w-140" placeholder="08-13 05:03">'
+        +'<input id="cs-t2m" class="mono w-40" maxlength="2" placeholder="08">'
+        +'<span class="t-11">-</span>'
+        +'<input id="cs-t2d" class="mono w-40" maxlength="2" placeholder="13">'
+        +'<span class="t-11">&nbsp;</span>'
+        +'<input id="cs-t2h" class="mono w-40" maxlength="2" placeholder="05">'
+        +'<span class="t-11">:</span>'
+        +'<input id="cs-t2n" class="mono w-40" maxlength="2" placeholder="03">'
         +'<button class="btn btn-o btn-sm" id="cs-tapply">应用</button>'
       +'</div>'
       +'<p id="cs-win" class="t-11 text-strong"></p>'
@@ -149,9 +161,9 @@ reg('import',function(){
     function updWin(){ lbl.textContent='窗口: '+fmtTsWin(+s1.value)+' → '+fmtTsWin(+s2.value)
       +' ('+Math.round((+s2.value-+s1.value)/60)+' 分钟)'; }
     s1.oninput=s2.oninput=updWin; updWin();
-    // 精确时间输入框重置 (解析/应用逻辑在 reg 一次性绑定区, 防重复绑定)
-    document.getElementById('cs-t1').value='';
-    document.getElementById('cs-t2').value='';
+    // 精确时间输入框重置 (数字框: 月-日 时:分, 解析/应用逻辑在 reg 一次性绑定区)
+    ['cs-t1m','cs-t1d','cs-t1h','cs-t1n','cs-t2m','cs-t2d','cs-t2h','cs-t2n']
+      .forEach(function(i){document.getElementById(i).value='';});
     panel.classList.remove('hidden');
     panel.dataset.path=path; panel.dataset.fname=fname;
     panel.dataset.tsFirst=d.ts_first; panel.dataset.tsLast=d.ts_last;
@@ -207,15 +219,24 @@ reg('import',function(){
     var panel=csPanel;
     var tsFirst=+panel.dataset.tsFirst, tsLast=+panel.dataset.tsLast;
     if(!tsFirst||!tsLast){setErr('先预扫素材再输入时间');return;}
-    function parseTsInput(txt, defaultYear){
-      var m=txt.trim().match(/^(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})$/);
-      if(!m)return null;
-      return new Date(defaultYear, +m[1]-1, +m[2], +m[3], +m[4], 0).getTime()/1000;
+    // 数字框组解析: [月, 日, 时, 分] 各 1-2 位数字, 缺失/非法返回 null
+    function parseBoxes(ids){
+      var vals=[];
+      for(var i=0;i<ids.length;i++){
+        var v=(document.getElementById(ids[i]).value||'').trim();
+        if(!/^\d{1,2}$/.test(v))return null;
+        vals.push(+v);
+      }
+      if(vals[0]<1||vals[0]>12||vals[1]<1||vals[1]>31
+         ||vals[2]<0||vals[2]>23||vals[3]<0||vals[3]>59)return null;
+      return vals;
     }
     var year=new Date(tsFirst*1000).getFullYear();
-    var t1=parseTsInput(document.getElementById('cs-t1').value,year);
-    var t2=parseTsInput(document.getElementById('cs-t2').value,year);
-    if(t1==null||t2==null){setErr('时间格式无效: 应为 MM-DD HH:MM (如 08-13 04:49)');return;}
+    var t1v=parseBoxes(['cs-t1m','cs-t1d','cs-t1h','cs-t1n']);
+    var t2v=parseBoxes(['cs-t2m','cs-t2d','cs-t2h','cs-t2n']);
+    if(!t1v||!t2v){setErr('时间无效: 月 1-12 / 日 1-31 / 时 0-23 / 分 0-59');return;}
+    var t1=new Date(year, t1v[0]-1, t1v[1], t1v[2], t1v[3], 0).getTime()/1000;
+    var t2=new Date(year, t2v[0]-1, t2v[1], t2v[2], t2v[3], 0).getTime()/1000;
     if(!(t1>=tsFirst&&t1<=tsLast&&t2>=tsFirst&&t2<=tsLast)){
       setErr('时间超出素材范围: '+fmtTsWin(tsFirst)+' → '+fmtTsWin(tsLast));return;}
     if(t2<=t1){setErr('结束时间必须大于开始时间');return;}
