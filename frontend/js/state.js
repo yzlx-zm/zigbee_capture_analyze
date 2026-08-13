@@ -59,8 +59,8 @@ export function doPI(files){setProg('上传中...',1);
   var fd=new FormData(); var cubx=0; var fnames=[];
   for(var i=0;i<files.length;i++){fd.append('files',files[i]);
     var n=files[i].name||'';fnames.push(n);if(n.toLowerCase().endsWith('.cubx'))cubx=1;}
-  // U11: 大 cubx (>30MB) 走暂存+预扫拆分面板 (浏览器已知大小, 免整包解析卡死)
-  if(cubx && files.length===1 && files[0].size > 30*1048576 && window._stageCubx){
+  // U11: 大 cubx (>1MB, 用户定义 08-13) 走暂存+预扫拆分面板 (免整包解析卡死)
+  if(cubx && files.length===1 && files[0].size > 1*1048576 && window._stageCubx){
     window._stageCubx(files[0], fnames[0]); return;
   }
   var url=cubx?'/api/import/cubx':'/api/import/pcap';

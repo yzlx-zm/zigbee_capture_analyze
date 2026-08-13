@@ -135,7 +135,8 @@ reg('import',function(){
     fetch('/api/cubx/prescan',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
       setProg('',0);
       if(d.error){setErr(d.error);return;}
-      if(d.file_mb>30){showPrescanPanel(d,path,fname);}
+      // 大包阈值 1MB (用户定义 08-13: 大于 1M 即大包可拆)
+      if(d.file_mb>1){showPrescanPanel(d,path,fname);}
       else{importPath('/api/import/local-cubx','path',path,fname);}
     }).catch(function(e){setErr('预扫失败: '+e.message);});
   }
