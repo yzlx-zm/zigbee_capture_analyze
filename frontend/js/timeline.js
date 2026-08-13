@@ -18,7 +18,9 @@ reg('tl', function(){
   // 契约: 数字时间戳 (拓扑滑块) 或 "HH:MM:SS" 字符串 (时间线保存), 读侧兼容两者)
 
   // Build H/M/S dropdown helpers
-  function hmssel(id,val,opts){var h='<select id="'+id+'" class="mono hm-sel">';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
+  // ⚠️ 修复 (08-13 审核): 加空选项 — 此前无 selected 时浏览器默认选中 0 →
+  // 时间过滤恒为 00:00:00~00:00:00 → 初始点查看直接空结果 (实锤 total=0)
+  function hmssel(id,val,opts){var h='<select id="'+id+'" class="mono hm-sel"><option value="">-</option>';for(var i=0;i<opts.length;i++){h+='<option value="'+opts[i]+'"'+(String(opts[i])===String(val)?' selected':'')+'>'+String(opts[i]).padStart(2,'0')+'</option>';}h+='</select>';return h;}
   var hourOpts=[];for(var hi=0;hi<24;hi++)hourOpts.push(hi);
   var minSecOpts=[];for(var mi=0;mi<60;mi++)minSecOpts.push(mi);
 
@@ -86,14 +88,18 @@ reg('tl', function(){
   }
 
   function tlGetTimeFilter(){
+    // 空选项 (value="") 表示不限时间 — 任一字段为空则整体不参与过滤
+    // (08-13 审核修复: 曾恒产生 00:00:00 导致初始空结果)
     var h0=document.getElementById('tl-h0').value;
     var m0=document.getElementById('tl-m0').value;
     var s0=document.getElementById('tl-s0').value;
     var h1=document.getElementById('tl-h1').value;
     var m1=document.getElementById('tl-m1').value;
     var s1=document.getElementById('tl-s1').value;
-    var ts0=String(h0).padStart(2,'0')+':'+String(m0).padStart(2,'0')+':'+String(s0).padStart(2,'0');
-    var ts1=String(h1).padStart(2,'0')+':'+String(m1).padStart(2,'0')+':'+String(s1).padStart(2,'0');
+    var ts0=(h0!==''&&m0!==''&&s0!=='')
+      ? String(h0).padStart(2,'0')+':'+String(m0).padStart(2,'0')+':'+String(s0).padStart(2,'0') : '';
+    var ts1=(h1!==''&&m1!==''&&s1!=='')
+      ? String(h1).padStart(2,'0')+':'+String(m1).padStart(2,'0')+':'+String(s1).padStart(2,'0') : '';
     return {ts0:ts0, ts1:ts1};
   }
 
