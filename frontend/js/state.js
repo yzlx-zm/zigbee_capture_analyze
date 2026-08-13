@@ -26,6 +26,10 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
     if(v.detail&&Object.keys(v.detail).length>0){h+='<details class=\"verify-detail\"><summary>⚠️ 差异明细 ('+Object.keys(v.detail).length+' 项)</summary><pre class=\"text-danger\">'+esc(JSON.stringify(v.detail))+'</pre></details>';}
     h+='</div>';S.verifyPassed=v.passed;
   }
+  // U11: 拆分产物下载 (人工复验, 如 Ubiqua 打开)
+  if(d.split_out_path){
+    h+='<p class=\"t-11\">⏱ 拆分产物: <a class=\"text-info\" href=\"/api/cubx/download?path='+encodeURIComponent(d.split_out_path)+'\" download>⬇ 下载 ('+((d.split_out_frames||0).toLocaleString())+' 帧)</a></p>';
+  }
   document.getElementById('sdiv').innerHTML=h;
   S.pkts=d.packets||0;S.nodes=d.nodes||0;sb(S.pkts+'包 | '+S.nodes+'节点');
   A.get('/api/topology/graph').then(function(td){S.topo=td});}

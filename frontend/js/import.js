@@ -119,6 +119,8 @@ reg('import',function(){
     }).catch(function(e){setErr('预扫失败: '+e.message);});
   }
   function showPrescanPanel(d, path, fname){
+    // U11: 面板状态持久化 (S.cubxPrescan) — 切页回来 reg() 重建时恢复
+    S.cubxPrescan={prescan:d, path:path, fname:fname};
     var panel=document.getElementById('cubx-prescan');
     // 概览
     document.getElementById('cs-info').innerHTML='文件 '+d.file_mb+'MB · 物理帧 '+d.total_frames.toLocaleString()
@@ -147,6 +149,7 @@ reg('import',function(){
       var path=csPanel.dataset.path,fname=csPanel.dataset.fname;
       var tsStart=+document.getElementById('cs-s1').value,tsEnd=+document.getElementById('cs-s2').value;
       if(tsEnd<=tsStart){setErr('窗口无效: 结束时间必须大于开始时间');return;}
+      S.cubxPrescan=null;   // 开始拆分后清状态 (面板使命完成, 结果区提供下载)
       setProg('提交拆分...',1);
       var fd=new FormData();fd.append('path',path);
       fd.append('ts_start',tsStart);fd.append('ts_end',tsEnd);
@@ -157,8 +160,13 @@ reg('import',function(){
     });
     document.getElementById('cs-cancel').addEventListener('click',function(){
       csPanel.classList.add('hidden');
+      S.cubxPrescan=null;
       importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
     });
+  }
+  // U11: 切页回来恢复拆分面板 (reg 重建 DOM 后)
+  if(S.cubxPrescan){
+    showPrescanPanel(S.cubxPrescan.prescan, S.cubxPrescan.path, S.cubxPrescan.fname);
   }
 
   // Key panel toggle

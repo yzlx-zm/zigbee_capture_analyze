@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 
 from .. import csv_reader
@@ -146,6 +146,31 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
         return import_result
 
     return _start_import(_run)
+
+
+@router.get("/cubx/download")
+async def cubx_download(path: str = Query(default="")):
+    """U11: 下载拆分产物 (人工复验, 如 Ubiqua 打开).
+
+    允许: 暂存目录内 .cubx (拖拽场景) 或匹配拆分命名模式的 .cubx
+    (<原名>_<YYYYMMDD_HHMMSS>-<YYYYMMDD_HHMMSS>.cubx, 本地路径场景).
+    本工具为本地单用户, 命名模式校验防误下任意文件.
+    """
+    from fastapi.responses import FileResponse
+    import re
+    p = Path(path)
+    try:
+        p_resolved = p.resolve()
+        stage_resolved = Path(_CUBX_STAGE_DIR).resolve()
+        in_stage = p_resolved.parent == stage_resolved
+        split_named = bool(re.search(r"_\d{8}_\d{6}-\d{8}_\d{6}\.cubx$", p_resolved.name))
+        if not (p_resolved.is_file() and p_resolved.suffix.lower() == ".cubx"
+                and (in_stage or split_named)):
+            return JSONResponse({"error": "仅支持拆分产物 .cubx (暂存目录或拆分命名)"}, 400)
+        return FileResponse(str(p_resolved), filename=p_resolved.name,
+                            media_type="application/octet-stream")
+    except Exception as e:
+        return JSONResponse({"error": f"下载失败: {e}"}, 500)
 
 
 @router.get("/import/parser-verify")
