@@ -40,7 +40,8 @@ reg('import',function(){
       +'<p id="cs-win" class="t-11 text-strong"></p>'
       +'<div class="mt-1">'
         +'<button class="btn btn-p" id="cs-go">拆分子包</button> '
-        +'<button class="btn btn-o" id="cs-cancel">取消 (整包导入)</button>'
+        +'<button class="btn btn-o" id="cs-cancel">取消 (整包导入)</button> '
+        +'<button class="btn btn-r btn-sm" id="cs-close">关闭面板 (换别的包)</button>'
       +'</div>'
       +'<div id="cs-subs" class="cs-subs mt-1"></div>'
     +'</div>'
@@ -191,6 +192,14 @@ reg('import',function(){
       csPanel.classList.add('hidden');
       S.cubxPrescan=null;
       importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
+    });
+    // 关闭面板 (换别的包): 清面板状态 + 子包清单, 不导入 — 用户反馈 08-13
+    document.getElementById('cs-close').addEventListener('click',function(){
+      csPanel.classList.add('hidden');
+      S.cubxPrescan=null;
+      S.cubxSubs=null;
+      renderSubs();
+      setProg('',0);
     });
   }
   // U11: 精确时间输入应用 (一次性绑定; MM-DD HH:MM:SS, 素材年份) → 同步滑块
