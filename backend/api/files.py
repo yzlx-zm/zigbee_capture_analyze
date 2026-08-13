@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+# 项目根 (自重启端点 cwd 用)
+BASE_DIR = str(Path(__file__).resolve().parents[2])
 
 from fastapi import APIRouter, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
@@ -164,6 +168,30 @@ async def cubx_download(path: str = Query(default="")):
                             media_type="application/octet-stream")
     except Exception as e:
         return JSONResponse({"error": f"下载失败: {e}"}, 500)
+
+
+@router.post("/system/restart")
+async def system_restart():
+    """U11 用户需求: 导入卡死时的后端自重启 (网页可触发的重启按钮).
+
+    实现: 起独立 powershell 进程 — taskkill 当前后端 PID → 等待 2s (端口
+    释放) → Start-Process 重启 backend (detached, 模式已验证可靠).
+    powershell 是后端子进程, taskkill 只杀后端 PID, 脚本继续执行.
+    返回 {"ok": True} 后前端轮询等待 + 自动刷新.
+    """
+    import subprocess
+    port = 8720
+    script = (f"taskkill /F /PID {os.getpid()} | Out-Null; "
+              f"Start-Sleep 2; "
+              f"Start-Process -WindowStyle Hidden -FilePath '{sys.executable}' "
+              f"-ArgumentList '-m','backend','--port','{port}' "
+              f"-WorkingDirectory '{BASE_DIR}'")
+    try:
+        subprocess.Popen(["powershell", "-Command", script],
+                         creationflags=subprocess.CREATE_NO_WINDOW)
+        return {"ok": True, "message": "后端重启中, 约 5 秒后可用"}
+    except Exception as e:
+        return JSONResponse({"error": f"重启失败: {e}"}, 500)
 
 
 @router.get("/import/parser-verify")
