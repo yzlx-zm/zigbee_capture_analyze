@@ -73,7 +73,7 @@ export function doPI(files){setProg('上传中...',1);
 var _ptid=null,_pfname='',_ponDone=null,_pdone=false,_ptimer=null,_plastErr='',_ptries=0;
 function onImportPage(){var h=location.hash.slice(1)||'import';return h==='import';}
 function stopPoll(){if(_ptimer){clearInterval(_ptimer);_ptimer=null;}}
-function sbTask(label,cls){sb(label);var el=document.getElementById('sb');if(el)el.dataset.task=cls;}
+export function sbTask(label,cls){sb(label);var el=document.getElementById('sb');if(el)el.dataset.task=cls;}
 export function pollImport(tid,fname,onDone){
   stopPoll();                    // 新任务顶掉旧轮询 (后端并发防护下不会同时有两个)
   _ptid=tid;_pfname=fname;_ponDone=onDone;_pdone=false;_plastErr='';_ptries=0;

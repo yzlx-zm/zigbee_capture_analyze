@@ -1,5 +1,5 @@
 // import.js — 导入页面模块 (ES module)
-import { S, A, sb, sr, setProg, setErr, doI, doPI, pollImport } from './state.js';
+import { S, A, sb, sbTask, sr, setProg, setErr, doI, doPI, pollImport } from './state.js';
 
 reg('import',function(){
   if(!S.impTab)S.impTab='csv';
@@ -30,11 +30,19 @@ reg('import',function(){
         +'<input type="range" id="cs-s1" class="cs-range">'
         +'<input type="range" id="cs-s2" class="cs-range">'
       +'</div>'
+      +'<div class="cs-time-inputs">'
+        +'<span class="t-11">精确时间 (MM-DD HH:MM):</span>'
+        +'<input id="cs-t1" class="mono w-140" placeholder="08-13 04:49">'
+        +'<span class="t-11">→</span>'
+        +'<input id="cs-t2" class="mono w-140" placeholder="08-13 05:03">'
+        +'<button class="btn btn-o btn-sm" id="cs-tapply">应用</button>'
+      +'</div>'
       +'<p id="cs-win" class="t-11 text-strong"></p>'
       +'<div class="mt-1">'
-        +'<button class="btn btn-p" id="cs-go">拆分并导入</button> '
+        +'<button class="btn btn-p" id="cs-go">拆分子包</button> '
         +'<button class="btn btn-o" id="cs-cancel">取消 (整包导入)</button>'
       +'</div>'
+      +'<div id="cs-subs" class="cs-subs mt-1"></div>'
     +'</div>'
     +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span><div class="bar" id="pbar"><div class="bar-fill" id="pfill"></div></div></div></div>';
   h+='<div class="card hidden" id="sout"><h3>📊 导入结果</h3><div id="sdiv"></div>'
@@ -140,22 +148,43 @@ reg('import',function(){
     function updWin(){ lbl.textContent='窗口: '+fmtTsWin(+s1.value)+' → '+fmtTsWin(+s2.value)
       +' ('+Math.round((+s2.value-+s1.value)/60)+' 分钟)'; }
     s1.oninput=s2.oninput=updWin; updWin();
+    // 精确时间输入框重置 (解析/应用逻辑在 reg 一次性绑定区, 防重复绑定)
+    document.getElementById('cs-t1').value='';
+    document.getElementById('cs-t2').value='';
     panel.classList.remove('hidden');
     panel.dataset.path=path; panel.dataset.fname=fname;
+    panel.dataset.tsFirst=d.ts_first; panel.dataset.tsLast=d.ts_last;
   }
   var csPanel=document.getElementById('cubx-prescan');
   if(csPanel){
     document.getElementById('cs-go').addEventListener('click',function(){
-      var path=csPanel.dataset.path,fname=csPanel.dataset.fname;
+      var path=csPanel.dataset.path;
       var tsStart=+document.getElementById('cs-s1').value,tsEnd=+document.getElementById('cs-s2').value;
       if(tsEnd<=tsStart){setErr('窗口无效: 结束时间必须大于开始时间');return;}
-      // U11 用户反馈: 面板保持 (可继续选别的窗口拆分), 不再清除 S.cubxPrescan
-      setProg('提交拆分...',1);
+      // 只拆不导 (定义核对 08-13): 轮询拆分任务 → 追加子包清单, 手动导入
+      setProg('拆分中...',1);
       var fd=new FormData();fd.append('path',path);
       fd.append('ts_start',tsStart);fd.append('ts_end',tsEnd);
       fetch('/api/cubx/split',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
-        if(d&&d.ok&&d.task_id){pollImport(d.task_id,fname);}
-        else{setProg('');setErr((d&&d.error)||'拆分失败');}
+        if(!(d&&d.ok&&d.task_id)){setProg('');setErr((d&&d.error)||'拆分失败');return;}
+        var tries=0;
+        var timer=setInterval(function(){
+          A.get('/api/import/progress?task_id='+d.task_id).then(function(p){
+            if(!p||p.status==='running'){
+              sbTask('⟳ '+(p?p.stage||'拆分中':'拆分中')+' '+(p&&p.percent!=null?p.percent+'%':''),'run');
+              if(++tries>1000){clearInterval(timer);setProg('');setErr('拆分超时 (5 分钟)');}
+              return;
+            }
+            clearInterval(timer);
+            if(p.status==='done'&&p.result){
+              setProg('',0);
+              S.cubxSubs=S.cubxSubs||[];
+              S.cubxSubs.push({winStart:tsStart, winEnd:tsEnd,
+                               frames:p.result.out_frames, path:p.result.out_path});
+              renderSubs();
+            }else{setProg('');setErr((p&&p.error)||'拆分失败');}
+          }).catch(function(){if(++tries>1000){clearInterval(timer);setProg('');setErr('拆分超时');}});
+        },300);
       }).catch(function(e){setErr('网络错误: '+e.message);});
     });
     document.getElementById('cs-cancel').addEventListener('click',function(){
@@ -164,10 +193,55 @@ reg('import',function(){
       importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
     });
   }
+  // U11: 精确时间输入应用 (一次性绑定; MM-DD HH:MM:SS, 素材年份) → 同步滑块
+  document.getElementById('cs-tapply').addEventListener('click',function(){
+    var panel=csPanel;
+    var tsFirst=+panel.dataset.tsFirst, tsLast=+panel.dataset.tsLast;
+    if(!tsFirst||!tsLast){setErr('先预扫素材再输入时间');return;}
+    function parseTsInput(txt, defaultYear){
+      var m=txt.trim().match(/^(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})$/);
+      if(!m)return null;
+      return new Date(defaultYear, +m[1]-1, +m[2], +m[3], +m[4], 0).getTime()/1000;
+    }
+    var year=new Date(tsFirst*1000).getFullYear();
+    var t1=parseTsInput(document.getElementById('cs-t1').value,year);
+    var t2=parseTsInput(document.getElementById('cs-t2').value,year);
+    if(t1==null||t2==null){setErr('时间格式无效: 应为 MM-DD HH:MM (如 08-13 04:49)');return;}
+    if(!(t1>=tsFirst&&t1<=tsLast&&t2>=tsFirst&&t2<=tsLast)){
+      setErr('时间超出素材范围: '+fmtTsWin(tsFirst)+' → '+fmtTsWin(tsLast));return;}
+    if(t2<=t1){setErr('结束时间必须大于开始时间');return;}
+    document.getElementById('cs-s1').value=t1;
+    document.getElementById('cs-s2').value=t2;
+    document.getElementById('cs-s1').oninput();
+  });
+  // U11: 子包清单渲染 (连续拆多子包 — 定义核对 08-13: 只拆不导, 手动导入)
+  function renderSubs(){
+    var el=document.getElementById('cs-subs');
+    if(!el)return;
+    var subs=S.cubxSubs||[];
+    if(!subs.length){el.innerHTML='';return;}
+    var h='<p class="t-11 text-strong mt-1">已拆子包 ('+subs.length+') — 下载复验或手动导入</p>';
+    subs.forEach(function(s){
+      h+='<div class="cs-sub-row">'
+        +'<span class="t-11 mono">'+fmtTsWin(s.winStart)+' → '+fmtTsWin(s.winEnd)
+        +' · '+s.frames.toLocaleString()+' 帧</span> '
+        +'<a class="btn btn-o btn-sm" href="/api/cubx/download?path='+encodeURIComponent(s.path)+'" download title="下载子包 (Ubiqua 复验)">⬇ 下载</a> '
+        +'<button class="btn btn-p btn-sm cs-sub-import" data-path="'+s.path+'">导入此子包</button>'
+        +'</div>';
+    });
+    el.innerHTML=h;
+    el.querySelectorAll('.cs-sub-import').forEach(function(b){
+      b.addEventListener('click',function(){
+        var p=b.dataset.path;
+        importPath('/api/import/local-cubx','path',p,p.split(/[\\\\/]/).pop());
+      });
+    });
+  }
   // U11: 切页回来恢复拆分面板 (reg 重建 DOM 后)
   if(S.cubxPrescan){
     showPrescanPanel(S.cubxPrescan.prescan, S.cubxPrescan.path, S.cubxPrescan.fname);
   }
+  if(S.cubxSubs&&S.cubxSubs.length)renderSubs();
 
   // Key panel toggle
   document.getElementById('pkey-toggle').addEventListener('click',function(){

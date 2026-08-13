@@ -119,11 +119,10 @@ async def cubx_upload_stage(file: UploadFile = File(...)):
 @router.post("/cubx/split")
 async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
                      ts_end: float = Form(...)):
-    """U11: 时间窗拆分 → 自动导入拆分产物 (一体流程).
-
-    拆分走后台任务 (复用 _start_import 互斥); done 后同线程直接调用
-    _run_cubx_local 导入拆分产物 (拆产物 <30MB 走现有直接导入, 不递归拆分).
-    """
+    """U11: 时间窗拆分 — **只拆不导** (2026-08-13 用户定义核对:
+    连续拆多子包 + 手动选择导入; 拆分走后台任务复用 _start_import 互斥,
+    返回 {in_frames, out_frames, out_path}; 导入由用户对子包逐个触发
+    /api/import/local-cubx)."""
     if not os.path.exists(path):
         return JSONResponse({"error": f"路径不存在: {path}"}, 400)
     if ts_end <= ts_start:
@@ -136,18 +135,8 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
             r = _cs.split_cubx(path, ts_start, ts_end)
         except Exception as e:
             raise RuntimeError(f"拆分失败: {e}") from e
-        _task_update(task_id, stage="拆分完成, 导入产物", percent=40,
-                     result={"out_frames": r["out_frames"], "out_path": r["out_path"]})
-        # 同线程导入拆分产物 (互斥已在 _start_import 持有; _run_cubx_local 的
-        # progress_cb 会覆盖 percent 区间, 前端按 stage 文本区分阶段)
-        import_result = _run_cubx_local(task_id, r["out_path"])
-        import_result["split_out_frames"] = r["out_frames"]
-        import_result["split_out_path"] = r["out_path"]
-        # U11: 注入持久化摘要 (切页恢复下载按钮)
-        if _last_import_summary is not None:
-            _last_import_summary["split_out_path"] = r["out_path"]
-            _last_import_summary["split_out_frames"] = r["out_frames"]
-        return import_result
+        return {"in_frames": r["in_frames"], "out_frames": r["out_frames"],
+                "out_path": r["out_path"]}
 
     return _start_import(_run)
 
