@@ -143,6 +143,10 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
         import_result = _run_cubx_local(task_id, r["out_path"])
         import_result["split_out_frames"] = r["out_frames"]
         import_result["split_out_path"] = r["out_path"]
+        # U11: 注入持久化摘要 (切页恢复下载按钮)
+        if _last_import_summary is not None:
+            _last_import_summary["split_out_path"] = r["out_path"]
+            _last_import_summary["split_out_frames"] = r["out_frames"]
         return import_result
 
     return _start_import(_run)
@@ -712,6 +716,9 @@ def _import_result(filename: str | None = None) -> dict:
         "file_type": result["file_type"], "filename": result["filename"],
         "by_type": result["by_type"], "decrypt_stats": result["decrypt_stats"],
         "verify": result["verify"], "ubiqua_sync": result["ubiqua_sync"],
+        # U11: 拆分产物下载信息持久化 (切页回来结果区恢复下载按钮)
+        "split_out_path": result.get("split_out_path"),
+        "split_out_frames": result.get("split_out_frames"),
     }
     return result
 

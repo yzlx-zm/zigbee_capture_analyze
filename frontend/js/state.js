@@ -26,9 +26,9 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
     if(v.detail&&Object.keys(v.detail).length>0){h+='<details class=\"verify-detail\"><summary>⚠️ 差异明细 ('+Object.keys(v.detail).length+' 项)</summary><pre class=\"text-danger\">'+esc(JSON.stringify(v.detail))+'</pre></details>';}
     h+='</div>';S.verifyPassed=v.passed;
   }
-  // U11: 拆分产物下载 (人工复验, 如 Ubiqua 打开)
+  // U11: 拆分产物下载 (人工复验, 如 Ubiqua 打开) — 按钮样式明显
   if(d.split_out_path){
-    h+='<p class=\"t-11\">⏱ 拆分产物: <a class=\"text-info\" href=\"/api/cubx/download?path='+encodeURIComponent(d.split_out_path)+'\" download>⬇ 下载 ('+((d.split_out_frames||0).toLocaleString())+' 帧)</a></p>';
+    h+='<p class="mt-1"><a class="btn btn-p btn-sm" href="/api/cubx/download?path='+encodeURIComponent(d.split_out_path)+'" download>⬇ 下载拆分产物 ('+((d.split_out_frames||0).toLocaleString())+' 帧)</a> <span class="t-10 text-dim">Ubiqua 打开复验用</span></p>';
   }
   document.getElementById('sdiv').innerHTML=h;
   S.pkts=d.packets||0;S.nodes=d.nodes||0;sb(S.pkts+'包 | '+S.nodes+'节点');

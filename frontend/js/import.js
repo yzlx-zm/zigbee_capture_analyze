@@ -149,7 +149,7 @@ reg('import',function(){
       var path=csPanel.dataset.path,fname=csPanel.dataset.fname;
       var tsStart=+document.getElementById('cs-s1').value,tsEnd=+document.getElementById('cs-s2').value;
       if(tsEnd<=tsStart){setErr('窗口无效: 结束时间必须大于开始时间');return;}
-      S.cubxPrescan=null;   // 开始拆分后清状态 (面板使命完成, 结果区提供下载)
+      // U11 用户反馈: 面板保持 (可继续选别的窗口拆分), 不再清除 S.cubxPrescan
       setProg('提交拆分...',1);
       var fd=new FormData();fd.append('path',path);
       fd.append('ts_start',tsStart);fd.append('ts_end',tsEnd);
