@@ -1,6 +1,6 @@
 // app.js — 路由引擎 + 模块引导
 // <script type="module" src="js/app.js"> 加载, 其他页面模块后续追加
-import { S, A, sb, fmtTs, sr, setProg, doPI, doI } from './state.js';
+import { S, A, sb, fmtTs, sr, setProg, doPI, doI } from './state.js?v=20260813';  // 缓存破坏: U11 大包拖拽暂存分支
 
 // ── Re-expose to window for backwards-compat with remaining inline reg() callbacks ──
 // (逐步迁移各页面模块后删除)

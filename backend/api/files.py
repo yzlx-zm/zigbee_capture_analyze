@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -76,6 +78,42 @@ async def cubx_prescan(path: str = Form(...)):
         return _cs.prescan_cubx(path)
     except Exception as e:
         return JSONResponse({"error": f"预扫失败: {e}"}, 500)
+
+
+_CUBX_STAGE_DIR = os.path.join(tempfile.gettempdir(), "cubx_stage")
+
+
+@router.post("/cubx/upload-stage")
+async def cubx_upload_stage(file: UploadFile = File(...)):
+    """U11: 大 cubx 上传暂存 (拖拽路径) — 保存到暂存目录 + 预扫, 返回 {path, prescan}.
+
+    暂存文件不随导入完成删除, 由下次 stage 时清理旧文件 (容量控制).
+    后续 split 或 local-cubx 导入均以返回的 path 为输入.
+    """
+    fname = getattr(file, "filename", "stage.cubx")
+    if not fname.lower().endswith(".cubx"):
+        return JSONResponse({"error": "仅支持 .cubx 文件"}, 400)
+    os.makedirs(_CUBX_STAGE_DIR, exist_ok=True)
+    # 容量控制: 清理上次暂存 (只保留本次)
+    for old in Path(_CUBX_STAGE_DIR).glob("*.cubx"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    staged = os.path.join(_CUBX_STAGE_DIR, f"{uuid.uuid4().hex[:8]}_{fname}")
+    try:
+        with open(staged, "wb") as out:
+            while data := await file.read(1024 * 1024):
+                out.write(data)
+        from .. import cubx_splitter as _cs
+        prescan = _cs.prescan_cubx(staged)
+        return {"path": staged, "prescan": prescan}
+    except Exception as e:
+        try:
+            os.unlink(staged)
+        except OSError:
+            pass
+        return JSONResponse({"error": f"暂存失败: {e}"}, 500)
 
 
 @router.post("/cubx/split")

@@ -95,6 +95,17 @@ reg('import',function(){
   });
 
   // ── U11: 大 cubx 时间窗拆分导入 (预扫 → 选窗 → 拆分 → 自动导入) ──
+  // 拖拽/文件选择大包入口 (state.js doPI 调用): 上传暂存 + 预扫 → 面板
+  window._stageCubx=function(file, fname){
+    setProg('上传大包暂存中 ('+Math.round(file.size/1048576)+'MB)...', 5);
+    var fd=new FormData();fd.append('file',file);
+    fetch('/api/cubx/upload-stage',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
+      if(d&&d.path&&d.prescan){
+        setProg('',0);
+        showPrescanPanel(d.prescan,d.path,fname);
+      }else{setProg('');setErr((d&&d.error)||'暂存失败');}
+    }).catch(function(e){setErr('暂存失败: '+e.message);});
+  };
   function fmtTsWin(ts){ var d=new Date(ts*1000);
     return (d.getMonth()+1)+'-'+d.getDate()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0'); }
   function importLocalCubx(path, fname){
