@@ -66,7 +66,10 @@ reg('tl', function(){
   var tlPage=1,tlLimit=200,tlTotal=0,tlCaptureStart=null,tlCaptureEnd=null;
   var tlPendingJump=null;  // 待定位帧 (APS Ack 配对跳转; search 完成后消费)
 
-  function tlFmtTs(ts){var d=new Date(ts*1000);return d.toISOString().substr(11,12);}
+  // ⚠️ 时区修复 (08-13 用户反馈: 时间线与实际抓包差 8 小时):
+  // 曾用 toISOString() = UTC; 抓包/导入页为本地时间 (+8) → 统一本地时区
+  function tlFmtTs(ts){var d=new Date(ts*1000);
+    return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');}
 
   // S.topoT0/T1 → 绝对时间戳 (Unix sec): 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)
   // ⚠️ 修复 (U5): 此前字符串格式直接 new Date(str*1000)=NaN → 时间下拉变全零
@@ -78,7 +81,8 @@ reg('tl', function(){
     var h=parseInt(parts[0]),m=parseInt(parts[1]),s=parseInt(parts[2])||0;
     if(isNaN(h)||isNaN(m))return null;
     var d=new Date(tlCaptureStart*1000);
-    return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m,s)/1000;
+    // 时区修复 (08-13): 输入为本地时间 → 本地 Date 构建 epoch (曾 Date.UTC 偏 8h)
+    return new Date(d.getFullYear(),d.getMonth(),d.getDate(),h,m,s).getTime()/1000;
   }
 
   function tlGetTimeFilter(){
@@ -283,8 +287,8 @@ reg('tl', function(){
     document.getElementById('tl-type').value='';
     if(tlCaptureStart&&tlCaptureEnd){
       var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
-      document.getElementById('tl-h0').value=csd.getUTCHours();document.getElementById('tl-m0').value=csd.getUTCMinutes();document.getElementById('tl-s0').value=csd.getUTCSeconds();
-      document.getElementById('tl-h1').value=ced.getUTCHours();document.getElementById('tl-m1').value=ced.getUTCMinutes();document.getElementById('tl-s1').value=ced.getUTCSeconds();
+      document.getElementById('tl-h0').value=csd.getHours();document.getElementById('tl-m0').value=csd.getMinutes();document.getElementById('tl-s0').value=csd.getSeconds();
+      document.getElementById('tl-h1').value=ced.getHours();document.getElementById('tl-m1').value=ced.getMinutes();document.getElementById('tl-s1').value=ced.getSeconds();
     }
     document.getElementById('tl-stat').textContent='🔍 帧 #'+peerId+' 不在当前过滤内, 已清除过滤定位';
     tlPage=1; tlPendingJump=peerId; search();
@@ -713,8 +717,8 @@ reg('tl', function(){
   document.getElementById('tl-tclear').addEventListener('click',function(){
     if(tlCaptureStart&&tlCaptureEnd){
       var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
-      document.getElementById('tl-h0').value=csd.getUTCHours();document.getElementById('tl-m0').value=csd.getUTCMinutes();document.getElementById('tl-s0').value=csd.getUTCSeconds();
-      document.getElementById('tl-h1').value=ced.getUTCHours();document.getElementById('tl-m1').value=ced.getUTCMinutes();document.getElementById('tl-s1').value=ced.getUTCSeconds();
+      document.getElementById('tl-h0').value=csd.getHours();document.getElementById('tl-m0').value=csd.getMinutes();document.getElementById('tl-s0').value=csd.getSeconds();
+      document.getElementById('tl-h1').value=ced.getHours();document.getElementById('tl-m1').value=ced.getMinutes();document.getElementById('tl-s1').value=ced.getSeconds();
     } else {
       document.getElementById('tl-h0').value='00';document.getElementById('tl-m0').value='00';document.getElementById('tl-s0').value='00';
       document.getElementById('tl-h1').value='00';document.getElementById('tl-m1').value='00';document.getElementById('tl-s1').value='00';
@@ -737,12 +741,12 @@ reg('tl', function(){
       var dur=tlCaptureEnd-tlCaptureStart;
       var durStr='';if(dur<60)durStr=dur.toFixed(0)+'秒';else if(dur<3600)durStr=(dur/60).toFixed(1)+'分钟';else durStr=(dur/3600).toFixed(1)+'小时';
       document.getElementById('tl-capture-info').textContent='抓包: '+tlFmtTs(tlCaptureStart)+' ~ '+tlFmtTs(tlCaptureEnd)+' ('+durStr+')';
-      var capH=capStartD.getUTCHours();var capM=capStartD.getUTCMinutes();var capS=capStartD.getUTCSeconds();
-      var endH=capEndD.getUTCHours();var endM=capEndD.getUTCMinutes();var endS=capEndD.getUTCSeconds();
+      var capH=capStartD.getHours();var capM=capStartD.getMinutes();var capS=capStartD.getSeconds();
+      var endH=capEndD.getHours();var endM=capEndD.getMinutes();var endS=capEndD.getSeconds();
       // 联动时间窗口同步 (延迟到此回调: tlCaptureStart 已就绪, tlToTs 可转换字符串格式)
       var t0n=tlToTs(S.topoT0), t1n=tlToTs(S.topoT1);
-      if(t0n!=null){var d0n=new Date(t0n*1000);S.tlTs0H=String(d0n.getUTCHours());S.tlTs0M=String(d0n.getUTCMinutes());S.tlTs0S=String(d0n.getUTCSeconds());S.tlHasSearched=true;}
-      if(t1n!=null){var d1n=new Date(t1n*1000);S.tlTs1H=String(d1n.getUTCHours());S.tlTs1M=String(d1n.getUTCMinutes());S.tlTs1S=String(d1n.getUTCSeconds());S.tlHasSearched=true;}
+      if(t0n!=null){var d0n=new Date(t0n*1000);S.tlTs0H=String(d0n.getHours());S.tlTs0M=String(d0n.getMinutes());S.tlTs0S=String(d0n.getSeconds());S.tlHasSearched=true;}
+      if(t1n!=null){var d1n=new Date(t1n*1000);S.tlTs1H=String(d1n.getHours());S.tlTs1M=String(d1n.getMinutes());S.tlTs1S=String(d1n.getSeconds());S.tlHasSearched=true;}
       // Detect if saved time values are invalid (from old offset semantics):
       // if saved start clock is more than 1h before capture start or after capture end, reset
       var savedSec0=parseInt(S.tlTs0H||'0')*3600+parseInt(S.tlTs0M||'0')*60+parseInt(S.tlTs0S||'0');

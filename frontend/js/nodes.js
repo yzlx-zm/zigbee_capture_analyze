@@ -2,7 +2,8 @@
 import { S, A } from './state.js';
 
 function fmtTs(ts){ if(ts==null)return '-'; var d=new Date(ts*1000);
-  return d.getUTCHours().toString().padStart(2,'0')+':'+d.getUTCMinutes().toString().padStart(2,'0')+':'+d.getUTCSeconds().toString().padStart(2,'0'); }
+  // 时区修复 (08-13): 曾 getUTCHours (UTC 偏 8h) — 统一本地时间 (与抓包一致)
+  return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0'); }
 // EUI64 16 位 hex → XX:XX:XX:XX:XX:XX:XX:XX (与 diag.js L1-4 卡片一致)
 function fmtEui64(e){ if(!e)return null; if(e.length===16){var r=[];for(var i=0;i<16;i+=2)r.push(e.slice(i,i+2));return r.join(':');} return e; }
 function devTypeName(t){ return {coordinator:'协调器',router:'路由',end_device:'终端',unknown:'未知'}[t]||t||'未知'; }

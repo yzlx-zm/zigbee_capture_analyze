@@ -119,4 +119,5 @@ document.addEventListener('click',function(e){
     location.hash='import';
   }
 });
-export function fmtTs(ts){var d=new Date(ts*1000);return d.getUTCHours().toString().padStart(2,'0')+':'+d.getUTCMinutes().toString().padStart(2,'0')+':'+d.getUTCSeconds().toString().padStart(2,'0');}
+// ⚠️ 时区修复 (08-13): 曾 getUTCHours (UTC 偏 8h); 抓包/导入页为本地时间 → 统一本地
+export function fmtTs(ts){var d=new Date(ts*1000);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');}

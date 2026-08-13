@@ -538,8 +538,8 @@ reg('topo', function(){
         var p=paths[i];
         var icon=p.is_current?'●':'◌';
         var color=p.is_current?'#7c3aed':'#94a3b8';
-        var ts0=new Date(p.first_ts*1000).toISOString().substr(11,8);
-        var ts1=new Date(p.last_ts*1000).toISOString().substr(11,8);
+        var ts0=new Date(p.first_ts*1000);ts0=String(ts0.getHours()).padStart(2,'0')+':'+String(ts0.getMinutes()).padStart(2,'0')+':'+String(ts0.getSeconds()).padStart(2,'0');
+        var ts1=new Date(p.last_ts*1000);ts1=String(ts1.getHours()).padStart(2,'0')+':'+String(ts1.getMinutes()).padStart(2,'0')+':'+String(ts1.getSeconds()).padStart(2,'0');
         var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
         h+='<div class="path-row'+(p.is_current?' text-strong':'')+'" data-pidx="'+i+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
           +'<span class="p-icon" style="color:'+color+'">'+icon+'</span>'
@@ -560,7 +560,7 @@ reg('topo', function(){
       var maxP=Math.min(probes.length,10);
       for(var i=0;i<maxP;i++){
         var pp=probes[i];
-        var ts0=new Date(pp.first_ts*1000).toISOString().substr(11,8);
+        var ts0=new Date(pp.first_ts*1000);ts0=String(ts0.getHours()).padStart(2,'0')+':'+String(ts0.getMinutes()).padStart(2,'0')+':'+String(ts0.getSeconds()).padStart(2,'0');
         h+='<div class="path-row" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
           +'<span class="p-icon text-info">→</span>'
           +'<span class="text-info">'+pp.path_str+'</span>'
@@ -577,7 +577,7 @@ reg('topo', function(){
         +failures.length+'处</div>';
       for(var i=0;i<failures.length;i++){
         var f=failures[i];
-        var ts=new Date(f.timestamp*1000).toISOString().substr(11,8);
+        var ts=new Date(f.timestamp*1000);ts=String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0')+':'+String(ts.getSeconds()).padStart(2,'0');
         h+='<div class="path-row">'
           +'<span class="p-icon text-danger">✕</span>'
           +'<span class="text-danger">'+f.path_str+'</span>'
@@ -647,7 +647,7 @@ reg('topo', function(){
         var ic=nb.in_cost||0; var oc=nb.out_cost||0;
         var icColor=ic<=1?'#16a34a':ic<=3?'#d97706':'#dc2626';
         var ocColor=oc<=1?'#16a34a':oc<=3?'#d97706':'#dc2626';
-        var ts=new Date((nb.last_seen_ts||0)*1000).toISOString().substr(11,8);
+        var ts=new Date((nb.last_seen_ts||0)*1000);ts=String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0')+':'+String(ts.getSeconds()).padStart(2,'0');
         th+='<tr onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';S.topoT0=null;S.topoT1=null;location.hash=\'tl\'">'
           +'<td>0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'</td>'
           +'<td class="text-strong" style="color:'+icColor+'">'+ic+'</td>'
@@ -743,7 +743,7 @@ reg('topo', function(){
   });
 
   // ═══ 时间滑块 (单滑块 = 窗口中心) ═══
-  function fmtTs(ts){var d=new Date(ts*1000);return d.getUTCHours().toString().padStart(2,'0')+':'+d.getUTCMinutes().toString().padStart(2,'0')+':'+d.getUTCSeconds().toString().padStart(2,'0');}
+  function fmtTs(ts){var d=new Date(ts*1000);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');}
   function sliderToTs(val){return tsStart+(tsEnd-tsStart)*(val/1000);}
   function tsToSlider(ts){return Math.round((ts-tsStart)/(tsEnd-tsStart)*1000);}
 
@@ -882,7 +882,8 @@ reg('topo', function(){
     var h=parseInt(parts[0]),m=parseInt(parts[1]),s=parseInt(parts[2])||0;
     if(isNaN(h)||isNaN(m))return null;
     var d=new Date(baseTs*1000);
-    return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m,s)/1000;
+    // 时区修复 (08-13): 输入为本地时间 → 本地 Date 构建 (曾 Date.UTC 偏 8h)
+    return new Date(d.getFullYear(),d.getMonth(),d.getDate(),h,m,s).getTime()/1000;
   }
 
   // 时间线时间窗口 → 拓扑窗口 UI (档位 + 滑块中心 + 标签)
