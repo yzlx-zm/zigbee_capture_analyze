@@ -251,20 +251,21 @@ def get_nodes():
 
 
 def _parse_clock_time(time_str: str, base_ts: float) -> float | None:
-    """将 HH:MM:SS 时钟时间解析为绝对 Unix 时间戳 (UTC)。
-    基于抓包第一帧的 UTC 日期，将时钟时间映射到当天 UTC 绝对时间。
+    """将 HH:MM:SS 时钟时间解析为绝对 Unix 时间戳 (**本地时间**)。
+
+    ⚠️ 时区修复 (08-13): 曾按 UTC 日期映射 (utcfromtimestamp + timegm) —
+    前端时间线修复为本地时间后, 前后端差 8h → 时间过滤全部空结果。
+    现在基于抓包第一帧的**本地**日期映射 (与前端 tlToTs/显示一致)。
     不做跨午夜修正 — 若早于抓包开始则自然包含所有包（无更早数据）。"""
-    import calendar as _cal
     parts = time_str.split(":")
     if len(parts) < 2:
         return None
     h, m = int(parts[0]), int(parts[1])
     s = int(parts[2]) if len(parts) > 2 else 0
     clock_sec = h * 3600 + m * 60 + s
-    base_dt_utc = datetime.utcfromtimestamp(base_ts)
-    midnight_utc = base_dt_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    midnight_ts = _cal.timegm(midnight_utc.timetuple())
-    return midnight_ts + clock_sec
+    base_dt = datetime.fromtimestamp(base_ts)   # 本地时间
+    midnight = base_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight.timestamp() + clock_sec
 
 
 
