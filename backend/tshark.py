@@ -420,6 +420,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "ts": ts, "ch": 0,
         "lqi": None, "rssi": None,   # pcap 无 LQI/RSSI 数据源 (cubx 有) — 占位保持字段全集一致
         "packet_id": packet_id,
+        "frame_len": None,   # cubx 路径提供 (raw 长度); pcap 路径待 P5 (AI 数据集导出)
         "pkt_type": _pkt_type(mac_frame_type, nwk, aps, decrypted),
         "pan_src": mac_src_pan, "pan_dst": mac_dst_pan,
         "mac_src": mac_src, "mac_dst": mac_dst, "mac_seq": mac_seq,
@@ -434,6 +435,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "aps_cluster_name": _aps_cluster_name(aps_profile, aps_cluster),
         "aps_profile": aps_profile,
         "aps_counter": aps_counter,
+        "aps_fcf": None, "aps_security": None,   # cubx 路径提供 (APS FCF 字节); pcap 路径待 P5
         "aps_src_ep": aps_src_ep, "aps_dst_ep": aps_dst_ep,
         "aps_cmd_id": aps_cmd_id,
         "aps_cmd_key_type": aps_cmd_key_type,
@@ -456,6 +458,7 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "zcl_direction": zcl_dir,
         "zcl_seq": zcl_seq,
         "zcl_attr_reads": None,  # pcap 路径占位 — Read Attr Rsp 属性提取待 P5 (cubx 已实现, U9)
+        "zcl_status": None,      # pcap 路径占位 — ZCL 响应 status 待 P5 (L3-2, cubx 已实现)
         "sec_level": sec_level,
         "sec_key": sec_key,
         "sec_key_label": sec_key_label,
@@ -467,10 +470,16 @@ def _frame_to_dict(tf: dict, relay_map: dict[int, list[int]] | None = None) -> d
         "nwk_radius": nwk_radius,
         "nwk_src64": nwk_src64,
         "nwk_security": bool(nwk_secure),
+        # NWK 头细字段 — cubx 路径提供; pcap 路径待 P5 (AI 数据集导出 2026-08-12)
+        "nwk_fcf": None, "nwk_flags": None, "nwk_dst64": None,
+        "nwk_discover_route": None, "nwk_proto_version": None,
+        "nwk_relay_count": None, "nwk_relay_index": None, "nwk_relays": None,
         "mac_fcs_ok": fcs_ok,
         "mac_frame_type": mac_frame_type,
         "link_status_neighbors": link_status_neighbors,
         "route_record_relays": route_record_relays,
+        "route_req": None,   # pcap 路径占位 — Route Request 载荷待 P5 (cubx 已实现)
+        "route_reply": None,   # pcap 路径占位 — Route Reply 载荷待 P5 (cubx 已实现)
         "raw_layers": layers,
     }
 
