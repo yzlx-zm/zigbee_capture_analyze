@@ -774,7 +774,8 @@ async def packet_summary(addr: str = "", pan: str = "",
         if time_start:
             ts_start = _parse_clock_time(time_start, base_ts)
         if time_end:
-            ts_end = _parse_clock_time(time_end, base_ts)
+            # 改进 (08-13): 秒级窗口含末秒小数 (选 09:46:27 应含 09:46:27.xxx)
+            ts_end = _parse_clock_time(time_end, base_ts) + 0.999
     # Collect matching packets
     matched = []
     for p in _packets:
@@ -860,7 +861,8 @@ async def packet_list(addr: str = "", pan: str = "",
         if time_start:
             ts_start = _parse_clock_time(time_start, base_ts)
         if time_end:
-            ts_end = _parse_clock_time(time_end, base_ts)
+            # 改进 (08-13): 秒级窗口含末秒小数
+            ts_end = _parse_clock_time(time_end, base_ts) + 0.999
     # Filter — 保留原始索引用于后续单帧查询
     matched: list[tuple[int, dict]] = []
     for idx, p in enumerate(_packets):
@@ -1205,5 +1207,7 @@ async def packet_detail(pkt_id: int):
         # ZCL 按簇正确解析的命令名 (前端详情 ZCL 层优先使用, 避免前端混合表误标)
         "zcl_cmd_name": p.get("zcl_cmd_name"),
         "aps_cluster_name": p.get("aps_cluster_name"),
+        # U9 改进 (08-13): Read Attr Rsp 属性记录 (详情 ZCL 层展示 厂商/型号 等)
+        "zcl_attr_reads": p.get("zcl_attr_reads"),
         "aps_ack_pair": ack_pair,   # APS Ack 配对 (2026-08-06)
     }

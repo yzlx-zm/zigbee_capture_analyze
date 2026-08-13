@@ -610,11 +610,22 @@ reg('tl', function(){
           // ⚠️ 修复 (U5): 优先用后端按簇解析的命令名 (zcl_defs), 前端混合表兜底 —
           // 此前 0x01 在 Window Covering 簇被误标为 "OTA: Query Next Image"
           var zclCmd=d.zcl_cmd_name||_tlZclCmd(zcl);
-          html+=_tlLayer('ZCL', '#7c3aed', [
+          var zclFields=[
             ['Command', zclCmd],
             ['Direction', dir],
             ['Seq#', zcl['zbee_zcl.cmd.tsn']||'?'],
-          ]);
+          ];
+          // U9 改进 (08-13): Read Attr Rsp 属性记录展示 (厂商/型号等, cubx 路径)
+          var attrs=d.zcl_attr_reads||[];
+          if(attrs.length){
+            zclFields.push(['属性记录', attrs.length+' 项']);
+            for(var ai=0;ai<attrs.length;ai++){var ar=attrs[ai];
+              var nm=ar.attr_id===0x0004?'manufacturer_name':ar.attr_id===0x0005?'model_id':'';
+              var valTxt=ar.status===0?(ar.value!=null?String(ar.value):'(无值)'):'status 0x'+ar.status.toString(16);
+              zclFields.push(['attr 0x'+ar.attr_id.toString(16).toUpperCase().padStart(4,'0')+(nm?' '+nm:''), valTxt]);
+            }
+          }
+          html+=_tlLayer('ZCL', '#7c3aed', zclFields);
         }else if(!d.decrypted&&!isNwkCmd){
           var isZdp=aps&&_tlIsZdp(aps);
           if(!isZdp){

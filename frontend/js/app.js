@@ -10,7 +10,7 @@ window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
 import './topo.js?v=20260813h';  // 缓存破坏: 时区修复 (UTC→本地), 改版递增
 import './import.js?v=20260813g';  // 缓存破坏: U11 时间数字框 + 命名规范, 改版递增
-import './timeline.js?v=20260813i';  // 缓存破坏: 审核修复 (初始空结果), 改版递增
+import './timeline.js?v=20260813j';  // 缓存破坏: 详情 ZCL 属性展示, 改版递增
 import './nodes.js?v=20260813h';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260812c';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
 
