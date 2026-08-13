@@ -11,7 +11,7 @@ import os
 import re
 import sqlite3
 from collections import Counter, defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Iterable
@@ -852,21 +852,45 @@ def _parallel_work_row(row: tuple) -> dict:
                         _W_NWK_KEYS, _W_LINK_KEYS)
 
 
-def _parse_rows_parallel(rows: list[tuple], nwk_keys: list, link_keys: list) -> list[dict]:
+def _parallel_work_chunk(chunk: list) -> list:
+    """worker: 一块候选帧解析 (IPC 按块传输, future 数量可控)"""
+    return [_parallel_work_row(r) for r in chunk]
+
+
+def _parse_rows_parallel(rows: list[tuple], nwk_keys: list, link_keys: list,
+                         progress_cb: Callable[[int, int], None] | None = None) -> list[dict]:
     """候选帧多进程解析; 失败自动回退串行 (主循环兜底, 不丢数据).
 
-    rows 元素 = (idx, raw_bytes, pkt_id, ts, ch, lqi, rssi) — ex.map 保持输入顺序,
-    idx 仅占位不参与解析.
+    rows 元素 = (idx, raw_bytes, pkt_id, ts, ch, lqi, rssi).
+    分块提交 (块=_PARALLEL_CHUNK) + as_completed 块级进度上报 —
+    U11 修复: 此前并行分支无 progress_cb, 大包解析 5.5 分钟进度条静止
+    (进度条卡死根因, 总控实测 2026-08-13).
+    结果按输入顺序重组 (与 ex.map 语义一致).
     """
     try:
         workers = max(2, min(4, os.cpu_count() or 2))
+        chunks = [rows[i:i + _PARALLEL_CHUNK] for i in range(0, len(rows), _PARALLEL_CHUNK)]
+        n_chunks = len(chunks)
+        results: list[list] = [[] for _ in chunks]
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_parallel_worker,
                                  initargs=(nwk_keys, link_keys)) as ex:
-            return list(ex.map(_parallel_work_row, rows, chunksize=_PARALLEL_CHUNK))
+            futures = {ex.submit(_parallel_work_chunk, c): i for i, c in enumerate(chunks)}
+            done = 0
+            for fut in as_completed(futures):
+                i = futures[fut]
+                results[i] = fut.result()
+                done += 1
+                if progress_cb and (done % 2 == 0 or done == n_chunks):
+                    progress_cb(done, n_chunks)
+        return [p for chunk in results for p in chunk]
     except Exception:
         # 并行失败 (spawn/pickle/环境) → 串行回退, 行为与旧版完全一致
-        return [_raw_to_dict(raw, pkt_id, ts, ch, lqi, rssi, nwk_keys, link_keys)
-                for _idx, raw, pkt_id, ts, ch, lqi, rssi in rows]
+        out: list[dict] = []
+        for i, (_idx, raw, pkt_id, ts, ch, lqi, rssi) in enumerate(rows):
+            out.append(_raw_to_dict(raw, pkt_id, ts, ch, lqi, rssi, nwk_keys, link_keys))
+            if progress_cb and (i % 500 == 499 or i == len(rows) - 1):
+                progress_cb(i + 1, len(rows))
+        return out
 
 
 # ── Public API ──
@@ -913,11 +937,24 @@ def parse_cubx(path: str, include_mac_frames: bool = False,
                 continue
             cand.append((idx, raw_b, int(pkt_id), float(ts), int(ch), int(lqi), int(rssi)))
         # 候选帧解析: 大包多进程并行, 小包串行 (进程启动开销不值得)
+        # U11: 解析阶段占大包总耗时主体 (76MB 333.6s 基准) — 解析报 [0, 90%×total_rows],
+        # 组装循环报 [90%, 100%] (0.9 系数衔接, 进度不回退)
         if len(cand) >= _PARALLEL_MIN_ROWS:
-            parsed = {c[0]: pkt for c, pkt in zip(cand, _parse_rows_parallel(cand, nwk_keys, link_keys))}
+            if progress_cb:
+                def _pcb(done: int, total: int) -> None:
+                    progress_cb(int(done / total * total_rows * 0.9), total_rows)
+                parsed = {c[0]: pkt for c, pkt in zip(
+                    cand, _parse_rows_parallel(cand, nwk_keys, link_keys, progress_cb=_pcb))}
+            else:
+                parsed = {c[0]: pkt for c, pkt in zip(
+                    cand, _parse_rows_parallel(cand, nwk_keys, link_keys))}
         else:
-            parsed = {c[0]: _raw_to_dict(c[1], c[2], c[3], c[4], c[5], c[6], nwk_keys, link_keys)
-                      for c in cand}
+            parsed = {}
+            for i, c in enumerate(cand):
+                parsed[c[0]] = _raw_to_dict(c[1], c[2], c[3], c[4], c[5], c[6],
+                                            nwk_keys, link_keys)
+                if progress_cb and (i % 500 == 499 or i == len(cand) - 1):
+                    progress_cb(int((i + 1) / len(cand) * total_rows * 0.9), total_rows)
         packets: list[dict] = []
         for idx, row in enumerate(rows):
             pkt = parsed.get(idx)
@@ -928,9 +965,10 @@ def parse_cubx(path: str, include_mac_frames: bool = False,
             is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None)
             if is_nwk or (include_mac_frames and is_mac_relevant):
                 packets.append(pkt)
-            # 进度上报 (每 500 包 + 末包, 避免每包回调开销)
+            # 进度上报 (每 500 包 + 末包, 避免每包回调开销; U11: 组装阶段占
+            # [90%, 100%], 与解析阶段 0.9 系数衔接)
             if progress_cb and (idx % 500 == 499 or idx == total_rows - 1):
-                progress_cb(idx + 1, total_rows)
+                progress_cb(int(total_rows * (0.9 + 0.1 * (idx + 1) / total_rows)), total_rows)
 
         packets.sort(key=lambda p: p["ts"])
         return packets, sync_result["added"], sync_result["total"]

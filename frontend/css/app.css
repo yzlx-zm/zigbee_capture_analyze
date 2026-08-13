@@ -418,6 +418,13 @@ input.mono, select.mono { font-family: var(--font-mono); }
 /* 11.6 节点页 */
 .nodes-search { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 .nodes-table-wrap { max-height: calc(100vh - 200px); overflow: auto; }
+/* U11: 大包时间窗拆分 — 帧密度直方图 + 双滑块 */
+.cs-hist { margin: 8px 0; }
+.cs-hist-wrap { display: flex; align-items: flex-end; gap: 1px; height: 72px;
+  background: #f8fafc; border: 1px solid var(--c-border); padding: 2px; }
+.cs-bar { flex: 1; background: var(--c-primary); min-width: 2px; opacity: 0.75; }
+.cs-sliders { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.cs-range { width: 100%; }
 /* U9: 展开详情行视觉区分 (用户反馈边界模糊 08-12) — 浅蓝底 + 上下强边框 */
 .nd-detail td { background: var(--c-primary-bg); border-top: 1px solid var(--c-border-strong);
   border-bottom: 1px solid var(--c-border-strong); }

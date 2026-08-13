@@ -66,6 +66,50 @@ def _start_import(fn) -> dict:
     return {"ok": True, "task_id": task_id}
 
 
+@router.post("/cubx/prescan")
+async def cubx_prescan(path: str = Form(...)):
+    """U11: .cubx 预扫 (秒级元数据, 不解析 Raw) — 大包时间窗拆分流程第一步"""
+    if not os.path.exists(path):
+        return JSONResponse({"error": f"路径不存在: {path}"}, 400)
+    try:
+        from .. import cubx_splitter as _cs
+        return _cs.prescan_cubx(path)
+    except Exception as e:
+        return JSONResponse({"error": f"预扫失败: {e}"}, 500)
+
+
+@router.post("/cubx/split")
+async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
+                     ts_end: float = Form(...)):
+    """U11: 时间窗拆分 → 自动导入拆分产物 (一体流程).
+
+    拆分走后台任务 (复用 _start_import 互斥); done 后同线程直接调用
+    _run_cubx_local 导入拆分产物 (拆产物 <30MB 走现有直接导入, 不递归拆分).
+    """
+    if not os.path.exists(path):
+        return JSONResponse({"error": f"路径不存在: {path}"}, 400)
+    if ts_end <= ts_start:
+        return JSONResponse({"error": "时间窗无效: ts_end 必须大于 ts_start"}, 400)
+
+    def _run(task_id: str) -> dict:
+        from .. import cubx_splitter as _cs
+        _task_update(task_id, stage="时间窗拆分", percent=0)
+        try:
+            r = _cs.split_cubx(path, ts_start, ts_end)
+        except Exception as e:
+            raise RuntimeError(f"拆分失败: {e}") from e
+        _task_update(task_id, stage="拆分完成, 导入产物", percent=40,
+                     result={"out_frames": r["out_frames"], "out_path": r["out_path"]})
+        # 同线程导入拆分产物 (互斥已在 _start_import 持有; _run_cubx_local 的
+        # progress_cb 会覆盖 percent 区间, 前端按 stage 文本区分阶段)
+        import_result = _run_cubx_local(task_id, r["out_path"])
+        import_result["split_out_frames"] = r["out_frames"]
+        import_result["split_out_path"] = r["out_path"]
+        return import_result
+
+    return _start_import(_run)
+
+
 @router.get("/import/parser-verify")
 async def parser_verify_status():
     """解析正确性校验报告 (P6) — 导入后自动跑, 前端切页恢复用"""

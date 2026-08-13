@@ -22,6 +22,20 @@ reg('import',function(){
         +'<div id="pkey-body" class="t-11 hidden"></div>'
       +'</div>'
     +'</div>'
+    +'<div id="cubx-prescan" class="card hidden">'
+      +'<h4>⏱ 大包时间窗拆分导入 (U11)</h4>'
+      +'<p id="cs-info" class="t-11"></p>'
+      +'<div id="cs-hist" class="cs-hist"></div>'
+      +'<div class="cs-sliders">'
+        +'<input type="range" id="cs-s1" class="cs-range">'
+        +'<input type="range" id="cs-s2" class="cs-range">'
+      +'</div>'
+      +'<p id="cs-win" class="t-11 text-strong"></p>'
+      +'<div class="mt-1">'
+        +'<button class="btn btn-p" id="cs-go">拆分并导入</button> '
+        +'<button class="btn btn-o" id="cs-cancel">取消 (整包导入)</button>'
+      +'</div>'
+    +'</div>'
     +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span><div class="bar" id="pbar"><div class="bar-fill" id="pfill"></div></div></div></div>';
   h+='<div class="card hidden" id="sout"><h3>📊 导入结果</h3><div id="sdiv"></div>'
     +'<button class="btn btn-p mt-2" id="gotopo">查看拓扑 →</button> '
@@ -72,8 +86,69 @@ reg('import',function(){
   document.getElementById('plpath').addEventListener('click',function(){
     var p=prompt('pcap/cubx 文件路径 (逗号分隔多个):');if(!p)return;
     var isCubx=p.toLowerCase().endsWith('.cubx');
-    importPath(isCubx?'/api/import/local-cubx':'/api/import/local-pcap',isCubx?'path':'paths',p,p.split(/[\\\\/]/).pop());
+    if(isCubx){
+      // U11: cubx 先预扫 — >30MB 进时间窗拆分面板, 小文件直接导入
+      importLocalCubx(p,p.split(/[\\\\/]/).pop());
+    }else{
+      importPath('/api/import/local-pcap','paths',p,p.split(/[\\\\/]/).pop());
+    }
   });
+
+  // ── U11: 大 cubx 时间窗拆分导入 (预扫 → 选窗 → 拆分 → 自动导入) ──
+  function fmtTsWin(ts){ var d=new Date(ts*1000);
+    return (d.getMonth()+1)+'-'+d.getDate()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0'); }
+  function importLocalCubx(path, fname){
+    setProg('预扫描中...', 5);
+    var fd=new FormData();fd.append('path',path);
+    fetch('/api/cubx/prescan',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
+      setProg('',0);
+      if(d.error){setErr(d.error);return;}
+      if(d.file_mb>30){showPrescanPanel(d,path,fname);}
+      else{importPath('/api/import/local-cubx','path',path,fname);}
+    }).catch(function(e){setErr('预扫失败: '+e.message);});
+  }
+  function showPrescanPanel(d, path, fname){
+    var panel=document.getElementById('cubx-prescan');
+    // 概览
+    document.getElementById('cs-info').innerHTML='文件 '+d.file_mb+'MB · 物理帧 '+d.total_frames.toLocaleString()
+      +' · 时长 '+Math.round(d.duration_s/60)+' 分钟 · 信道 '+Object.keys(d.channels).join('/')
+      +(d.lqi?(' · LQI '+d.lqi.avg):'')+(d.rssi?(' · RSSI '+d.rssi.avg+'dBm'):'');
+    // 直方图 (60 桶 div)
+    var maxC=1;d.histogram.forEach(function(h){if(h.count>maxC)maxC=h.count;});
+    document.getElementById('cs-hist').innerHTML='<div class="cs-hist-wrap">'+d.histogram.map(function(h){
+      var hgt=Math.max(2,Math.round(h.count/maxC*70));
+      return '<div class="cs-bar" style="height:'+hgt+'px" title="'+fmtTsWin(h.ts_start)+': '+h.count.toLocaleString()+' 帧"></div>';
+    }).join('')+'</div>';
+    // 双滑块 (ts_start/ts_end ∈ [ts_first, ts_last])
+    var s1=document.getElementById('cs-s1'),s2=document.getElementById('cs-s2');
+    s1.min=s2.min=d.ts_first; s1.max=s2.max=d.ts_last;
+    s1.value=d.ts_first; s2.value=d.ts_last;
+    var lbl=document.getElementById('cs-win');
+    function updWin(){ lbl.textContent='窗口: '+fmtTsWin(+s1.value)+' → '+fmtTsWin(+s2.value)
+      +' ('+Math.round((+s2.value-+s1.value)/60)+' 分钟)'; }
+    s1.oninput=s2.oninput=updWin; updWin();
+    panel.classList.remove('hidden');
+    panel.dataset.path=path; panel.dataset.fname=fname;
+  }
+  var csPanel=document.getElementById('cubx-prescan');
+  if(csPanel){
+    document.getElementById('cs-go').addEventListener('click',function(){
+      var path=csPanel.dataset.path,fname=csPanel.dataset.fname;
+      var tsStart=+document.getElementById('cs-s1').value,tsEnd=+document.getElementById('cs-s2').value;
+      if(tsEnd<=tsStart){setErr('窗口无效: 结束时间必须大于开始时间');return;}
+      setProg('提交拆分...',1);
+      var fd=new FormData();fd.append('path',path);
+      fd.append('ts_start',tsStart);fd.append('ts_end',tsEnd);
+      fetch('/api/cubx/split',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
+        if(d&&d.ok&&d.task_id){pollImport(d.task_id,fname);}
+        else{setProg('');setErr((d&&d.error)||'拆分失败');}
+      }).catch(function(e){setErr('网络错误: '+e.message);});
+    });
+    document.getElementById('cs-cancel').addEventListener('click',function(){
+      csPanel.classList.add('hidden');
+      importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
+    });
+  }
 
   // Key panel toggle
   document.getElementById('pkey-toggle').addEventListener('click',function(){
