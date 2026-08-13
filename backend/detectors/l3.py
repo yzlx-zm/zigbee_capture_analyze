@@ -878,19 +878,58 @@ L311_DENSE_S = 30.0        # 密集重试间隔阈值
 L311_RESP_WINDOW_S = 10.0  # 命令后成功响应窗口 (Read Rsp 0x01 / Write Rsp 0x04 status=0 / Default Rsp 0x0B status=0)
 
 
-def detect_l3_11(packets: list[dict]) -> dict:
-    """应用层重传频繁检测 (文档 L3-11.md v1.0).
+def _l311_payload_key(p: dict) -> str | None:
+    """命令 payload 属性级 key (自审修正 2026-08-13): 批量配置 (不同属性) ≠ 重传.
 
-    规则 (2026-08-12):
-      - R1 : 协调器→设备 的同一命令 (同 cluster + 同 cmd_id) 出现 ≥3 个不同
-            APS counter 轮次 → 应用层重传频繁 (新 counter = 应用层重试, 官方:
-            应用可自行重试, 社区案例 23 条)
-      - 与 L3-1 区分: 同 counter 多帧 = 栈重传 (L3-1); 新 counter = 应用层 (L3-11)
-      - 交叉: 伴随无 ack (L3-1) → 命令持续失败; 伴随错误响应 (L3-2) → 被拒仍重试
-      素材实证 (2026-08-12): test2 0x89F9 16 轮 (25s 周期) / 第七次 0xCE77 12 轮密集;
-      0xC1F5 ×32 单 counter = 栈重传 (L3-1 范畴, 不误报)
+    去 ZCL tsn (每次发送递增) — 重传帧 payload 其余字节应相同;
+    pcap 路径无 aps_payload_hex → None (帧/轮比守卫兜底).
     """
-    rounds: dict[tuple, dict] = {}
+    pl = p.get("aps_payload_hex")
+    if not pl:
+        return None
+    try:
+        raw = bytes.fromhex(pl)
+    except ValueError:
+        return pl
+    if len(raw) < 2:
+        return pl
+    fcf = raw[0]
+    off = 1 + (2 if fcf & 0x04 else 0)  # tsn 位置 (厂商码 2B 时后移)
+    if off >= len(raw):
+        return pl
+    key = raw[:off] + raw[off + 1:]  # 去掉 tsn 字节
+    return key.hex()
+
+
+def detect_l3_11(packets: list[dict]) -> dict:
+    """应用层重传频繁检测 (文档 L3-11.md v1.1).
+
+    规则 (2026-08-13 自审重写):
+      - R1 : 协调器→设备 的**同一命令** (同 cluster + 同 cmd_id + 同 payload) 出现
+            ≥3 个不同 APS counter 轮次 → 应用层重传频繁
+      - 与 L3-1 区分: 同 counter 多帧 = 栈重传 (L3-1); 新 counter = 应用层 (L3-11)
+      - ⚠️ 自审修正 (2026-08-13, 初版严重误报 12 台):
+        ① 批量配置排除: 不同属性 (payload 不同) = 配置流程, 非重传 —
+           第七次 0xCE77 12 轮全不同属性 / 中继 838D 15 组合全批量 (素材实证)
+        ② 轮询排除: 设备有成功响应且帧/轮 <2 (无栈重传迹象) = 正常轮询 —
+           test2 0xBC49 Read 28.3s/轮 + 23 帧 Read Rsp (素材实证)
+        ③ 帧/轮比守卫: 每轮多帧 (同 counter 栈重传) = 真失败重试风暴 —
+           test2 0x89F9 290帧/16轮 = 18 帧/轮 (真重传); pcap 无 payload 时属性级
+           分组不可用, 用帧/轮比替代 (文档盲区标注)
+      素材实证 (修正后): 真重传仅 test2 0x89F9 (16轮/18帧每轮) + 0x77D0 (4轮/11.5);
+      第七次/中继全部为批量配置或轮询 → HEALTHY
+    """
+    # 成功响应集: 设备→协调器 的 0x01 Read Rsp / 0x04 Write Rsp status=0 / 0x0B Default Rsp status=0
+    ok_resp: set[tuple] = set()
+    for p in packets:
+        if p.get("nwk_src") in (None, 0) or p.get("zcl_frame_type") != 0:
+            continue
+        cid = p.get("zcl_cmd_id")
+        if cid == 0x01 or (cid in (0x04, 0x0B) and p.get("zcl_status") == 0):
+            ok_resp.add((p.get("nwk_src"), p.get("aps_cluster")))
+
+    # 分组: cubx 有 payload → 属性级 (payload 去 tsn 作 key); pcap 无 payload → 命令级
+    groups: dict[tuple, dict] = {}
     for p in packets:
         if p.get("nwk_src") != 0 or p.get("zcl_frame_type") != 0:
             continue
@@ -898,8 +937,8 @@ def detect_l3_11(packets: list[dict]) -> dict:
         dev = p.get("nwk_dst")
         if cid is None or dev is None or dev >= 0xFFF0 or cid in L311_CMD_EXCLUDE:
             continue
-        key = (dev, p.get("aps_cluster"), cid)
-        agg = rounds.setdefault(key, {
+        key = (dev, p.get("aps_cluster"), cid, _l311_payload_key(p))
+        agg = groups.setdefault(key, {
             "device": dev, "cluster": p.get("aps_cluster"),
             "cmd_id": cid, "cmd_name": p.get("zcl_cmd_name"),
             "counters": set(), "frames": 0,
@@ -910,42 +949,40 @@ def detect_l3_11(packets: list[dict]) -> dict:
         agg["frames"] += 1
         agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
 
-    # 成功响应集: 设备→协调器 的 0x01 Read Rsp / 0x04 Write Rsp status=0 / 0x0B Default Rsp status=0
-    ok_resp: set[tuple] = set()
-    for p in packets:
-        if p.get("nwk_src") in (None, 0) or p.get("zcl_frame_type") != 0:
-            continue
-        cid = p.get("zcl_cmd_id")
-        if cid == 0x01 or (cid in (0x04, 0x0B) and p.get("zcl_status") == 0):
-            ok_resp.add((p.get("nwk_src"), p.get("aps_cluster")))
-
     results = []
     evidence = []
-    for (dev, cl, cid), agg in sorted(rounds.items(), key=lambda kv: -len(kv[1]["counters"])):
+    for (dev, cl, cid, pkey), agg in sorted(groups.items(), key=lambda kv: -len(kv[1]["counters"])):
         n_rounds = len(agg["counters"])
         if n_rounds < L311_MIN_ROUNDS:
             continue
         span = agg["last_ts"] - agg["first_ts"]
         per = round(span / max(n_rounds - 1, 1), 1) if n_rounds > 1 else 0.0
-        # ⚠️ 周期轮询排除 (自审修正): 长间隔 (>30s/轮) 且设备有成功响应 = 正常轮询
-        if per > L311_DENSE_S and (dev, cl) in ok_resp:
+        fpr = round(agg["frames"] / n_rounds, 1)  # 帧/轮比 (栈重传证据)
+        has_ok = (dev, cl) in ok_resp
+        # 排除 1: 轮询 — 有成功响应 且 无栈重传迹象 (帧/轮<2)
+        if has_ok and fpr < 2.0:
+            continue
+        # 排除 2: 密集重试也需帧/轮比佐证 (1 帧/轮 + 无响应 = 可能是 pcap 批量配置)
+        #   ⚠️ cubx 路径 pkey 已属性级区分 (批量配置天然拆分); 仅 pcap (pkey=None) 用此守卫
+        if pkey is None and fpr < 2.0 and per > L311_DENSE_S:
             continue
         name = agg["cmd_name"] or f"0x{cid:02X}"
+        conf = "高" if fpr >= 2.0 else "中"
         summary = (f"应用层重传频繁: {name} ×{n_rounds} 轮 (共 {agg['frames']} 帧, "
-                   f"平均 {per}s/轮, {hex(cl or 0)})")
+                   f"{fpr} 帧/轮, 平均 {per}s/轮, {hex(cl or 0)})")
         results.append({"device": dev, "verdict": "L3-11_HIT", "sub_rule": "R1",
-                        "confidence": "中", "cmd_id": cid, "cmd_name": name,
+                        "confidence": conf, "cmd_id": cid, "cmd_name": name,
                         "cluster": cl, "rounds": n_rounds, "frames": agg["frames"],
                         "interval_s": per, "summary": summary})
         evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-11", summary))
 
     ev, ev_total = _cut(evidence)
     if results:
-        verdict, conf = "L3-11_HIT", "中"
+        verdict, conf = "L3-11_HIT", max(r["confidence"] for r in results)
         names = ", ".join(f"0x{r['device']:04X}({r['cmd_name']}×{r['rounds']})" for r in results[:5])
         conclusion = (f"应用层重传频繁: {names} — 命令持续失败且应用层在重试, "
                       "交叉 L3-1 (无确认) / L3-2 (被拒) 定位根因")
-    elif rounds:
+    elif groups:
         verdict, conf = "HEALTHY", "高"
         conclusion = "未发现应用层重传频繁 (命令轮次正常)"
     else:
