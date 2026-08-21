@@ -90,6 +90,70 @@
 产出 UI 问题清单给我, 我再决定怎么拆 tickets 处理。
 ```
 
+### ④ Q&A 对齐后实现窗口 (总控窗口已对齐需求+素材实证+实现要点, 照 ticket 干)
+
+> 2026-08-12 起 (U9 先例): 总控窗口先做"你问我答"需求对齐 + 素材实证 + 实现方案评审,
+> 全部结论固化进 ticket (含实现要点/验证标准/风险), 实现窗口只按 ticket 执行。
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 U9 实现窗口。任务: 节点页精简重构 + 设备信息/控制方式提取。
+
+## 开工前必读 (按序)
+1. .scratch/wayfinder/README.md + .scratch/wayfinder/map.md (流程 + 现状)
+2. **.scratch/wayfinder/issues/U9-节点页重构与设备信息提取.md** (核心: 需求决策 + 素材实证 + 完整实现要点都已写入, 按它实施, 勿自行改需求)
+3. memory/zigbee_l1_scenario_engine.md (场景知识)
+
+## 工作流
+1. 读 U9 ticket, 按"实现要点"逐项实施 (解析层 cubx_reader → 契约 tshark 占位 → 聚合 /api/nodes → 前端 nodes.js + app.js 版本参数 → 回归脚本更新)
+2. 每完成一层立即验证 (ticket "验证标准" 给了命令和数据对账期望值)
+3. 回归按序跑: test_p1_contract → compare_paths → zcl_fcf_regression → tests/test_parser_verify → p2_regression --update → p2_regression
+4. CDP 前端验证 (Edge 9222 已有, 更新 u3-nodes/cdp_test.mjs 后跑)
+5. 收尾 (铁律 7): ticket 补 Resolution + map.md 加条目 + git commit + push (代理 127.0.0.1:7897)
+
+## 铁律
+- 一次会话只解 U9 这一个 ticket; 诚实标注状态 (控制命令统计的真实控制素材等用户提供, 交付时标"待素材")
+- 技术断言要有依据 (协议字段级); 遇阻塞/不确定停下来汇报, 不绕行
+- 后端: python -m backend --port 8720 (代码改动需重启; 当前已有实例在跑, 可让用户重启或自己管理)
+- 素材: C:\Users\Administrator\Desktop\zigbee_capture\设备控制分析-训练素材\ (dimmer 入网包可验证, 控制操作素材等用户另提供)
+```
+
+### ⑤ grilling 对齐后实现窗口 (总控窗口 grilling 对齐 + 实测根因, 照 ticket 干)
+
+> 2026-08-13 起 (U11 先例): 总控窗口 grilling 结构化对齐 (一次一问+推荐答案) +
+> 后台实测根因 (基准测试+代码级定位), 全部固化进 ticket, 实现窗口照 ticket 执行。
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 U11 实现窗口。任务: 大 cubx 时间窗拆分导入一体流程 (预扫→选窗→拆小文件→自动导入)。
+
+## 开工前必读 (按序)
+1. .scratch/wayfinder/README.md + .scratch/wayfinder/map.md (流程 + 现状)
+2. **.scratch/wayfinder/issues/U11-大包时间窗拆分导入.md** (核心: grilling 对齐决策 +
+   实测根因 + cubx schema 实证 + 完整实现要点, 按它实施, 勿自行改需求)
+3. memory/zigbee_l1_scenario_engine.md (场景知识)
+
+## 工作流
+1. 读 U11 ticket, 按"实现要点"逐项实施 (backend/cubx_splitter.py 预扫+拆分 →
+   API prescan/split → 前端 import.js 预扫面板+双滑块 → cubx_reader 并行分支
+   进度上报修复)
+2. 每完成一层立即验证 (ticket "验证标准" 给了数据对账期望值)
+3. 回归按序跑: P1 契约 → zcl_fcf → tests/test_parser_verify → p2_regression
+   (parse 逻辑未动, 预期不变; 若变先停下汇报)
+4. 端到端验证: 85MB 包 选文件→预扫面板→选窗→拆分→自动导入→诊断页可用
+   (进度条全程推进不静止 — 并行分支修复后回归确认)
+5. 收尾 (铁律 7): ticket 补 Resolution + map.md 加条目 + git commit + push
+
+## 铁律
+- 一次会话只解 U11 这一个 ticket; 诚实标注状态 (Ubiqua 打开拆产物由用户验证)
+- 技术断言要有依据; 遇阻塞/不确定停下来汇报, 不绕行
+- 后端: python -m backend --port 8720 (代码改动需重启)
+- 素材: C:\Users\Administrator\Desktop\switch_module\问题整合五-重点\
+  (08-13-中继侧抓包.cubx 85MB / 08130929_26.cubx 76MB, 基准: 76MB 全量解析 333.6s)
+```
+
 ---
 
 ## 三、解析器工程 (抓包数据处理与 Python 解析层) 提示词
@@ -120,6 +184,48 @@
 认领后向我确认方案, 再实施。完成后更新 ticket + map.md + git 提交推送。
 ```
 
+### ③ 总控审查后修复窗口 (总控窗口已实测定位问题, 照清单修)
+
+> 2026-08-12 起 (AI 数据集导出先例): 总控窗口审查新交付 → 实测验证约束 → 发现问题固化修复清单,
+> 修复窗口照清单执行 + 提交入库。
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 AI 数据集导出收尾窗口。任务: 补齐 P1 契约占位 + 提交入库 (总控窗口审查发现, 2026-08-12)。
+
+## 背景
+scripts/export_ai_dataset.py (AI 数据集导出, 新功能) 依赖 backend/cubx_reader.py 新增 11 个字段
+(frame_len/nwk_fcf/nwk_flags/nwk_dst64/nwk_discover_route/nwk_proto_version/nwk_relay_count/
+nwk_relay_index/nwk_relays/aps_fcf/aps_security)。任务说明声称"与 tshark 双路径契约兼容",
+但 backend/tshark.py 的 _frame_to_dict 返回 dict 缺这些字段占位 — 总控实测
+test_p1_contract.py check 1 挂: cubx 独有 14 字段 = 本次 11 + 既有 3 (route_req/route_reply/zcl_status)。
+
+## 任务
+1. tshark.py _frame_to_dict 返回 dict 补 14 个占位字段 (全部 None), 参照既有 zcl_attr_reads 占位先例加 P5 注释:
+   - 本次新增 11: frame_len, nwk_fcf, nwk_flags, nwk_dst64, nwk_discover_route,
+     nwk_proto_version, nwk_relay_count, nwk_relay_index, nwk_relays, aps_fcf, aps_security
+   - 既有 3: route_req, route_reply, zcl_status
+   位置: 返回 dict 内按逻辑分组 (frame_len 靠 packet_id; nwk_* 靠 nwk_radius/nwk_security;
+   aps_* 靠 aps_counter; route_* 靠 nwk 命令字段; zcl_status 靠 zcl_seq)
+2. 验证: 重跑 python .scratch/verification/p1-contract/test_p1_contract.py
+   - 期望: check 1 两个子项 PASS (cubx 独有/ pcap 独有 均为空)
+   - check 3/4/5 仍失败 = 基线既有 (U9 ticket Resolution 已记录), 对照确认没有新增失败项
+   - compare_paths.py 输出对照: 不应出现新的"独有字段"类差异
+3. P2 回归: pcap 路径输出加字段 → 跑 python .scratch/verification/p2_regression.py
+   看快照是否失效; 失效则 --update 并在结果里记录原因 (预期行为: pcap 快照 hash 变化)
+4. 提交入库:
+   - 必提交: backend/tshark.py + backend/cubx_reader.py + scripts/export_ai_dataset.py
+     + docs/ai_dataset_format.md + 相关回归快照
+   - exports/ai/ 样例产物 (约 23K 行数据): 先查 .gitignore 与 git 既有惯例, 不确定问用户
+   - commit message 前缀 feat: (含 AI 数据集导出 + 契约补齐说明), git push (代理 127.0.0.1:7897)
+
+## 铁律
+- 只做以上范围, 不碰其它文件; 一次会话只解这一件事
+- 诚实: 修复后若仍有新增失败, 停下汇报, 不掩盖
+- 遇不确定 (exports 是否入库/快照更新口径) 先问用户, 不自行处置
+```
+
 ---
 
 ## 四、使用说明
@@ -141,6 +247,12 @@
 | U5 | 时间线优化 | UI 工程 |
 | U6 | 导入页优化 | UI 工程 |
 | U7 | 拓扑页优化 | UI 工程 |
+| U8 | 诊断页优化 | UI 工程 |
+| U9 | 节点页重构与设备信息提取 | UI 工程 (Q&A 对齐产出, 2026-08-12) |
+| U10 | AI 数据集导出集成 | UI 工程 (方案待确认, 2026-08-12) |
+| U11 | 大包时间窗拆分导入 | UI 工程 (grilling 对齐产出, 2026-08-13) |
+| U12 | 诊断页学习机制 | UI 工程 (grilling 对齐产出, 2026-08-13) |
+| U13 | 拓扑链路证据重构 | UI 工程 (grilling 对齐产出, 2026-08-21) |
 
 ### 认领纪律
 
