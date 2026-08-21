@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>节点页精简方案对比</title>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --line:#e2e8f0; --th:#f1f5f9; --text:#1e293b; --muted:#64748b; --mono:"Consolas","Courier New",monospace; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 "Microsoft YaHei",sans-serif; padding:24px; }
+  h1 { font-size:18px; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:20px; }
+  .panel { display:flex; gap:16px; align-items:flex-start; }
+  .scheme { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; width:360px; flex:none; }
+  .scheme.reco { border:2px solid #3b82f6; }
+  .tag { display:inline-block; font-size:11px; padding:1px 8px; border-radius:10px; margin-bottom:8px; }
+  .tag.reco { background:#eff6ff; color:#1d4ed8; }
+  .tag.alt { background:#f1f5f9; color:#475569; }
+  .scheme h2 { font-size:14px; margin-bottom:2px; }
+  .scheme .desc { font-size:11px; color:var(--muted); margin-bottom:10px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { background:var(--th); text-align:left; padding:4px 6px; font-weight:600; }
+  td { padding:4px 6px; border-bottom:1px solid var(--line); }
+  .mono { font-family:var(--mono); }
+  .dim { color:var(--muted); }
+  .detail { font-size:11px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:6px; padding:6px 8px; margin-top:4px; color:var(--muted); }
+  .detail b { color:var(--text); font-weight:600; }
+  .btn-mini { font-size:10px; padding:0 6px; border:1px solid var(--line); border-radius:4px; color:var(--muted); background:#fff; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<h1>节点页精简方案对比 — 三选一</h1>
+<div class="sub">数据来自 simon_dimmer 涂鸦入网素材实测: 厂商 _TZE204_dayazmbk / 型号 TS6001 / 端点 1×182, 242×7</div>
+
+<div class="panel">
+
+  <!-- 方案 A: 推荐 -->
+  <div class="scheme reco">
+    <span class="tag reco">方案 A · 推荐</span>
+    <h2>去重叠列 + 厂商/型号</h2>
+    <div class="desc">去掉 PAN/协调器/包类型 (拓扑页都有); 新增厂商+型号列; 行内展开保留全部独有能力</div>
+    <table>
+      <tr><th>地址</th><th>类型</th><th>厂商名</th><th>型号</th><th>seen</th><th></th></tr>
+      <tr><td class="mono">0A11</td><td><span class="dot" style="background:#16a34a"></span>终端</td><td class="mono dim">_TZE204_dayazmbk</td><td class="mono">TS6001</td><td>182</td><td><button class="btn-mini">🎯</button></td></tr>
+      <tr><td colspan="6">
+        <div class="detail">
+          <b>EUI64:</b> A4:C1:38:AA:BB:CC:DD:EE &nbsp; <b>LQI</b> 185(150~210) &nbsp; <b>RSSI</b> -62 dBm<br>
+          <b>首见</b> 00:01:23 · <b>末见</b> 02:45:10<br>
+          <b>帧计数:</b> OnOff:120 · LevelCtrl:22 · Basic:8<br>
+          <b>端点:</b> 1×182 · 242×7<br>
+          <b>控制命令:</b> 0xef00·cmd11 ×22 (Client→Server) · cmd2 ×20 (Server→Client)<br>
+          <b>邻居:</b> 0A22 (双向) · 0A33 (单向 <span style="color:#b45309">WEAK</span>)
+        </div>
+      </td></tr>
+      <tr><td class="mono">0B22</td><td><span class="dot" style="background:#3b82f6"></span>路由</td><td class="mono dim">—</td><td class="mono dim">—</td><td>45</td><td><button class="btn-mini">🎯</button></td></tr>
+    </table>
+  </div>
+
+  <!-- 方案 B: 更精简 -->
+  <div class="scheme">
+    <span class="tag alt">方案 B · 更精简</span>
+    <h2>只留定位+新列</h2>
+    <div class="desc">类型也去掉 (拓扑页有形状分类); 最简表格, 详情全在展开</div>
+    <table>
+      <tr><th>地址</th><th>厂商名</th><th>型号</th><th>seen</th><th></th></tr>
+      <tr><td class="mono">0A11</td><td class="mono dim">_TZE204_dayazmbk</td><td class="mono">TS6001</td><td>182</td><td><button class="btn-mini">🎯</button></td></tr>
+      <tr><td colspan="5">
+        <div class="detail">
+          <b>类型:</b> 终端<br>
+          <b>EUI64:</b> A4:C1:38:AA:BB:CC:DD:EE &nbsp; <b>LQI</b> 185 &nbsp; <b>RSSI</b> -62 dBm<br>
+          <b>帧计数:</b> OnOff:120 · LevelCtrl:22<br>
+          <b>端点:</b> 1×182 · 242×7<br>
+          <b>邻居:</b> 0A22 (双向) · 0A33 (单向 <span style="color:#b45309">WEAK</span>)
+        </div>
+      </td></tr>
+      <tr><td class="mono">0B22</td><td class="mono dim">—</td><td class="mono dim">—</td><td>45</td><td><button class="btn-mini">🎯</button></td></tr>
+    </table>
+  </div>
+
+  <!-- 方案 C: 保留 PAN -->
+  <div class="scheme">
+    <span class="tag alt">方案 C · 保留 PAN</span>
+    <h2>多 PAN 场景有值</h2>
+    <div class="desc">在方案 A 基础上保留 PAN 列 — 适合素材含多个 PAN (中继/网关切换场景)</div>
+    <table>
+      <tr><th>地址</th><th>类型</th><th>PAN</th><th>厂商名</th><th>型号</th><th>seen</th></tr>
+      <tr><td class="mono">0A11</td><td><span class="dot" style="background:#16a34a"></span>终端</td><td class="mono">0x1234</td><td class="mono dim">_TZE204_dayazmbk</td><td class="mono">TS6001</td><td>182</td></tr>
+      <tr><td class="mono">0B22</td><td><span class="dot" style="background:#3b82f6"></span>路由</td><td class="mono">0x1234</td><td class="mono dim">—</td><td class="mono dim">—</td><td>45</td></tr>
+      <tr><td class="mono">0C33</td><td><span class="dot" style="background:#16a34a"></span>终端</td><td class="mono">0x5678</td><td class="mono dim">_TZE284_abc</td><td class="mono">TS0041</td><td>12</td></tr>
+    </table>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px">多 PAN 时按 PAN 分组显示, 行内展开同 A</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -19,10 +19,12 @@ await p.send('Page.navigate', { url: TARGET });
 await new Promise(r => setTimeout(r, 8000));
 const r = await p.send('Runtime.evaluate', { expression: `JSON.stringify({
   l1cards: document.querySelectorAll('.l1-card').length,
+  jumpLinks: Array.from(document.querySelectorAll('.dev-jump')).map(function(a){return a.textContent;}).slice(0,4),
   evTables: document.querySelectorAll('.ev-table').length,
   conclusions: document.querySelectorAll('.conclusion').length,
   divs: document.querySelectorAll('.dev').length,
   sections: document.querySelectorAll('.l1-sec').length,
+  hasCoverage: document.body.innerText.includes('覆盖范围'),
   bodyText: document.body.innerText
 })`, returnByValue: true });
 p.close();
