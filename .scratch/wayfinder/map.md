@@ -74,6 +74,14 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 
 - [U15 节点控制协议解析 + 画像导出](issues/U15-节点控制协议解析与导出.md) — **载荷字段级解析闭环**: zcl_defs CMD_PAYLOAD_SCHEMAS (On/Off/Level/Color/Door Lock/Window Covering/Groups/Scenes/Identify 标准簇 + 全局命令属性记录) + tuya_proto.py (0xEF00 DP) + 字节偏移兜底链 (PAYLOAD_PARSERS 注册表扩展); packet_detail 加 zcl_payload_parsed; 节点页 📄示例弹层 + ⬇️导出 (JSON+MD 含代表帧解析); **素材实证推翻 ticket 假设**: dimmer 0x0B×22 实为 Default Response (非涂鸦控制命令), DP 结构 [seq:2 BE]+[dp][type][len:2 BE][value], value 4B BE, 无 ms code; **0x42=短字符串 1B 前缀** (Read Attr Rsp 实证); 回归 P1 15/15 + zcl_fcf 12/12 + p2 4/4 + P6 12/12; CDP 3 项全过 (截图 .scratch/verification/u15-control-parse/); 涂鸦 0x0B 控制帧/控制操作抓包待用户
 
+- [U14 拓扑节点显示增强](issues/U14-拓扑节点显示增强.md) — 分步 5 步全落地 (后端字段 ff4aebe /
+  label 双行 3922e21 / 状态样式 53e0bd8 / tooltip 9302b98 / 时间窗联动): graph+events 节点加
+  model_id/manufacturer_name/eui64/behavior/poll_interval/tx/rx (rejoin 方向语义 + 协调器豁免 +
+  poll 仅发送方); label 第二行型号; rejoining 橙虚线/sleeping 灰/sleeping 未实证/offline 暗红边框;
+  tooltip 全字段 (838D 实测: 厂商 smart lock/型号 AKLOCK-C6/poll 0.2s/帧量 254/180);
+  滑块联动窗内重算 (CDP 请求参数验证); 回归 zcl_fcf 12/12 + p2 4/4 (--update);
+  与 U13 协调: 仅动节点呈现段, 边/链路未触碰; sleeping 素材缺口待用户
+
 ## Not yet specified
 
 - 55 场景中 49 个未闭环 — 优先级由用户定 (低挂果实: L6-S3/L2-6/L2-3)
