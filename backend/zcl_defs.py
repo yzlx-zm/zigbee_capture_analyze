@@ -779,18 +779,23 @@ def parse_zcl_command_payload(cluster_id: int | None, cmd_id: int | None,
     return {"parser": parser, "mode": "schema", "fields": fields, "hex": payload.hex()}
 
 
-def fallback_byte_fields(payload: bytes, max_bytes: int = 64) -> list[dict]:
-    """字节偏移兜底拆解 (Wireshark 式): 逐字节 offset/hex/可打印字符.
-    长载荷截断显示, 不解析语义 — 至少可见载荷结构."""
+def fallback_byte_fields(payload: bytes, max_bytes: int = 256) -> list[dict]:
+    """字节偏移兜底拆解 (Wireshark/Ubiqua 式, 用户示例 2026-08-24):
+    整段载荷按 8 字节一组展示 (偏移 | hex 组 | 可打印字符), 不逐字节拆表 —
+    一眼可见私有命令整体数据, 方便对接时自行对照结构.
+
+    长载荷截断到 max_bytes (避免超大载荷刷屏), 剩余标提示; 完整 hex 仍在
+    parse_zcl_payload 返回的 hex 字段 (详情面板下方)."""
     fields: list[dict] = []
     shown = min(len(payload), max_bytes)
-    for i in range(shown):
-        b = payload[i]
-        c = chr(b) if 0x20 <= b < 0x7F else "·"
-        fields.append({"field": f"byte 0x{i:02X}", "value": f"0x{b:02X}",
-                       "note": f"'{c}'" if c != "·" else ""})
+    for i in range(0, shown, 8):
+        chunk = payload[i:i + 8]
+        hexs = " ".join(f"{b:02X}" for b in chunk)
+        chars = "".join(chr(b) if 0x20 <= b < 0x7F else "·" for b in chunk)
+        fields.append({"field": f"0x{i:04X}", "value": hexs, "note": chars})
     if len(payload) > shown:
-        fields.append({"field": "…", "value": f"剩余 {len(payload) - shown} 字节见下方完整 hex",
+        fields.append({"field": "…",
+                       "value": f"剩余 {len(payload) - shown} 字节 (见下方完整 hex)",
                        "note": ""})
     return fields
 
