@@ -393,22 +393,31 @@ async def node_export(aid: int):
         return JSONResponse({"error": f"节点 0x{aid:04X} 无帧数据"}, 404)
     n = nodes[aid]
 
+    from datetime import datetime as _dt
+
+    def _ts(t):
+        return _dt.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S") if t else "?"
+
     profile = _node_profile(aid, n, st)
+    # 画像 (人读重点: 厂商/型号/EUI64/地址/端点 — 协议对接第一步)
     md_lines: list[str] = [
         f"# 节点画像 0x{aid:04X}",
         "",
-        f"- PAN: 0x{n.get('pan', 0):04X} · 设备类型: {n.get('device_type', 'unknown')}",
-        f"- EUI64: {st.get('eui64') or 'N/A'}",
-        f"- 厂商: {st.get('manufacturer_name') or 'N/A'} · 型号: {st.get('model_id') or 'N/A'}",
-        f"- 出现: {st['seen']} 帧 · 首见/末见: {st.get('first')} / {st.get('last')}",
+        f"**厂商 ID**: {st.get('manufacturer_name') or 'N/A'}  |  "
+        f"**设备 ID**: {st.get('model_id') or 'N/A'}  |  "
+        f"**EUI64**: {st.get('eui64') or 'N/A'}",
         "",
-        "## 端点",
+        "| 项 | 值 |",
+        "|---|---|",
+        f"| 短地址 | 0x{aid:04X} |",
+        f"| PAN | 0x{n.get('pan', 0):04X} |",
+        f"| 设备类型 | {n.get('device_type', 'unknown')} |",
+        f"| 出现 | {st['seen']} 帧 ({_ts(st.get('first'))} ~ {_ts(st.get('last'))}) |",
     ]
     if st["endpoints"]:
+        md_lines += ["", "## 端点"]
         md_lines += [f"- EP 0x{ep:02X}: {c} 帧" for ep, c in
                      sorted(st["endpoints"].items(), key=lambda kv: -kv[1])]
-    else:
-        md_lines.append("- (无端点数据)")
     md_lines += ["", "## 控制命令统计", "", "| 簇 | 命令 | 方向 | 频率 |", "|---|---|---|---|"]
 
     for (cl, cmd, d), v in sorted(st["clusters"].items(), key=lambda kv: -kv[1]["count"]):
@@ -428,34 +437,54 @@ async def node_export(aid: int):
             f"{v['cmd_name'] or f'0x{cmd:02X}' if cmd is not None else '?'} | "
             f"{d or '-'} | {v['count']} |")
 
-    md_lines += ["", "## 代表帧样本", ""]
+    # ── 代表帧样本 (MD 人读精简: 只保留 APS 层 + ZCL 载荷, 协议对接要点;
+    #    MAC/NWK/安全头属抓包链路细节, 非控制协议内容 — 用户反馈 08-24) ──
+    md_lines += ["", "## 代表帧样本", "",
+                 "> 每命令取最近 1 帧, 只列 APS 层与 ZCL 载荷解析 (协议对接需要的内容)。",
+                 "> 完整分层视图请用节点页 📄 示例 或 JSON 导出。"]
+
+    def _sample_md(s: dict, label: str) -> list[str]:
+        """单帧精简样本: 帧头 + APS 层 + ZCL 层 + 载荷解析表."""
+        ln: list[str] = []
+        ts_txt = _ts(s.get("ts"))
+        ln.append("")
+        ln.append(f"#### 帧 #{s['id']} @ {ts_txt} ({s.get('pkt_type')})")
+        aps = (s.get("layers") or {}).get("zbee_aps") or {}
+        cl = s.get("aps_cluster_name") or (aps.get("zbee_aps.cluster") or "-")
+        ln += [
+            "**APS 应用层**",
+            f"- cluster: `{aps.get('zbee_aps.cluster', '-')}` ({cl})",
+            f"- 端点: src={aps.get('zbee_aps.src', '-')} → dst={aps.get('zbee_aps.dst', '-')}",
+            f"- counter: {aps.get('zbee_aps.counter', '-')}",
+        ]
+        zcl = (s.get("layers") or {}).get("zbee_zcl") or {}
+        if zcl:
+            ln += ["**ZCL 应用层**",
+                   f"- 命令: `{zcl.get('zbee_zcl.cmd.id', '-')}` ({s.get('zcl_cmd_name') or '-'})"
+                   f" · tsn: {zcl.get('zbee_zcl.cmd.tsn', '-')}"]
+        pp = s.get("zcl_payload_parsed")
+        if pp is not None:
+            ln += ["", f"**载荷解析 ({pp.get('parser') or '无载荷'})**"]
+            if pp.get("fields"):
+                ln += ["| 字段 | 值 | 说明 |", "|---|---|---|"]
+                for f in pp["fields"]:
+                    ln.append(f"| {f['field']} | {f['value']} | {f.get('note', '')} |")
+            else:
+                ln.append("- (无参数)")
+            if pp.get("hex"):
+                ln += ["", f"载荷 hex: `{pp['hex']}`"]
+        return ln
+
     for idx, entry in enumerate(profile["clusters"], 1):
         label = _cmd_label(entry["cluster"], entry["cluster_name"],
                            entry["cmd"], entry["cmd_name"], entry["dir"])
-        md_lines.append(f"### {idx}. {label} (×{entry['count']})")
-        if not entry["samples"]:
-            md_lines.append("- (无代表帧)")
+        # MD 每命令只取最近 1 帧 (样本选取确定性: 最近帧 = last_pkt_id)
+        sample = entry["samples"][-1] if entry["samples"] else None
+        if sample is None:
+            md_lines += ["", f"### {idx}. {label} (×{entry['count']})", "- (无代表帧)"]
             continue
-        for s in entry["samples"]:
-            from datetime import datetime as _dt
-            ts_txt = _dt.fromtimestamp(s["ts"]).strftime("%Y-%m-%d %H:%M:%S") if s.get("ts") else "?"
-            md_lines.append("")
-            md_lines.append(f"#### 帧 #{s['id']} (原始帧号 {s.get('packet_id')}) @ {ts_txt} · {s.get('pkt_type')}")
-            md_lines += _layers_to_md(s["layers"])
-            pp = s.get("zcl_payload_parsed")
-            if pp is not None:
-                md_lines.append("")
-                md_lines.append(f"**ZCL 载荷解析 ({pp.get('parser') or '无载荷'})**")
-                if pp.get("fields"):
-                    md_lines.append("| 字段 | 值 | 说明 |")
-                    md_lines.append("|---|---|---|")
-                    for f in pp["fields"]:
-                        md_lines.append(f"| {f['field']} | {f['value']} | {f.get('note', '')} |")
-                else:
-                    md_lines.append("- (无参数)")
-                if pp.get("hex"):
-                    md_lines.append("")
-                    md_lines.append(f"载荷 hex: `{pp['hex']}`")
+        md_lines += ["", f"### {idx}. {label} (×{entry['count']})"]
+        md_lines += _sample_md(sample, label)
         md_lines.append("")
 
     md = "\n".join(md_lines)

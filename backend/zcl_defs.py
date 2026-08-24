@@ -275,6 +275,22 @@ _DATA_TYPE_SIZES: dict[int, int | None] = {
     0xE2: 4, 0xE3: 4, 0xE4: 4, 0xE5: 2, 0xE6: 2, 0xE7: 4, 0xE8: 8, 0xE9: 16,
 }
 # 常用属性名 (ZCL spec 各簇属性表; 未列出者显示原始 0xXXXX — 名称不影响解析)
+# ZCL 状态码名 (spec 2.4.3.1.1; L3-2 场景文档已实证 0x86/0xC3)
+_ZCL_STATUS_NAMES: dict[int, str] = {
+    0x00: "SUCCESS", 0x01: "FAILURE", 0x7E: "NOT_AUTHORIZED",
+    0x80: "MALFORMED_COMMAND", 0x81: "UNSUP_CLUSTER_COMMAND", 0x82: "UNSUP_GENERAL_COMMAND",
+    0x83: "UNSUP_MANUF_CLUSTER_COMMAND", 0x84: "UNSUP_MANUF_GENERAL_COMMAND",
+    0x85: "INVALID_FIELD", 0x86: "UNSUPPORTED_ATTRIBUTE", 0x87: "INVALID_VALUE",
+    0x88: "READ_ONLY", 0x89: "INSUFFICIENT_SPACE", 0x8A: "DUPLICATE_EXISTS",
+    0x8B: "NOT_FOUND", 0x8C: "UNREPORTABLE_ATTRIBUTE", 0x8D: "INVALID_DATA_TYPE",
+    0x8E: "INVALID_SELECTOR", 0x8F: "WRITE_ONLY", 0x90: "INCONSISTENT_STARTUP_STATE",
+    0x91: "DEFINED_OUT_OF_BAND", 0x92: "INCONSISTENT", 0x93: "ACTION_DENIED",
+    0x94: "TIMEOUT", 0x9C: "ABORT", 0x9D: "INVALID_IMAGE", 0x9E: "WAIT_FOR_DATA",
+    0x9F: "NO_IMAGE_AVAILABLE", 0xA0: "REQUIRE_MORE_IMAGE", 0xA1: "NOTIFICATION_PENDING",
+    0xC0: "HARDWARE_FAILURE", 0xC1: "SOFTWARE_FAILURE", 0xC2: "CALIBRATION_ERROR",
+    0xC3: "UNSUPPORTED_CLUSTER",
+}
+
 _ATTR_NAMES: dict[int, dict[int, str]] = {
     0x0000: {0x0000: "ZCLVersion", 0x0001: "ApplicationVersion", 0x0002: "StackVersion",
              0x0004: "ManufacturerName", 0x0005: "ModelIdentifier", 0x0006: "DateCode",
@@ -609,10 +625,13 @@ def _parse_attr_records(buf: bytes, off: int, with_status: bool,
         st = None
         if with_status:
             st = buf[off]; off += 1
-            if st != 0 and st != 0x86:
+            if st != 0:
+                # 非成功状态: 记录后无 data_type/value (0x86=属性不支持 素材实证:
+                # Read Attr Rsp [attr 0xFFC0][0x86] 曾按值解析错位)
                 nm = _ATTR_NAMES.get(cluster_id or 0, {}).get(attr_id, "")
                 fields.append({"field": f"attr 0x{attr_id:04X}{(' ' + nm) if nm else ''}",
-                               "value": f"status 0x{st:02X}", "note": "读取失败/无值"})
+                               "value": f"status 0x{st:02X}",
+                               "note": _ZCL_STATUS_NAMES.get(st, "非成功状态")})
                 continue
         if off >= len(buf):
             break
