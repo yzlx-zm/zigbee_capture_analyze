@@ -236,7 +236,8 @@ reg('topo', function(){
           label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model?'\n'+model:''),
           aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
           model_id:model, manufacturer_name:n.manufacturer_name||'',
-          behavior:n.behavior||'', poll_interval:n.poll_interval},
+          behavior:n.behavior||'', poll_interval:n.poll_interval,
+          eui64:n.eui64||'', tx_count:n.tx_count, rx_count:n.rx_count},
         classes:(onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')):'offpath')
       });
     }
@@ -357,7 +358,19 @@ reg('topo', function(){
       var tooltip=document.createElement('div');tooltip.id='cy-tt';tooltip.style.cssText='position:absolute;display:none;background:#1e293b;color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:999;max-width:280px;white-space:pre-line';
       document.getElementById('cy-graph').appendChild(tooltip);
 
-      cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;tooltip.innerHTML='<b>'+d.label+'</b>\n类型:'+(d.device_type==='coordinator'?'协调器':d.device_type==='router'?'路由器':d.device_type==='end_device'?'终端设备':'未知')+'\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;tooltip.style.display='block';updateTooltipPos(e);});
+      cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;
+        // U14-4: tooltip 增强 — EUI64/厂商型号/行为状态/poll 间隔/帧量收/发/LS 邻居数
+        var tName={coordinator:'协调器',router:'路由器',end_device:'终端设备',unknown:'未知'}[d.device_type]||d.device_type;
+        var bName={active:'活跃',sleeping:'休眠',rejoining:'重连中',offline:'离线',unknown:'未知'}[d.behavior]||'未知';
+        var h='<b>'+String(d.label).replace(/\n/g,' ')+'</b> ('+tName+')';
+        if(d.manufacturer_name)h+='\n厂商: '+d.manufacturer_name;
+        if(d.model_id)h+='\n型号: '+d.model_id;
+        if(d.eui64)h+='\nEUI64: '+d.eui64;
+        h+='\n状态: '+bName;
+        if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
+        if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
+        h+='\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;
+        tooltip.innerHTML=h;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
     cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});

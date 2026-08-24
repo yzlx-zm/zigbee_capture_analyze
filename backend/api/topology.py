@@ -90,9 +90,14 @@ def _behavior_map(full: list[dict], t0: float | None, t1: float | None) -> tuple
         for aid in srcs | dsts:
             if not topo.is_unicast(aid):
                 continue
-            inf = info.setdefault(aid, {"last": None, "poll": [], "rejoin": False})
+            inf = info.setdefault(aid, {"last": None, "poll": [], "rejoin": False,
+                                        "tx": 0, "rx": 0})
             if ts > (inf["last"] or 0):
                 inf["last"] = ts
+            if aid in srcs:
+                inf["tx"] += 1
+            if aid in dsts:
+                inf["rx"] += 1
         # poll: 仅发送方 (SED 发 Data Request; 目标父节点不算 poll 间隔)
         if p.get("mac_cmd_id") == 4:
             for aid in srcs:
@@ -122,7 +127,8 @@ def _behavior_map(full: list[dict], t0: float | None, t1: float | None) -> tuple
                 gaps.sort()
                 gap = gaps[len(gaps) // 2]
         out[aid] = {"last": inf["last"], "poll_gap": gap,
-                    "poll_count": len(inf["poll"]), "rejoin": inf["rejoin"]}
+                    "poll_count": len(inf["poll"]), "rejoin": inf["rejoin"],
+                    "tx": inf.get("tx", 0), "rx": inf.get("rx", 0)}
     return out, late_cut
 
 
@@ -156,9 +162,12 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
         st = stats.get(aid)
         nd["manufacturer_name"] = st["manufacturer_name"] if st else None
         nd["model_id"] = st["model_id"] if st else None
+        nd["eui64"] = st["eui64"] if st else None
         inf = beh.get(aid)
         nd["behavior"] = _behavior_of(aid, inf, late_cut, nd.get("device_type"))
         nd["poll_interval"] = inf["poll_gap"] if inf else None
+        nd["tx_count"] = inf["tx"] if inf else 0
+        nd["rx_count"] = inf["rx"] if inf else 0
 
 
 @router.get("/topology/graph")
