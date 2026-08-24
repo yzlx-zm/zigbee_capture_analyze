@@ -376,14 +376,17 @@ reg('topo', function(){
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){
-      // ⚠️ 修复 (2026-08-24 用户反馈): 曾用 Cytoscape 图坐标 (renderedPosition/position)
-      // + 容器偏移换算 — 图缩放/平移时回退坐标偏移量大, tooltip 离鼠标很远;
-      // 改用 DOM 鼠标事件真实坐标 (clientX/Y), 恒在鼠标右侧 14px
+      // ⚠️ 修复 (2026-08-24 用户反馈): tooltip 是 #cy-graph 子元素 (absolute 相对容器),
+      // 必须用 DOM 鼠标真实坐标 (clientX/Y) **减容器偏移**再定位 —
+      // 曾用 Cytoscape 图坐标+容器偏移 (双重偏移更远) / clientX 不加容器偏移
+      // (多算容器偏移, 实证 744=容器左缘340+404) 两版都错;
+      // 正解: (页面坐标 - 容器偏移) + 14px 右侧
       var oe=(e&&e.originalEvent)||e||{};
       var x=oe.clientX!=null?oe.clientX:window.innerWidth/2;
       var y=oe.clientY!=null?oe.clientY:window.innerHeight/2;
-      tooltip.style.left=(x+14)+'px';
-      tooltip.style.top=(y-8)+'px';
+      var gb=document.getElementById('cy-graph').getBoundingClientRect();
+      tooltip.style.left=(x-gb.left+14)+'px';
+      tooltip.style.top=(y-gb.top-8)+'px';
     }
     cy.on('mousemove',function(e){ if(tooltip.style.display==='block') updateTooltipPos(e); });  // tooltip 跟随鼠标移动
 
