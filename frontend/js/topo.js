@@ -375,7 +375,16 @@ reg('topo', function(){
     cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
-    function updateTooltipPos(e){var r=e.renderedPosition||e.position;var gb=document.getElementById('cy-graph').getBoundingClientRect();tooltip.style.left=(gb.left+r.x+12)+'px';tooltip.style.top=(gb.top+r.y-10)+'px';}
+    function updateTooltipPos(e){
+      // ⚠️ 修复 (2026-08-24 用户反馈): 曾用 Cytoscape 图坐标 (renderedPosition/position)
+      // + 容器偏移换算 — 图缩放/平移时回退坐标偏移量大, tooltip 离鼠标很远;
+      // 改用 DOM 鼠标事件真实坐标 (clientX/Y), 恒在鼠标右侧 14px
+      var oe=(e&&e.originalEvent)||e||{};
+      var x=oe.clientX!=null?oe.clientX:window.innerWidth/2;
+      var y=oe.clientY!=null?oe.clientY:window.innerHeight/2;
+      tooltip.style.left=(x+14)+'px';
+      tooltip.style.top=(y-8)+'px';
+    }
     cy.on('mousemove',function(e){ if(tooltip.style.display==='block') updateTooltipPos(e); });  // tooltip 跟随鼠标移动
 
     // Click → 跳转时间线
