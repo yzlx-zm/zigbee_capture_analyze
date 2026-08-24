@@ -50,6 +50,10 @@ TUYA_CMD_NAMES: dict[int, str] = {
     0x1B: "时间响应 (网关→设备)",
     0x1C: "定时上报",
     0x1D: "预留",
+    # 素材实证扩展命令 (可编程开关 需求32200_4c29.cubx, 2026-08-24):
+    # 0x24 超出涂鸦公开协议 0x00-0x1D 范围, 但 Default Response ×121 响应的正是
+    # cmd 0x24 (RespondedCommandID=0x24), C→S 载荷 10B / S→C 2B — 结构待逆向
+    0x24: "扩展命令 (素材实证: 可编程开关; 结构待逆向)",
 }
 
 DP_TYPE_NAMES: dict[int, str] = {
