@@ -61,6 +61,89 @@ def _ensure_events_timeline() -> rev.RouteEventTimeline:
     return _events_timeline
 
 
+def _behavior_map(full: list[dict], t0: float | None, t1: float | None) -> tuple[dict, float | None]:
+    """单遍扫描节点行为信息 (U14): 每节点窗内 最后帧时间 / poll 间隔中位数 /
+    rejoin 事件标记。late_cut = 窗末 25% 起点 (离线判定用)。
+
+    依据: poll = MAC Data Request (mac_cmd_id=4, 仅 full_packets 含 MAC 帧);
+    rejoin 事件 = NWK cmd 6/7 (Rejoin Req/Rsp) / ZDP 0x0013 (Device Announce) /
+    MAC AssocResp (mac_cmd_id=2)。窗内语义 (无过滤 = 全量)。
+    """
+    info: dict[int, dict] = {}
+    lo, hi = t0, t1
+    if lo is None or hi is None:
+        ts_all = [p.get("ts", 0) for p in full if p.get("ts")]
+        if ts_all:
+            lo = t0 if t0 is not None else min(ts_all)
+            hi = t1 if t1 is not None else max(ts_all)
+    late_cut = None
+    if lo is not None and hi is not None and hi > lo:
+        late_cut = lo + (hi - lo) * 0.75
+    for p in full:
+        ts = p.get("ts", 0)
+        if t0 is not None and ts < t0:
+            continue
+        if t1 is not None and ts > t1:
+            continue
+        srcs = {p.get("nwk_src"), p.get("mac_src")} - {None}
+        dsts = {p.get("nwk_dst"), p.get("mac_dst")} - {None}
+        for aid in srcs | dsts:
+            if not topo.is_unicast(aid):
+                continue
+            inf = info.setdefault(aid, {"last": None, "poll": [], "rejoin": False})
+            if ts > (inf["last"] or 0):
+                inf["last"] = ts
+        # poll: 仅发送方 (SED 发 Data Request; 目标父节点不算 poll 间隔)
+        if p.get("mac_cmd_id") == 4:
+            for aid in srcs:
+                if topo.is_unicast(aid):
+                    info.setdefault(aid, {"last": None, "poll": [], "rejoin": False})
+                    info[aid]["poll"].append(ts)
+        # rejoin 事件 (方向语义, 2026-08-24 自审: AssocResp 协调器发出不算协调器重连):
+        #   Rejoin Req (6) → src; Rejoin Rsp (7) → dst; Device Announce (0x0013) → src;
+        #   AssocResp (mac 2) → dst
+        if p.get("nwk_cmd_id") == 6 or p.get("aps_cluster") == 0x0013:
+            for aid in srcs:
+                if topo.is_unicast(aid):
+                    info.setdefault(aid, {"last": None, "poll": [], "rejoin": False})
+                    info[aid]["rejoin"] = True
+        elif p.get("nwk_cmd_id") == 7 or p.get("mac_cmd_id") == 2:
+            for aid in dsts:
+                if topo.is_unicast(aid):
+                    info.setdefault(aid, {"last": None, "poll": [], "rejoin": False})
+                    info[aid]["rejoin"] = True
+    out: dict[int, dict] = {}
+    for aid, inf in info.items():
+        gap = None
+        if len(inf["poll"]) >= 2:
+            poll_ts = sorted(inf["poll"])
+            gaps = [b - a for a, b in zip(poll_ts, poll_ts[1:]) if b > a]
+            if gaps:
+                gaps.sort()
+                gap = gaps[len(gaps) // 2]
+        out[aid] = {"last": inf["last"], "poll_gap": gap,
+                    "poll_count": len(inf["poll"]), "rejoin": inf["rejoin"]}
+    return out, late_cut
+
+
+def _behavior_of(aid: int, inf: dict | None, late_cut: float | None,
+                 device_type: str | None) -> str:
+    """行为状态判定 (优先级: 重连中 > 离线 > 休眠 > 活跃; 无信息 = unknown)."""
+    if inf is None:
+        return "unknown"
+    if aid == 0:
+        return "active"  # 协调器是网络中心, 不适用休眠/离线/重连语义
+    if inf["rejoin"]:
+        return "rejoining"
+    if inf["last"] is not None and late_cut is not None and inf["last"] < late_cut:
+        return "offline"          # 窗后段 (末 25%) 无帧且此前有
+    if device_type == "end_device" and inf["poll_count"] == 0:
+        return "sleeping"         # 终端且窗内无 poll
+    if inf["last"] is not None:
+        return "active"
+    return "unknown"
+
+
 @router.get("/topology/graph")
 async def topology_graph(pan: str = Query(default=""),
                          time_start: float | None = Query(default=None),
@@ -70,8 +153,21 @@ async def topology_graph(pan: str = Query(default=""),
     if not pkts:
         return {"nodes": [], "edges": [], "coord": None}
     pan_int = int(pan, 16) if pan else None
-    return topo.build(pkts, nodes, filter_pan=pan_int,
-                      time_start=time_start, time_end=time_end)
+    graph = topo.build(pkts, nodes, filter_pan=pan_int,
+                       time_start=time_start, time_end=time_end)
+    # U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描)
+    full = get_full_packets()
+    stats, _ls, _asym = _node_stats(pkts, pan_int)
+    beh, late_cut = _behavior_map(full if full else pkts, time_start, time_end)
+    for nd in graph.get("nodes", []):
+        aid = nd["aid"]
+        st = stats.get(aid)
+        nd["manufacturer_name"] = st["manufacturer_name"] if st else None
+        nd["model_id"] = st["model_id"] if st else None
+        inf = beh.get(aid)
+        nd["behavior"] = _behavior_of(aid, inf, late_cut, nd.get("device_type"))
+        nd["poll_interval"] = inf["poll_gap"] if inf else None
+    return graph
 
 
 @router.get("/topology/events")
