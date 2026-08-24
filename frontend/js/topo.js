@@ -227,8 +227,14 @@ reg('topo', function(){
       var n=ns[i]; var aid=n.aid;
       var dt=n.device_type||'unknown';
       var onPath=(!hasPaths)||!!pathNodes[aid]||aid===0;  // 无路径全可见; 协调器永远可见
+      // U14-2: label 双行 — 第二行型号 (model_id 非空时; 小节点放不下由 tooltip 兜底)
+      var model=n.model_id||'';
       cyNodes.push({
-        data:{id:''+aid, label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0'), aid:aid, device_type:dt, seen:n.seen, on_path:onPath},
+        data:{id:''+aid,
+          label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model?'\n'+model:''),
+          aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
+          model_id:model, manufacturer_name:n.manufacturer_name||'',
+          behavior:n.behavior||'', poll_interval:n.poll_interval},
         classes:(onPath?dt+' onpath':'offpath')
       });
     }
@@ -300,7 +306,7 @@ reg('topo', function(){
       elements: cyNodes.concat(cyEdges),
       style: [
         // 节点基础
-        {selector:'node', style:{'background-color':'#3b82f6','shape':'ellipse','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','width':28,'height':28}},
+        {selector:'node', style:{'background-color':'#3b82f6','shape':'ellipse','label':'data(label)','font-size':'9px','color':'#1e293b','text-valign':'bottom','text-halign':'center','text-margin-y':4,'border-width':1,'border-color':'#fff','width':28,'height':28,'text-wrap':'wrap'}},
         // 设备类型形状分类 (U7): 协调器=大六边形 / 路由器=菱形 / 终端=圆 / 未知=三角
         {selector:'node.coordinator', style:{'background-color':'#f59e0b','shape':'hexagon','border-color':'#d97706','border-width':3,'font-weight':'bold','width':60,'height':60,'text-margin-y':8}},
         {selector:'node.router', style:{'background-color':'#3b82f6','shape':'diamond','width':32,'height':32}},
