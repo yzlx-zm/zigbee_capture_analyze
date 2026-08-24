@@ -72,6 +72,8 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
 - [U5 时间线优化](issues/U5-时间线优化.md) — 类型下拉动态化 (/api/packets/types 全量统计) + 事件标记 (⛔Leave 按 rejoin 区分 / 🔄Rejoin / ⚠️NetStatus, 协议依据: NWK 0x04 标志位) + 2 bug 修复 (详情 TypeError: nwk undefined for-in; 联动时间全零: S.topoT0/T1 契约统一 tlToTs 兼容 + isNaN 兜底 + 跳转重置抓包范围) + 跳转节点过滤 (topoAddr→tlNode 同步); 验证: 徽章 DOM/详情/跳转端到端 ✅, 详情崩溃修复待含 MAC 帧素材; 截图见 .scratch/verification/u5-timeline/
 - [U8 诊断页优化](issues/U8-诊断页优化.md) — **三批次全部完成 (08-10)**: ①diag.js 嵌套→检测器注册表 (MODULES 数据驱动, 加检测=注册条目+render 函数; 自审修正: Promise.all 统一渲染→渐进渲染+15s 超时兜底, 单模块挂起整页空白实测复现; CDP 对比逐字符一致) ②设备 🔍时间线 跳转 (S.topoAddr 契约, U4 联动落地; 🎯拓扑 用户反馈无意义已移除) + **跨卡片事件链卡** (hitDevices 登记, ≥2 命中触发; CE77: L1-3×L1-4×OFF 案例验证; ⚠️ L6 verdict 为 L6-S3_HIT 非卡片名) ③摘要卡覆盖提示 (无 HIT 时显示 8/55 场景, 防"未发现明显问题"误信); **白话化 (08-10 用户反馈)**: 编号降级 .sc-tag 小角标, 标题/verdict/事件链用白话 (设备找不到网络/密钥分发或验证出问题...), 顺带修 L1-3/L6-S3 vClass 前缀不匹配琥珀 bug
 
+- [U15 节点控制协议解析 + 画像导出](issues/U15-节点控制协议解析与导出.md) — **载荷字段级解析闭环**: zcl_defs CMD_PAYLOAD_SCHEMAS (On/Off/Level/Color/Door Lock/Window Covering/Groups/Scenes/Identify 标准簇 + 全局命令属性记录) + tuya_proto.py (0xEF00 DP) + 字节偏移兜底链 (PAYLOAD_PARSERS 注册表扩展); packet_detail 加 zcl_payload_parsed; 节点页 📄示例弹层 + ⬇️导出 (JSON+MD 含代表帧解析); **素材实证推翻 ticket 假设**: dimmer 0x0B×22 实为 Default Response (非涂鸦控制命令), DP 结构 [seq:2 BE]+[dp][type][len:2 BE][value], value 4B BE, 无 ms code; **0x42=短字符串 1B 前缀** (Read Attr Rsp 实证); 回归 P1 15/15 + zcl_fcf 12/12 + p2 4/4 + P6 12/12; CDP 3 项全过 (截图 .scratch/verification/u15-control-parse/); 涂鸦 0x0B 控制帧/控制操作抓包待用户
+
 ## Not yet specified
 
 - 55 场景中 49 个未闭环 — 优先级由用户定 (低挂果实: L6-S3/L2-6/L2-3)

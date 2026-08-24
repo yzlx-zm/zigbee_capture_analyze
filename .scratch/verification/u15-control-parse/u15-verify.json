@@ -1,0 +1,33 @@
+{
+  "nodes": {
+    "rowCount": 29,
+    "dimmerRow": "52827"
+  },
+  "detail": {
+    "sampleBtns": 33,
+    "exportBtn": true,
+    "clusterRows": 14
+  },
+  "modal": {
+    "exists": true,
+    "title": "📄 帧解析 #206✕",
+    "layers": 6,
+    "payloadRows": 2,
+    "firstPayload": "RespondedCommandID2 (0x02)",
+    "text": "📄 帧解析 #206\n✕\n帧 #206 (原始帧号 621) · 18:15:53 · Data · 已解密\nwpan\nwpan.fcs_ok\n1\nwpan.fcf\n0x0001\nwpan.seq_no\n6\nwpan.dst_pan\nb956\nwpan.dst16\nce5b\nwpan.src16\n0000\nNWK 层\nzbee_nwk.dst\n0xCE5B\nzbee_nwk.src\n0x0000\nzbee_nwk.radius\n30\nzbee_nwk.seqno\n229\nzbee_nwk.fcf_tree.zbee_nwk.security\n1\n安全头\nzbee.sec.sec_level\n0\nzbee.sec.counter\n69892112\nzbee.sec.mic\n21095e35\nzbee.sec.decryption_key\ncubx-key-3\nzbee.sec.field\n1\nAPS 层\nzbee_aps.profile\n0x0104\nzbee_aps.cluster\n0xEF00\nzbee_aps.src\n1\nzbee_aps.dst\n1\nzbee_aps.counter\n22\nzbee_aps.ack_req\n0\nZCL 层\nzbee_zcl.cmd.id\n0x0B\nzbee_zcl.cmd.tsn\n28\nFrame Control Field.zbee_zcl"
+  },
+  "export": {
+    "title": "⬇️ 节点画像导出 0xCE5B✕",
+    "dlBtns": 2
+  },
+  "timeline": {
+    "found": true,
+    "pid": "110",
+    "text": "35118:15:42查询 DP 响应/上报0xCE5B0x0DecryptedDecrypted ✅"
+  },
+  "timelineDetail": {
+    "detailPanel": true,
+    "hasPayloadParse": true,
+    "payloadText": "载荷解析\n(涂鸦 0xEF00) 3 字段\n命令\n0x02 · 查询 DP 响应/上报\n事务序号\n0x005A (90)\nDP 1\nbool · 0 (false)\n载荷 hex\n005a0101000100"
+  }
+}

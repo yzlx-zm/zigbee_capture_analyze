@@ -28,6 +28,7 @@ from scapy.layers.zigbee import (
 
 from . import key_store as _ks
 from . import zcl_defs
+from . import tuya_proto as _tuya  # U15: 涂鸦 0xEF00 私有簇命令名
 
 conf.dot15d4_protocol = "zigbee"
 
@@ -481,6 +482,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "nwk_leave_children": None,      # Leave options bit7=children
         "zcl_direction": None,           # ZCL 方向 (0=Client→Server, 1=Server→Client)
         "zcl_seq": None,                 # ZCL 事务序列号
+        "zcl_payload_hex": None,         # ZCL 命令载荷 hex (tsn+cmd_id 之后, U15 字段级解析)
         "zcl_attr_reads": None,          # Read Attr Rsp 属性记录 (U9: 设备身份/型号提取)
         "aps_fcf": None, "aps_security": None,
         "raw_layers": {},
@@ -747,6 +749,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                 result["zcl_seq"] = aps_plain[zcl_off]
                 if zcl_off + 1 < len(aps_plain):
                     result["zcl_cmd_id"] = aps_plain[zcl_off + 1]
+                # U15: ZCL 命令载荷字节 (tsn+cmd_id 之后; ms code 已在 zcl_off 跳过) —
+                # 标准簇/涂鸦 0xEF00 字段级解析用; 空载荷存 "" (无参数命令也是信息)
+                if zcl_off + 2 <= len(aps_plain):
+                    result["zcl_payload_hex"] = aps_plain[zcl_off + 2:].hex()
                 result["zcl_direction"] = (
                     "Server→Client" if (zcl_fcf >> 3) & 1 else "Client→Server")
                 if result["zcl_cmd_id"] is not None:
@@ -757,6 +763,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                     result["zcl_cmd_name"] = zcl_defs.get_command_name(
                         result["aps_cluster"], result["zcl_cmd_id"],
                         zcl_fcf & 0x03)
+                    # U15: 涂鸦 0xEF00 私有簇 cluster-specific 命令名 (DP 命令 0x00-0x1D)
+                    if result["aps_cluster"] == 0xEF00 and (zcl_fcf & 0x03) == 1:
+                        result["zcl_cmd_name"] = _tuya.get_tuya_command_name(
+                            result["zcl_cmd_id"])
                     # ZCL status (L3-2 命令送达未执行): 仅**全局命令 (frame type=0)** 的响应有
                     # status 字段 — ⚠️ 自审修正 2026-08-12: cluster-specific 命令 (如 OTA
                     # Query Next Image 0x01) 结构完全不同, 曾误提取 (0x10×6 误报实锤)

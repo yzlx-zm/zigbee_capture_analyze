@@ -1,4 +1,7 @@
-// nodes.js — 节点列表页面模块 (ES module) — U3: 行内展开详情 (设备详情/邻居表/EUI64/LQI-RSSI)
+// nodes.js — 节点列表页面模块 (ES module)
+// U3: 行内展开详情 (设备详情/邻居表/EUI64/LQI-RSSI)
+// U9: 端点统计 + 控制命令统计
+// U15: 控制命令 "📄 示例" 弹层 (帧分层解析视图) + "⬇️ 导出画像" (JSON+MD)
 import { S, A } from './state.js';
 
 function fmtTs(ts){ if(ts==null)return '-'; var d=new Date(ts*1000);
@@ -10,6 +13,105 @@ function devTypeName(t){ return {coordinator:'协调器',router:'路由',end_dev
 function asymBadge(l){
   if(!l)return '<span class="text-muted t-10">—</span>';
   return '<span class="badge '+(l==='ASYMM'?'text-danger':l==='WEAK'?'text-warn':'text-success')+'">'+l+'</span>';
+}
+
+// ── U15: 通用弹层 (示例帧解析 / 导出下载) ──
+function openModal(title, contentHtml){
+  var old=document.querySelector('.nd-modal');
+  if(old)old.remove();
+  var ov=document.createElement('div');
+  ov.className='nd-modal';
+  ov.innerHTML='<div class="nd-modal-box"><div class="nd-modal-title"><span>'+title+'</span>'
+    +'<span class="nd-modal-close" title="关闭">✕</span></div>'+contentHtml+'</div>';
+  document.body.appendChild(ov);
+  ov.querySelector('.nd-modal-close').addEventListener('click',function(){ov.remove();});
+  ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+  return ov;
+}
+
+// 帧分层解析视图渲染 (与时间线详情同源: /api/packets/{id} 响应)
+var ND_LAYERS={zbee_wpan:'MAC 层',zbee_nwk:'NWK 层','ZigBee Security Header':'安全头',
+  zbee_aps:'APS 层',zbee_zcl:'ZCL 层',zbee_zdp:'ZDP 层'};
+var ND_LCOLOR={zbee_wpan:'#ea580c',zbee_nwk:'#2563eb','ZigBee Security Header':'#64748b',
+  zbee_aps:'#7c3aed',zbee_zcl:'#7c3aed',zbee_zdp:'#059669'};
+function frameDetailHtml(d){
+  var h='';
+  h+='<div class="nd-frame-head mono">帧 #'+d.id+' (原始帧号 '+d.packet_id+') · '+fmtTs(d.ts)
+    +' · '+d.pkt_type+(d.decrypted?' · 已解密':'')+'</div>';
+  var layers=d.layers||{};
+  for(var ln in layers){
+    var lf=layers[ln];
+    if(!lf||typeof lf!=='object')continue;
+    h+='<div class="nd-layer" style="border-left-color:'+(ND_LCOLOR[ln]||'#94a3b8')+'">'
+      +'<div class="nd-layer-title" style="color:'+(ND_LCOLOR[ln]||'#64748b')+'">'+(ND_LAYERS[ln]||ln)+'</div>';
+    var keys=Object.keys(lf);
+    for(var i=0;i<keys.length;i++){
+      var k=keys[i],v=lf[k];
+      if(typeof v==='object'){ // 嵌套子树 (如 Frame Control Field) — 展开一层
+        for(var sk in v){ if(typeof v[sk]!=='object') h+='<div class="nd-field"><span class="k">'+k+'.'+sk+'</span><span class="v">'+v[sk]+'</span></div>'; }
+      }else{
+        h+='<div class="nd-field"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>';
+      }
+    }
+    h+='</div>';
+  }
+  // ZCL 载荷字段级解析 (U15)
+  var pp=d.zcl_payload_parsed;
+  if(pp!==undefined&&pp!==null){
+    h+='<div class="nd-layer" style="border-left-color:#0891b2">'
+      +'<div class="nd-layer-title" style="color:#0891b2">ZCL 载荷解析 ('+(pp.parser||'无')+')</div>';
+    if(pp.fields&&pp.fields.length){
+      h+='<table class="nd-payload-table"><thead><tr><th>字段</th><th>值</th><th>说明</th></tr></thead><tbody>';
+      for(var fi=0;fi<pp.fields.length;fi++){var f=pp.fields[fi];
+        h+='<tr><td>'+f.field+'</td><td class="v">'+f.value+'</td><td>'+((f.note||'').replace(/</g,'&lt;'))+'</td></tr>';
+      }
+      h+='</tbody></table>';
+    }else{
+      h+='<div class="nd-field"><span class="k">载荷</span><span class="v">无参数</span></div>';
+    }
+    if(pp.hex){h+='<div class="nd-frame-head mono" style="margin-top:6px">载荷 hex: '+pp.hex+'</div>';}
+    h+='</div>';
+  }
+  return h;
+}
+
+function openSample(pid){
+  openModal('📄 帧解析 #'+pid,'<div class="text-muted t-11">加载中...</div>');
+  A.get('/api/packets/'+pid).then(function(d){
+    var ov=document.querySelector('.nd-modal');
+    if(!ov)return;
+    var box=ov.querySelector('.nd-modal-box');
+    box.innerHTML=box.querySelector('.nd-modal-title').outerHTML+frameDetailHtml(d);
+  }).catch(function(e){
+    var ov=document.querySelector('.nd-modal');
+    if(ov)ov.querySelector('.nd-modal-box').innerHTML+='<div class="text-danger">加载失败: '+e.message+'</div>';
+  });
+}
+
+function openExport(aid){
+  var ov=openModal('⬇️ 节点画像导出 0x'+aid.toString(16).toUpperCase().padStart(4,'0'),
+    '<div class="text-muted t-11">生成中...</div>');
+  A.get('/api/nodes/'+aid+'/export').then(function(d){
+    var box=ov.querySelector('.nd-modal-box');
+    var blob=function(txt){return new Blob([txt],{type:'text/plain;charset=utf-8'});};
+    var dl=function(name,url){var a=document.createElement('a');a.href=url;a.download=name;
+      document.body.appendChild(a);a.click();a.remove();};
+    box.innerHTML=box.querySelector('.nd-modal-title').outerHTML
+      +'<p class="t-11">画像 JSON 与 Markdown 已生成, 选择下载:</p>'
+      +'<p><button class="btn btn-p nd-dl" data-f="json">⬇️ 下载 JSON</button>'
+      +'<button class="btn btn-o nd-dl" data-f="md">⬇️ 下载 Markdown</button></p>'
+      +'<p class="text-muted t-10">内容: 节点画像 (厂商/型号/EUI64/端点) + 每类控制命令代表帧的分层解析。</p>';
+    box.querySelector('[data-f="json"]').addEventListener('click',function(){
+      dl('node_0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'_profile.json',
+        URL.createObjectURL(blob(d.json)));
+    });
+    box.querySelector('[data-f="md"]').addEventListener('click',function(){
+      dl('node_0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'_profile.md',
+        URL.createObjectURL(blob(d.md)));
+    });
+  }).catch(function(e){
+    ov.querySelector('.nd-modal-box').innerHTML+= '<div class="text-danger">导出失败: '+e.message+'</div>';
+  });
 }
 
 reg('nodes',function(){
@@ -44,7 +146,7 @@ reg('nodes',function(){
     }else{
       parts.push('<p class="hint mt-1">无 Link Status 邻居数据 (需含链路状态帧的导入, 如 cubx)</p>');
     }
-    // U9: 端点统计 + 控制命令统计 (设备身份/控制方式查询; 不做原始帧样本展示)
+    // U9: 端点统计 + 控制命令统计 (设备身份/控制方式查询)
     var eps=d.endpoints||[];
     if(eps.length){
       parts.push('<p class="t-11">端点: '+eps.map(function(e){
@@ -54,15 +156,20 @@ reg('nodes',function(){
     }
     var cls=d.clusters||[];
     if(cls.length){
-      parts.push('<table class="tbl t-11 mt-1"><thead><tr><th>簇</th><th>命令</th><th>方向</th><th>频率</th></tr></thead><tbody>');
+      // U15: 每行加 "📄 示例" — 该命令最近一帧的分层解析视图弹层
+      parts.push('<table class="tbl t-11 mt-1"><thead><tr><th>簇</th><th>命令</th><th>方向</th><th>频率</th><th></th></tr></thead><tbody>');
       for(var ci=0;ci<cls.length;ci++){var cc=cls[ci];
         var clName=cc.cluster_name||'0x'+(cc.cluster==null?'?':cc.cluster.toString(16).toUpperCase());
         var cmName=cc.cmd_name||'0x'+cc.cmd.toString(16).toUpperCase();
         var dirTxt=cc.dir==='Server→Client'?'S→C':cc.dir==='Client→Server'?'C→S':(cc.dir||'-');
-        parts.push('<tr><td class="mono">'+clName+'</td><td class="mono">'+cmName+'</td><td class="t-10 text-muted">'+dirTxt+'</td><td>'+cc.count+'</td></tr>');
+        var btn=(cc.sample_pkt_id!=null)?'<button class="btn btn-o btn-sm nd-sample" data-pid="'+cc.sample_pkt_id+'" title="查看该命令最近一帧的分层解析">📄 示例</button>':'';
+        parts.push('<tr><td class="mono">'+clName+'</td><td class="mono">'+cmName+'</td><td class="t-10 text-muted">'+dirTxt+'</td><td>'+cc.count+'</td><td>'+btn+'</td></tr>');
       }
       parts.push('</tbody></table>');
     }
+    // U15: 节点画像导出 (JSON+MD)
+    parts.push('<p class="mt-1"><button class="btn btn-s nd-export" data-aid="'+n.aid+'">⬇️ 导出画像</button>'
+      +'<span class="t-10 text-muted" style="margin-left:8px">JSON+MD, 含画像与每类控制命令代表帧解析</span></p>');
     return parts.join('');
   }
 
@@ -92,6 +199,18 @@ reg('nodes',function(){
         var aid=b.closest('tr').dataset.aid;
         location.hash='topo';
         setTimeout(function(){var t=document.getElementById('taddr');if(t){t.value=parseInt(aid).toString(16).toUpperCase();var g=document.getElementById('tgo');if(g)g.click();}},100);
+      });
+    });
+    // U15: 📄 示例 → 帧解析弹层
+    tb.querySelectorAll('.nd-sample').forEach(function(b){
+      b.addEventListener('click',function(e){e.stopPropagation();
+        openSample(parseInt(this.dataset.pid));
+      });
+    });
+    // U15: ⬇️ 导出画像 (JSON+MD)
+    tb.querySelectorAll('.nd-export').forEach(function(b){
+      b.addEventListener('click',function(e){e.stopPropagation();
+        openExport(parseInt(this.dataset.aid));
       });
     });
   }

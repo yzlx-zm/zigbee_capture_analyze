@@ -16,6 +16,10 @@ from fastapi import APIRouter, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 
 from .. import csv_reader
+from .. import zcl_defs
+from .. import tuya_proto as _tuya_proto
+
+_tuya_proto.register(zcl_defs.PAYLOAD_PARSERS)  # U15: 注册涂鸦 0xEF00 载荷解析器
 
 router = APIRouter()
 
@@ -1032,6 +1036,9 @@ def _fallback_layers(p: dict) -> dict:
             zcl["zbee_zcl.cmd.tsn"] = str(p["zcl_seq"])
         if p.get("zcl_direction") is not None:
             zcl["Frame Control Field"] = {"zbee_zcl.dir": str(p["zcl_direction"])}
+        # U15: 命令载荷原始 hex (字段级解析结果在响应顶层 zcl_payload_parsed)
+        if p.get("zcl_payload_hex") is not None:
+            zcl["zbee_zcl.payload.hex"] = p["zcl_payload_hex"]
         layers["zbee_zcl"] = zcl
 
     # ── ZDP (profile 0x0000) — cubx 路径 aps_payload_hex 解析载荷明细 ──
@@ -1174,28 +1181,24 @@ def _get_ack_match() -> tuple[dict, dict]:
     return pairs
 
 
-@router.get("/packets/{pkt_id}")
-async def packet_detail(pkt_id: int):
-    """单帧协议树 — 返回 raw_layers 完整 JSON"""
-    if pkt_id < 0 or pkt_id >= len(_packets):
-        return JSONResponse({"error": f"包 ID {pkt_id} 不存在 (共 {len(_packets)} 帧)"}, 404)
-    p = _packets[pkt_id]
+def _detail_dict(p: dict, pkt_id: int) -> dict:
+    """单帧详情组装 (packet_detail 与节点画像导出共用).
+
+    - layers: 完整协议层树 (cubx 路径为 fallback 构造)
+    - zcl_payload_parsed: ZCL 命令载荷字段级解析 (U15)
+      {parser, mode, fields: [{field, value, note}], hex} | None (无 ZCL 载荷)
+    """
     layers = p.get("raw_layers") or {}
     if not layers:
         layers = _fallback_layers(p)  # cubx 路径 raw_layers 为空 → 平铺字段构造 (U5)
-    # APS Ack 配对 (ack 帧 → 被确认帧; 数据帧 → 确认它的 ack 帧)
-    ack_to_orig, orig_to_ack = _get_ack_match()
-    ack_pair = None
-    if p.get("pkt_type") == "APS Ack":
-        orig = ack_to_orig.get(pkt_id)
-        if orig is not None:
-            ack_pair = {"kind": "ack_to", "peer_id": orig,
-                        "text": f"确认了帧 #{orig}"}
-    else:
-        got = orig_to_ack.get(pkt_id)
-        if got is not None:
-            ack_pair = {"kind": "ack_from", "peer_id": got[0],
-                        "text": f"被帧 #{got[0]} 确认"}
+    # U15: ZCL 命令载荷字段级解析 — 标准簇 schema → 涂鸦注册表 → 字节偏移兜底
+    zcl_parsed = None
+    if p.get("zcl_payload_hex") is not None:
+        ph = p["zcl_payload_hex"]
+        pl = bytes.fromhex(ph) if ph else b""
+        zcl_parsed = zcl_defs.parse_zcl_payload(
+            p.get("aps_cluster"), p.get("zcl_cmd_id"), p.get("zcl_frame_type"),
+            pl, p.get("zcl_direction"))
     return {
         "id": pkt_id,
         "packet_id": p.get("packet_id"),  # 抓包原始帧号 (与列表端点 id 对应同一帧)
@@ -1209,5 +1212,29 @@ async def packet_detail(pkt_id: int):
         "aps_cluster_name": p.get("aps_cluster_name"),
         # U9 改进 (08-13): Read Attr Rsp 属性记录 (详情 ZCL 层展示 厂商/型号 等)
         "zcl_attr_reads": p.get("zcl_attr_reads"),
-        "aps_ack_pair": ack_pair,   # APS Ack 配对 (2026-08-06)
+        "zcl_payload_parsed": zcl_parsed,  # U15 载荷字段级解析
     }
+
+
+@router.get("/packets/{pkt_id}")
+async def packet_detail(pkt_id: int):
+    """单帧协议树 — 返回 raw_layers 完整 JSON"""
+    if pkt_id < 0 or pkt_id >= len(_packets):
+        return JSONResponse({"error": f"包 ID {pkt_id} 不存在 (共 {len(_packets)} 帧)"}, 404)
+    p = _packets[pkt_id]
+    d = _detail_dict(p, pkt_id)
+    # APS Ack 配对 (ack 帧 → 被确认帧; 数据帧 → 确认它的 ack 帧)
+    ack_to_orig, orig_to_ack = _get_ack_match()
+    ack_pair = None
+    if p.get("pkt_type") == "APS Ack":
+        orig = ack_to_orig.get(pkt_id)
+        if orig is not None:
+            ack_pair = {"kind": "ack_to", "peer_id": orig,
+                        "text": f"确认了帧 #{orig}"}
+    else:
+        got = orig_to_ack.get(pkt_id)
+        if got is not None:
+            ack_pair = {"kind": "ack_from", "peer_id": got[0],
+                        "text": f"被帧 #{got[0]} 确认"}
+    d["aps_ack_pair"] = ack_pair  # APS Ack 配对 (2026-08-06)
+    return d

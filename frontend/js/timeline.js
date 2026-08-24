@@ -625,6 +625,15 @@ reg('tl', function(){
               zclFields.push(['attr 0x'+ar.attr_id.toString(16).toUpperCase().padStart(4,'0')+(nm?' '+nm:''), valTxt]);
             }
           }
+          // U15 (08-24): ZCL 命令载荷字段级解析 (标准簇/涂鸦 0xEF00/字节兜底, 与节点页同源)
+          var pp=d.zcl_payload_parsed;
+          if(pp&&pp.fields&&pp.fields.length){
+            zclFields.push(['载荷解析', '('+(pp.parser||'?')+') '+pp.fields.length+' 字段']);
+            for(var pi=0;pi<pp.fields.length;pi++){var pf=pp.fields[pi];
+              zclFields.push([pf.field, pf.value, pf.note||'']);
+            }
+            if(pp.hex)zclFields.push(['载荷 hex', pp.hex]);
+          }
           html+=_tlLayer('ZCL', '#7c3aed', zclFields);
         }else if(!d.decrypted&&!isNwkCmd){
           var isZdp=aps&&_tlIsZdp(aps);

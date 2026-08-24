@@ -1,6 +1,9 @@
 """拓扑 + 节点 API"""
+import json
+
 from fastapi import APIRouter, Query
-from .files import get_packets, get_nodes, get_full_packets
+from fastapi.responses import JSONResponse
+from .files import get_packets, get_nodes, get_full_packets, _detail_dict
 from .. import topology as topo
 from .. import route_events as rev
 from .. import zcl_defs
@@ -167,20 +170,15 @@ def _metric_stats(vals: list) -> dict | None:
     return {"min": min(vals), "avg": round(sum(vals) / len(vals)), "max": max(vals)}
 
 
-@router.get("/nodes")
-async def node_list(search: str = Query(default=""), pan: str = Query(default="")):
-    """节点列表 + 每节点详情 (U3: 首末时间/类型计数/EUI64/LQI-RSSI/邻居表).
+def _node_stats(pkts: list[dict], pan_int: int | None) -> tuple[dict, dict, dict]:
+    """单遍扫描节点统计 + 邻居表/不对称 (node_list 与节点画像导出共用).
 
-    - EUI64/LQI/RSSI 仅 cubx 导入有 (nwk_src64/lqi/rssi 字段), CSV 返回 None
-    - 邻居表复用 _build_phase3_supplements (Link Status 累积, 含不对称标记)
+    每节点: seen/首末 ts/类型计数/LQI/RSSI/EUI64/端点/控制命令统计 (含代表帧索引)。
+    clusters key = (cluster, cmd, dir) → {count, cmd_name, first_pkt_id, last_pkt_id}
+    (U15: 示例帧 = 最近一帧 last_pkt_id; 导出样本 = first+last 各一帧)
     """
-    pkts = get_packets()
-    nodes = get_nodes()
-    pan_int = int(pan, 16) if pan else None
-
-    # 单遍扫描: seen/首末 ts/类型计数/LQI/RSSI/EUI64 (与旧 per-node sum 语义一致, O(pkts))
     stats: dict[int, dict] = {}
-    for p in pkts:
+    for i, p in enumerate(pkts):
         if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
             continue
         ts = p.get("ts") or 0
@@ -234,16 +232,33 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
                 if p.get("aps_dst_ep") is not None:
                     ep = p["aps_dst_ep"]
                     s["endpoints"][ep] = s["endpoints"].get(ep, 0) + 1
-            # ZCL 命令统计 (cluster, cmd, dir) — 命令名用解析层快照
+            # ZCL 命令统计 (cluster, cmd, dir) — 命令名用解析层快照; U15: 记代表帧索引
             if p.get("zcl_cmd_id") is not None:
                 key = (p.get("aps_cluster"), p["zcl_cmd_id"], p.get("zcl_direction"))
                 if key not in s["clusters"]:
-                    s["clusters"][key] = {"count": 0, "cmd_name": p.get("zcl_cmd_name")}
+                    s["clusters"][key] = {"count": 0, "cmd_name": p.get("zcl_cmd_name"),
+                                          "first_pkt_id": i, "last_pkt_id": i}
+                else:
+                    s["clusters"][key]["last_pkt_id"] = i
                 s["clusters"][key]["count"] += 1
 
     # 邻居表 + 不对称链路 (Phase 3 已验证逻辑, 含缓存)
     ls_tables, asym = _build_phase3_supplements(pkts, pan_int)
     asym_levels = {frozenset((a["a"], a["b"])): a["level"] for a in asym}
+    return stats, ls_tables, asym_levels
+
+
+@router.get("/nodes")
+async def node_list(search: str = Query(default=""), pan: str = Query(default="")):
+    """节点列表 + 每节点详情 (U3: 首末时间/类型计数/EUI64/LQI-RSSI/邻居表).
+
+    - EUI64/LQI/RSSI 仅 cubx 导入有 (nwk_src64/lqi/rssi 字段), CSV 返回 None
+    - 邻居表复用 _build_phase3_supplements (Link Status 累积, 含不对称标记)
+    """
+    pkts = get_packets()
+    nodes = get_nodes()
+    pan_int = int(pan, 16) if pan else None
+    stats, ls_tables, asym_levels = _node_stats(pkts, pan_int)
 
     result = []
     for aid, n in sorted(nodes.items()):
@@ -276,6 +291,9 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
                     "cmd_name": v["cmd_name"],
                     "dir": d,
                     "count": v["count"],
+                    # U15: 示例帧 (最近一帧) / 导出样本帧 (最早+最近)
+                    "sample_pkt_id": v.get("last_pkt_id"),
+                    "first_pkt_id": v.get("first_pkt_id"),
                 })
         result.append({
             "aid": aid, "label": label,
@@ -304,3 +322,141 @@ async def node_list(search: str = Query(default=""), pan: str = Query(default=""
     for n in result:
         n.pop("_has_id", None)
     return result
+
+
+# ── U15: 节点画像导出 (JSON + MD, 含代表帧分层解析) ──
+_LAYER_TITLES = {"zbee_wpan": "MAC (802.15.4)", "zbee_nwk": "NWK 网络层",
+                 "ZigBee Security Header": "安全头", "zbee_aps": "APS 应用层",
+                 "zbee_zcl": "ZCL 应用层", "zbee_zdp": "ZDP"}
+
+
+def _layers_to_md(layers: dict) -> list[str]:
+    """协议层树 → Markdown 行 (层标题 + 扁平字段; 嵌套子树展开一层)."""
+    lines: list[str] = []
+    for lname, lfields in layers.items():
+        title = _LAYER_TITLES.get(lname, lname)
+        lines.append(f"**{title}**")
+        if not isinstance(lfields, dict):
+            continue
+        for k, v in lfields.items():
+            if isinstance(v, dict):
+                for sk, sv in v.items():
+                    if not isinstance(sv, (dict, list)):
+                        lines.append(f"- `{k}.{sk}`: {sv}")
+            elif not isinstance(v, (dict, list)):
+                lines.append(f"- `{k}`: {v}")
+    return lines
+
+
+def _node_profile(aid: int, n: dict, st: dict) -> dict:
+    """节点画像 JSON (含端点/命令统计; 不含帧样本 — 样本由调用方附)."""
+    return {
+        "aid": aid,
+        "label": f"0x{aid:04X}",
+        "pan": n.get("pan"),
+        "device_type": n.get("device_type", "unknown"),
+        "eui64": st.get("eui64"),
+        "manufacturer_name": st.get("manufacturer_name"),
+        "model_id": st.get("model_id"),
+        "seen": st["seen"],
+        "first_ts": st.get("first"),
+        "last_ts": st.get("last"),
+        "endpoints": [{"ep": ep, "count": c}
+                      for ep, c in sorted(st["endpoints"].items(), key=lambda kv: -kv[1])],
+        "clusters": [],
+    }
+
+
+def _cmd_label(cl: int | None, cl_name: str | None, cmd: int | None,
+               cmd_name: str | None, d: str | None) -> str:
+    c = cl_name or (f"0x{cl:04X}" if cl is not None else "?")
+    m = cmd_name or (f"0x{cmd:02X}" if cmd is not None else "?")
+    return f"{c} · {m} ({d or '?'})"
+
+
+@router.get("/nodes/{aid}/export")
+async def node_export(aid: int):
+    """节点画像导出 (U15): JSON + MD 双份, 含每类控制命令代表帧的分层解析.
+
+    代表帧: 每命令最早 1 帧 + 最近 1 帧 (确定性, 不随导出顺序变化)。
+    JSON 含 2 帧完整解析; MD 每命令 1 帧 (最近帧), 精简可读。
+    """
+    pkts = get_packets()
+    nodes = get_nodes()
+    if not pkts:
+        return {"error": "无数据 (需先导入抓包)"}
+    if aid not in nodes:
+        return JSONResponse({"error": f"节点 0x{aid:04X} 不存在"}, 404)
+    stats, _ls, _asym = _node_stats(pkts, None)
+    st = stats.get(aid)
+    if st is None:
+        return JSONResponse({"error": f"节点 0x{aid:04X} 无帧数据"}, 404)
+    n = nodes[aid]
+
+    profile = _node_profile(aid, n, st)
+    md_lines: list[str] = [
+        f"# 节点画像 0x{aid:04X}",
+        "",
+        f"- PAN: 0x{n.get('pan', 0):04X} · 设备类型: {n.get('device_type', 'unknown')}",
+        f"- EUI64: {st.get('eui64') or 'N/A'}",
+        f"- 厂商: {st.get('manufacturer_name') or 'N/A'} · 型号: {st.get('model_id') or 'N/A'}",
+        f"- 出现: {st['seen']} 帧 · 首见/末见: {st.get('first')} / {st.get('last')}",
+        "",
+        "## 端点",
+    ]
+    if st["endpoints"]:
+        md_lines += [f"- EP 0x{ep:02X}: {c} 帧" for ep, c in
+                     sorted(st["endpoints"].items(), key=lambda kv: -kv[1])]
+    else:
+        md_lines.append("- (无端点数据)")
+    md_lines += ["", "## 控制命令统计", "", "| 簇 | 命令 | 方向 | 频率 |", "|---|---|---|---|"]
+
+    for (cl, cmd, d), v in sorted(st["clusters"].items(), key=lambda kv: -kv[1]["count"]):
+        cl_name = zcl_defs.get_cluster_name(cl)
+        entry = {"cluster": cl, "cluster_name": cl_name, "cmd": cmd,
+                 "cmd_name": v["cmd_name"], "dir": d, "count": v["count"], "samples": []}
+        # 代表帧: 最早 + 最近 (索引即 _packets 下标, packet_detail 同源)
+        seen_ids = {}
+        for pid in (v.get("first_pkt_id"), v.get("last_pkt_id")):
+            if pid is None or pid in seen_ids or not (0 <= pid < len(pkts)):
+                continue
+            seen_ids[pid] = 1
+            entry["samples"].append(_detail_dict(pkts[pid], pid))
+        profile["clusters"].append(entry)
+        md_lines.append(
+            f"| {cl_name or f'0x{cl:04X}' if cl is not None else '?'} | "
+            f"{v['cmd_name'] or f'0x{cmd:02X}' if cmd is not None else '?'} | "
+            f"{d or '-'} | {v['count']} |")
+
+    md_lines += ["", "## 代表帧样本", ""]
+    for idx, entry in enumerate(profile["clusters"], 1):
+        label = _cmd_label(entry["cluster"], entry["cluster_name"],
+                           entry["cmd"], entry["cmd_name"], entry["dir"])
+        md_lines.append(f"### {idx}. {label} (×{entry['count']})")
+        if not entry["samples"]:
+            md_lines.append("- (无代表帧)")
+            continue
+        for s in entry["samples"]:
+            from datetime import datetime as _dt
+            ts_txt = _dt.fromtimestamp(s["ts"]).strftime("%Y-%m-%d %H:%M:%S") if s.get("ts") else "?"
+            md_lines.append("")
+            md_lines.append(f"#### 帧 #{s['id']} (原始帧号 {s.get('packet_id')}) @ {ts_txt} · {s.get('pkt_type')}")
+            md_lines += _layers_to_md(s["layers"])
+            pp = s.get("zcl_payload_parsed")
+            if pp is not None:
+                md_lines.append("")
+                md_lines.append(f"**ZCL 载荷解析 ({pp.get('parser') or '无载荷'})**")
+                if pp.get("fields"):
+                    md_lines.append("| 字段 | 值 | 说明 |")
+                    md_lines.append("|---|---|---|")
+                    for f in pp["fields"]:
+                        md_lines.append(f"| {f['field']} | {f['value']} | {f.get('note', '')} |")
+                else:
+                    md_lines.append("- (无参数)")
+                if pp.get("hex"):
+                    md_lines.append("")
+                    md_lines.append(f"载荷 hex: `{pp['hex']}`")
+        md_lines.append("")
+
+    md = "\n".join(md_lines)
+    return {"json": json.dumps(profile, ensure_ascii=False, indent=2), "md": md}
