@@ -144,6 +144,23 @@ def _behavior_of(aid: int, inf: dict | None, late_cut: float | None,
     return "unknown"
 
 
+def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
+                  t0: float | None, t1: float | None) -> None:
+    """U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描).
+    graph 与 events 两端点共用 — 拓扑页实际消费 events (2026-08-24 自审)."""
+    full = get_full_packets()
+    stats, _ls, _asym = _node_stats(pkts, pan_int)
+    beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
+    for nd in graph.get("nodes", []):
+        aid = nd["aid"]
+        st = stats.get(aid)
+        nd["manufacturer_name"] = st["manufacturer_name"] if st else None
+        nd["model_id"] = st["model_id"] if st else None
+        inf = beh.get(aid)
+        nd["behavior"] = _behavior_of(aid, inf, late_cut, nd.get("device_type"))
+        nd["poll_interval"] = inf["poll_gap"] if inf else None
+
+
 @router.get("/topology/graph")
 async def topology_graph(pan: str = Query(default=""),
                          time_start: float | None = Query(default=None),
@@ -155,18 +172,7 @@ async def topology_graph(pan: str = Query(default=""),
     pan_int = int(pan, 16) if pan else None
     graph = topo.build(pkts, nodes, filter_pan=pan_int,
                        time_start=time_start, time_end=time_end)
-    # U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描)
-    full = get_full_packets()
-    stats, _ls, _asym = _node_stats(pkts, pan_int)
-    beh, late_cut = _behavior_map(full if full else pkts, time_start, time_end)
-    for nd in graph.get("nodes", []):
-        aid = nd["aid"]
-        st = stats.get(aid)
-        nd["manufacturer_name"] = st["manufacturer_name"] if st else None
-        nd["model_id"] = st["model_id"] if st else None
-        inf = beh.get(aid)
-        nd["behavior"] = _behavior_of(aid, inf, late_cut, nd.get("device_type"))
-        nd["poll_interval"] = inf["poll_gap"] if inf else None
+    _enrich_nodes(graph, pkts, pan_int, time_start, time_end)
     return graph
 
 
@@ -182,10 +188,12 @@ async def topology_from_events(pan: str = Query(default=""),
     pan_int = int(pan, 16) if pan else None
     timeline = _ensure_events_timeline()
     ls_tables, asym = _build_phase3_supplements(pkts, pan_int, time_start, time_end)
-    return rev.derive_topology(timeline, nodes, pan=pan_int,
-                               t0=time_start, t1=time_end,
-                               link_status_tables=ls_tables,
-                               asymmetric_links=asym)
+    graph = rev.derive_topology(timeline, nodes, pan=pan_int,
+                                t0=time_start, t1=time_end,
+                                link_status_tables=ls_tables,
+                                asymmetric_links=asym)
+    _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为状态
+    return graph
 
 
 @router.get("/diag/offline")

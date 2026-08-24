@@ -228,6 +228,8 @@ reg('topo', function(){
       var dt=n.device_type||'unknown';
       var onPath=(!hasPaths)||!!pathNodes[aid]||aid===0;  // 无路径全可见; 协调器永远可见
       // U14-2: label 双行 — 第二行型号 (model_id 非空时; 小节点放不下由 tooltip 兜底)
+      // U14-3: behavior 类 (rejoining/sleeping/offline) — 仅 onpath 节点应用
+      //   (offpath 仅 LS 可见节点是辅助渲染, 行为状态无意义)
       var model=n.model_id||'';
       cyNodes.push({
         data:{id:''+aid,
@@ -235,7 +237,7 @@ reg('topo', function(){
           aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
           model_id:model, manufacturer_name:n.manufacturer_name||'',
           behavior:n.behavior||'', poll_interval:n.poll_interval},
-        classes:(onPath?dt+' onpath':'offpath')
+        classes:(onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')):'offpath')
       });
     }
 
@@ -312,6 +314,11 @@ reg('topo', function(){
         {selector:'node.router', style:{'background-color':'#3b82f6','shape':'diamond','width':32,'height':32}},
         {selector:'node.end_device', style:{'background-color':'#16a34a','shape':'ellipse','width':22,'height':22}},
         {selector:'node.unknown', style:{'background-color':'#94a3b8','shape':'triangle','width':22,'height':22}},
+        // U14-3: 行为状态样式 — 重连橙虚线边框 / 休眠灰半透明 / 离线暗红边框
+        // (角标 canvas 难实现, 用粗红边框 + tooltip 状态文字表达)
+        {selector:'node.rejoining', style:{'border-color':'#f59e0b','border-style':'dashed','border-width':3}},
+        {selector:'node.sleeping', style:{'opacity':0.55}},
+        {selector:'node.offline', style:{'border-color':'#b91c1c','border-width':3}},
         // 路径节点: 紫框
         {selector:'node.onpath', style:{'border-width':3,'border-color':'#7c3aed'}},
         // 路径外节点: 半透明缩小
@@ -375,7 +382,7 @@ reg('topo', function(){
       var topoNbt2=S.topo?S.topo.neighbor_tables:null;
       if(topoNbt2&&topoNbt2[0]){for(var nbStr2 in topoNbt2[0]){var nba2=parseInt(nbStr2);if(nd[nba2]==null)nd[nba2]=1;}}
       var chg2=true;while(chg2){chg2=false;for(var a2 in topoNbt2||{}){var ai2=parseInt(a2);var ndv=nd[ai2];if(ndv==null||ndv>=99||ndv>=pathMax)continue;var nbs2=topoNbt2[ai2]||{};for(var nb2 in nbs2){var bi2=parseInt(nb2);var ndv2=nd[bi2];if(ndv2==null||ndv2==99){if(ndv+1<=pathMax){nd[bi2]=ndv+1;chg2=true;}}}}}
-      cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{n.style('opacity','1');}});
+      cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}});
       var cols={};cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var pos={},offAll=[];cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
       var offCols=Math.max(3,Math.ceil(offAll.length/12));if(offCols<1)offCols=1;var offPerCol=Math.ceil(offAll.length/offCols),offStartX=-(offCols+2)*200;
@@ -424,7 +431,7 @@ reg('topo', function(){
         if(!isOnPath){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
           n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
         }
-        else{n.style('opacity','1');}
+        else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}
       });
 
       var cols={}; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
