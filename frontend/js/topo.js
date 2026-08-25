@@ -440,12 +440,19 @@ reg('topo', function(){
 
     // 默认固定列 — 深度+布局+fit一体化
     (function(){
+      // ⚠️ U13 步骤 A (2026-08-25): 层级只基于**协议链路证据** (route 边 = RR 路径,
+      // parent 边 = poll/Assoc 父链路) BFS — 曾混入 LS 邻居扩展 (物理 1-hop 可达 ≠
+      // 转发层级, 用户反馈: A-B-C 中 C 被 LS 拉到深度 1 与 B 同列, 线交错);
+      // LS 邻居仅作辅助边显示, 不参与深度; 无链路证据节点 → offpath 区
       var nd={};nd[0]=0;var chg=true;
-      while(chg){chg=false;cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;var s=parseInt(e.data('source')),t=parseInt(e.data('target'));if(nd[s]!=null){var nd2=nd[s]+1;if(nd[t]==null||nd2<nd[t]){nd[t]=nd2;chg=true;}}if(nd[t]!=null){var nd2=nd[t]+1;if(nd[s]==null||nd2<nd[s]){nd[s]=nd2;chg=true;}}});}
+      while(chg){chg=false;cy.edges().forEach(function(e){
+        var et=e.data('edge_type');
+        if(et!=='route'&&et!=='parent')return;
+        var s=parseInt(e.data('source')),t=parseInt(e.data('target'));
+        if(nd[s]!=null){var nd2=nd[s]+1;if(nd[t]==null||nd2<nd[t]){nd[t]=nd2;chg=true;}}
+        if(nd[t]!=null){var nd2=nd[t]+1;if(nd[s]==null||nd2<nd[s]){nd[s]=nd2;chg=true;}}
+      });}
       var pathMax=0;for(var k in nd)if(nd[k]>pathMax)pathMax=nd[k];
-      var topoNbt2=S.topo?S.topo.neighbor_tables:null;
-      if(topoNbt2&&topoNbt2[0]){for(var nbStr2 in topoNbt2[0]){var nba2=parseInt(nbStr2);if(nd[nba2]==null)nd[nba2]=1;}}
-      var chg2=true;while(chg2){chg2=false;for(var a2 in topoNbt2||{}){var ai2=parseInt(a2);var ndv=nd[ai2];if(ndv==null||ndv>=99||ndv>=pathMax)continue;var nbs2=topoNbt2[ai2]||{};for(var nb2 in nbs2){var bi2=parseInt(nb2);var ndv2=nd[bi2];if(ndv2==null||ndv2==99){if(ndv+1<=pathMax){nd[bi2]=ndv+1;chg2=true;}}}}}
       cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}});
       var cols={};cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var pos={},offAll=[];cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
@@ -481,26 +488,20 @@ reg('topo', function(){
   // ═══ 布局引擎 ═══
   function runLayout(){
     if(!cy) return;
-    // BFS深度: Route Record路径
+    // BFS深度: 协议链路证据 (route 边 = RR 路径 / parent 边 = poll/Assoc 父链路)
+    // ⚠️ U13 步骤 A: 曾混入 LS 邻居扩展 (物理可达 ≠ 转发层级) — 已移除;
+    // LS 仅作辅助边显示, 不参与层级
     var nodeDepth={}; nodeDepth[0]=0;
     var chg=true;while(chg){chg=false;
-      cy.edges().forEach(function(e){if(e.data('edge_type')!=='route')return;
+      cy.edges().forEach(function(e){
+        var et=e.data('edge_type');
+        if(et!=='route'&&et!=='parent')return;
         var s=parseInt(e.data('source'));var t=parseInt(e.data('target'));
         if(nodeDepth[s]!=null){var nd=nodeDepth[s]+1;if(nodeDepth[t]==null||nd<nodeDepth[t]){nodeDepth[t]=nd;chg=true;}}
         if(nodeDepth[t]!=null){var nd=nodeDepth[t]+1;if(nodeDepth[s]==null||nd<nodeDepth[s]){nodeDepth[s]=nd;chg=true;}}
       });
     }
     var pathMax=0; for(var k in nodeDepth)if(nodeDepth[k]>pathMax)pathMax=nodeDepth[k];
-
-    // LS邻居表补充off-path深度(最多pathMax列, 放左侧)
-    var topoNbt=S.topo?S.topo.neighbor_tables:null;
-    if(topoNbt&&topoNbt[0]){for(var nbStr in topoNbt[0]){var nba=parseInt(nbStr);if(nodeDepth[nba]==null)nodeDepth[nba]=1;}}
-    var chg=true;while(chg){chg=false;
-      for(var a in topoNbt||{}){var ai=parseInt(a);var nd=nodeDepth[ai];if(nd==null||nd>=99||nd>=pathMax)continue;
-        var nbs=topoNbt[ai]||{};
-        for(var nb in nbs){var bi=parseInt(nb);var nd2=nodeDepth[bi];if(nd2==null||nd2==99){if(nd+1<=pathMax){nodeDepth[bi]=nd+1;chg=true;}}}
-      }
-    }
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
     if(curLayout===0){  // fixed column

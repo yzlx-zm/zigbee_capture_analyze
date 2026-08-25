@@ -8,7 +8,7 @@ window.S = S; window.A = A; window.sb = sb; window.fmtTs = fmtTs;
 window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
-import './topo.js?v=20260825f';  // 缓存破坏: 时区修复 (UTC→本地), 改版递增
+import './topo.js?v=20260825g';  // 缓存破坏: 时区修复 (UTC→本地), 改版递增
 import './import.js?v=20260813k';  // 缓存破坏: 大包阈值 30MB→1MB, 改版递增
 import './timeline.js?v=20260824a';  // 缓存破坏: 详情 ZCL 属性展示, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
