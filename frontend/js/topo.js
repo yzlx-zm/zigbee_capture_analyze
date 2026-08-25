@@ -7,13 +7,14 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let silentHidden = false, neighborHidden = false;   // 静默/邻居边 状态 (模块级, 跨页面保留)
+let silentHidden = false, neighborHidden = false, focusAid = null;   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
 reg('topo', function(){
   // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
   if(cy){cy.destroy();cy=null;}
+  focusAid=null;  // U13-B: 页面重建退出聚焦
   clearTimeout(tSliderTO);
   var h='<div class="page">'
     // ── 左侧边栏 ──
@@ -75,6 +76,7 @@ reg('topo', function(){
     // Cytoscape 图
     +'<div id="cy-graph">'
     +'<div id="off-frame"></div>'
+    +'<div id="focus-bar" style="display:none"></div>'
     +'<div id="off-label">📡 仅LS可见</div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
@@ -108,6 +110,32 @@ reg('topo', function(){
       console.error('loadData error:',e);
       document.getElementById('tinfo').textContent='数据加载失败';
     });
+  }
+
+  // ═══ U13-B: 聚焦模式 (选节点看链路变化, 其他隐藏) ═══
+  function reloadTopo(){
+    var pan=S.topoPan||'';
+    loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){}}, S.topoT0, S.topoT1);
+  }
+  function enterFocus(aid){
+    focusAid=aid;
+    var bar=document.getElementById('focus-bar');
+    bar.innerHTML='🔍 聚焦 <b class="mono">0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
+      +'<span class="t-10" style="color:#cbd5e1">拖动时间滑块观察该节点链路变化</span>'
+      +'<button class="btn btn-o btn-s" id="focus-tl" style="color:#fff">🔍 时间线</button>'
+      +'<button class="btn btn-s" id="focus-exit">✕ 退出</button>';
+    bar.style.display='flex';
+    document.getElementById('focus-tl').addEventListener('click',function(){
+      S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl';
+    });
+    document.getElementById('focus-exit').addEventListener('click',exitFocus);
+    reloadTopo();
+  }
+  function exitFocus(){
+    focusAid=null;
+    var bar=document.getElementById('focus-bar');
+    if(bar)bar.style.display='none';
+    reloadTopo();
   }
 
   // ═══ 侧边栏渲染 ═══
@@ -224,8 +252,23 @@ reg('topo', function(){
     // ── 节点 ──
     var cyNodes=[];
     var hasPaths=rps.length>0;  // 无 Route Record 路径时全部按"在路径上"渲染, 否则 offpath 会让整图隐形
+    // ⚠️ U13-B 聚焦模式: focusAid 非空时只渲染 协调器+聚焦节点+链路链 (downlink+parent 链)
+    var focusSet=null;
+    if(focusAid!=null&&ns.length){
+      focusSet={}; focusSet[0]=1; focusSet[focusAid]=1;
+      var fnd=null; for(var fi=0;fi<ns.length;fi++){if(ns[fi].aid===focusAid){fnd=ns[fi];break;}}
+      if(fnd){
+        if(fnd.downlink)fnd.downlink.forEach(function(a){focusSet[a]=1;});
+        var fcur=focusAid, fguard=0;
+        while(fcur!=null&&fcur!==0&&fguard++<20){
+          var fpn=null; for(var pi2=0;pi2<ns.length;pi2++){if(ns[pi2].aid===fcur){fpn=ns[pi2];break;}}
+          if(fpn&&fpn.parent!=null){focusSet[fpn.parent]=1;fcur=fpn.parent;}else break;
+        }
+      }
+    }
     for(var i=0;i<ns.length;i++){
       var n=ns[i]; var aid=n.aid;
+      if(focusSet&&!focusSet[aid])continue;  // 聚焦: 非链路链节点不渲染
       var dt=n.device_type||'unknown';
       var onPath=(!hasPaths)||!!pathNodes[aid]||aid===0;  // 无路径全可见; 协调器永远可见
       // U14-2: label 双行 — 第二行型号 (model_id 非空时; 小节点放不下由 tooltip 兜底)
@@ -253,6 +296,7 @@ reg('topo', function(){
     // ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 (后端 inactive_nodes, 窗口切换不跳变)
     var inact=d.inactive_nodes||[];
     for(var ik=0;ik<inact.length;ik++){var ino=inact[ik];
+      if(focusSet&&!focusSet[ino.aid])continue;  // 聚焦: 窗外灰度也只留链路链上的
       cyNodes.push({
         data:{id:'in-'+ino.aid, label:'0x'+ino.aid.toString(16).toUpperCase().padStart(4,'0'),
               aid:ino.aid, device_type:ino.device_type||'unknown', seen:ino.seen||0,
@@ -465,7 +509,13 @@ reg('topo', function(){
     cy.on('mousemove',function(e){ if(tooltip.style.display==='block') updateTooltipPos(e); });  // tooltip 跟随鼠标移动
 
     // Click → 跳转时间线
-    cy.on('tap','node',function(e){var n=e.target;var aid=n.data('aid');S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl';});
+    // ⚠️ U13-B (2026-08-25): 单击进入聚焦模式 (曾直接跳时间线) — 选节点看链路变化,
+    // 时间线跳转移到聚焦横幅按钮; 再单击同节点退出聚焦
+    cy.on('tap','node',function(e){var n=e.target;var d=n.data();
+      if(d.inactive)return;
+      if(focusAid===d.aid){exitFocus();return;}
+      enterFocus(d.aid);
+    });
 
       // 双击 → 高亮/淡出
       cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
