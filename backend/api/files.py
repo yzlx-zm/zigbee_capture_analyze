@@ -699,7 +699,13 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
         if pc:
             nodes[aid]["pan"] = max(pc, key=pc.get)
 
-    # 设备类型推断 (2026-08-06 重构): 物理行为信号 > 入网 capability 声明 > unknown
+    # 设备类型推断 (2026-08-06 重构 + 2026-08-25 修正):
+    # ① FFD 行为铁证 (LS/RREP/RR中继) → router
+    # ② Device Announce capability 自声明 (权威, 用户反馈: 广播帧已声明中继却判不出) → 按声明
+    # ③ poll 行为推断 → end_device
+    # ④ 无信号 → unknown
+    # ⚠️ 曾把 capability 排在 poll 之后: 中继在间接传输场景也会发 poll (MAC Data Request
+    # 取 pending 数据), poll 压过自声明导致误判终端 — 自声明是设备入网时的权威声明, 优先
     for aid in nodes:
         if aid == 0:
             nodes[aid]["device_type"] = "coordinator"
@@ -707,14 +713,12 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
         ffd_ev = (aid in has_link_status or aid in has_route_reply
                   or aid in has_route_relay)  # U13: +RR 中继 (FFD 强信号)
         sed_ev = aid in has_poll
-        if ffd_ev and not sed_ev:
+        if ffd_ev:
             nodes[aid]["device_type"] = "router"
-        elif sed_ev and not ffd_ev:
-            nodes[aid]["device_type"] = "end_device"
-        elif ffd_ev and sed_ev:
-            nodes[aid]["device_type"] = "router"  # 信号冲突 (规范上 FFD 不 poll / RFD 不发 LS): 物理帧证据优先
         elif aid in cap_declared:
             nodes[aid]["device_type"] = cap_declared[aid]
+        elif sed_ev:
+            nodes[aid]["device_type"] = "end_device"
         else:
             # 无信号不可判定: RxOnWhenIdle 的 SED 不 poll; 路由器 LS 可能未捕获/未解密 — 如实标 unknown
             nodes[aid]["device_type"] = "unknown"

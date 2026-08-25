@@ -403,7 +403,16 @@ def derive_topology(timeline: RouteEventTimeline,
     req_events = timeline.query(t0, t1, [EVENT_ROUTE_REQUEST])
     ns_events = timeline.query(t0, t1, [EVENT_NETWORK_STATUS])
 
-    # PAN 过滤
+    # ── 主 PAN 自动选择 + 过滤 (2026-08-25 修复: 曾在过滤后赋值 → pan=None 时不过滤,
+    # 多 PAN 聚合抓包全部混杂显示; 每 PAN 协调器都是 0x0000, 混在一起拓扑错乱) ──
+    if pan is None:
+        _pan_counts: defaultdict = defaultdict(int)
+        for e in rr_events + req_events + ns_events:
+            if e.pan:
+                _pan_counts[e.pan] += 1
+        if _pan_counts:
+            pan = max(_pan_counts, key=_pan_counts.get)
+
     if pan is not None:
         rr_events = [e for e in rr_events if e.pan == pan]
         req_events = [e for e in req_events if e.pan == pan]
