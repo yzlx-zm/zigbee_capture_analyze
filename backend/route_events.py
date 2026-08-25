@@ -405,13 +405,14 @@ def derive_topology(timeline: RouteEventTimeline,
 
     # ── 主 PAN 自动选择 + 过滤 (2026-08-25 修复: 曾在过滤后赋值 → pan=None 时不过滤,
     # 多 PAN 聚合抓包全部混杂显示; 每 PAN 协调器都是 0x0000, 混在一起拓扑错乱) ──
-    if pan is None:
-        _pan_counts: defaultdict = defaultdict(int)
-        for e in rr_events + req_events + ns_events:
-            if e.pan:
-                _pan_counts[e.pan] += 1
-        if _pan_counts:
-            pan = max(_pan_counts, key=_pan_counts.get)
+    # pan_counts_all 保持全量 — PAN 列表需显示所有网络供用户切换 (曾用过滤后事件
+    # 统计 → 列表只剩主 PAN, 无法切到其它网络, 用户反馈 08-25 二次修正)
+    pan_counts_all: defaultdict = defaultdict(int)
+    for e in rr_events + req_events + ns_events:
+        if e.pan:
+            pan_counts_all[e.pan] += 1
+    if pan is None and pan_counts_all:
+        pan = max(pan_counts_all, key=pan_counts_all.get)
 
     if pan is not None:
         rr_events = [e for e in rr_events if e.pan == pan]
@@ -501,22 +502,17 @@ def derive_topology(timeline: RouteEventTimeline,
             "direction": "downstream_failed",
         })
 
-    # ── PAN 统计 ──
-    pan_counts = defaultdict(int)
+    # ── PAN 统计 (全量 pan_counts_all 供 PAN 列表; 当前窗过滤后事件只用于活跃节点) ──
+    pan_counts = pan_counts_all  # 全量: PAN 列表展示所有网络供切换
     active_aids: set[int] = set()
     for e in rr_events:
-        if e.pan: pan_counts[e.pan] += 1
         active_aids.add(e.src); active_aids.add(e.dst)
         active_aids.update(e.relays)
     for e in req_events:
-        if e.pan: pan_counts[e.pan] += 1
         active_aids.add(e.src); active_aids.add(e.dst)
     for e in ns_events:
-        if e.pan: pan_counts[e.pan] += 1
         active_aids.add(e.src); active_aids.add(e.dst)
-    main_pan = max(pan_counts, key=pan_counts.get) if pan_counts else None
-    if pan is None and main_pan is not None:
-        pan = main_pan
+    main_pan = pan if pan is not None else None
 
     # ── 节点 ──
     node_list = []
