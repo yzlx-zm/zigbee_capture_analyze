@@ -318,15 +318,18 @@ def _parse_route_record(plaintext: bytes) -> dict | None:
     scipy 的 ZigbeeNWKCommandPayload 对 relay_list 解析不可靠,
     改为手动: cmd_id(1) + options(1) + relay_count(1) + relay_device[](each 2 LE).
     """
-    if len(plaintext) < 3:
+    if len(plaintext) < 2:
         return None
     cmd_id = plaintext[0]
     if cmd_id != 0x05:  # Route Record
         return None
     # Route Record format: cmd_id(1) + relay_count(1) + relay_device[](each 2 LE)
+    # ⚠️ 最少 2 字节 (直连无中继), 曾要求 >=3 把 count=0 的直连 RR 提前拦截
     relay_count = plaintext[1]
     if relay_count == 0:
-        return None
+        # ⚠️ 2026-08-25 修复: 直连 RR (relay_count=0) 是合法帧 — 设备直连协调器无中继;
+        # 曾返回 None → 事件提取双保险跳过 → 直连设备 (卷帘 1F4A RR×4) 在拓扑消失
+        return {"count": 0, "relays": []}
     relays = []
     for i in range(min(relay_count, 32)):  # 安全上限
         offset = 2 + i * 2

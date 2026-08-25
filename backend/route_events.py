@@ -143,7 +143,9 @@ def extract_route_record_events(packets: list[dict]) -> list[RouteEvent]:
         if p.get("pkt_type") != "Route Record":
             continue
         rr = p.get("route_record_relays")
-        if not rr or not rr.get("relays"):
+        # ⚠️ 2026-08-25 修复: 直连 RR (relays 空) 是合法事件 — 设备直连协调器时
+        # 无中继, relays 为空; 曾整帧跳过 → 直连设备 (卷帘 1F4A RR×4) 在拓扑消失
+        if rr is None:
             continue
         src = p.get("nwk_src")
         dst = p.get("nwk_dst")
