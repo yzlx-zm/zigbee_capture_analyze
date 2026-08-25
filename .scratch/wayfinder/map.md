@@ -89,6 +89,15 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   (906C) / 直连 RR 三重拦截丢弃 (1F4A 等 5 设备消失) / 多 PAN 混杂 (过滤顺序+列表全量) /
   DA capability 优先级 (中继间接传输 poll 误判) / PAN 列表恢复切换; 回归 zcl_fcf 12/12 +
   p2 4/4; A657 unknown 素材证据不足诚实标注
+- [U16 报文页看包体验优化](issues/U16-时间线看包体验优化.md) — 7 项全落地 (提交 1048e70):
+  字段点选 (PAN/地址) / 未解密默认隐藏+开关 / 摘要列 / 路径列 (完整路径+展开) /
+  APS Ctr 列 / 层级着色 / 事务链 (同 tsn 响应+跳转; ⚠️ 首版误配收紧: 仅 ZCL 帧+仅 tsn);
+  用户驱动附加: **页面改名 时间线→报文** / **全量化** (用户裁定 A: _packets=全量帧
+  4158→8435, 未解密语义=仅 NWK 安全未解密, 明文 MAC 帧不隐藏) / **MAC Ack 支持**
+  (用户裁定 B, cubx+tshark 双路径 ft=2, 8626=8435+104 reserved+87 无信息帧;
+  MCP 依据: 官方 Network Analyzer 展示 Ack) / 自动加载全量 / DataReq 命名 scapy 源码级
+  修正 (4=DataReq) / 🔒 仅限 NWK 安全; 上行路径=下行 source-route 反转 (RR 证据实证
+  不足: 31 帧仅 3 帧 relays 非空); 回归 P1 15/15 + P2 4/4 + CDP 9 脚本 74/74
 
 ## Not yet specified
 
