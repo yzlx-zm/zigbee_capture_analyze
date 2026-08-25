@@ -965,6 +965,11 @@ reg('topo', function(){
   document.getElementById('trst').addEventListener('click',function(){
     document.getElementById('tpan').value='';document.getElementById('taddr').value='';
     S.topoPan=null;S.topoAddr=null;hlNode=null;
+    // ⚠️ U13-B 修复 (用户反馈 08-25): 重置必须退出聚焦模式 + 恢复全部时间窗,
+    // 否则 focusAid 残留 → 重置后仍只显示聚焦链路链节点
+    focusAid=null;
+    var fb=document.getElementById('focus-bar');if(fb)fb.style.display='none';
+    var wsSel=document.getElementById('twin-size');if(wsSel)wsSel.value='9999';
     tCenter=null;
     document.getElementById('tsl').value=500;
     updateTimeLabel();
