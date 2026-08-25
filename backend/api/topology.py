@@ -230,6 +230,65 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
         nd["downlink"] = downlink_map.get(aid)
 
 
+@router.get("/topology/link-history")
+async def link_history(aid: int, pan: str = Query(default=""),
+                       time_start: float | None = Query(default=None),
+                       time_end: float | None = Query(default=None)):
+    """节点链路历史 (U13): RR 路径变更 + poll 父变更的分段时间线.
+
+    每段 = 一段连续时间内稳定的链路证据 (签名变化或 >60s 间隔 → 新段);
+    点段可看"当时走哪条链路", 替代播放动画 (用户 08-21 grilling 对齐).
+    """
+    pkts = get_packets()
+    full = get_full_packets() or pkts
+    pan_int = int(pan, 16) if pan else None
+
+    frames: list[tuple] = []  # (ts, kind, signature)
+    for p in full:
+        ts = p.get("ts", 0)
+        if time_start is not None and ts < time_start:
+            continue
+        if time_end is not None and ts > time_end:
+            continue
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
+        if p.get("nwk_src") == aid and p.get("nwk_cmd_id") == 5:
+            rr = p.get("route_record_relays") or {}
+            relays = tuple(rr.get("relays") or [])
+            frames.append((ts, "route", (p.get("nwk_dst"), relays)))
+        elif (p.get("mac_cmd_id") == 4 and p.get("mac_src") == aid
+              and isinstance(p.get("mac_dst"), int)):
+            frames.append((ts, "parent", ("parent", p["mac_dst"])))
+
+    if not frames:
+        return {"aid": aid, "segments": [], "error": "无链路证据帧 (该节点无 RR/poll)"}
+
+    # 分段: 签名变化或 >60s 间隔 → 新段
+    segments: list[dict] = []
+    cur: dict | None = None
+    for ts, kind, sig in sorted(frames):
+        if cur is None or kind != cur["kind"] or sig != cur["sig"] or ts - cur["t1"] > 60:
+            if cur:
+                segments.append(cur)
+            cur = {"kind": kind, "sig": sig, "t0": ts, "t1": ts}
+        else:
+            cur["t1"] = ts
+    if cur:
+        segments.append(cur)
+
+    out: list[dict] = []
+    for s in segments:
+        if s["kind"] == "route":
+            dst, relays = s["sig"]
+            path_str = f"0x{aid:04X} → " + (" → ".join(f"0x{r:04X}" for r in relays) if relays else "(直连)")
+            out.append({"t0": s["t0"], "t1": s["t1"], "kind": "route",
+                        "path_str": path_str, "relays": list(relays), "dst": dst})
+        else:
+            out.append({"t0": s["t0"], "t1": s["t1"], "kind": "parent",
+                        "path_str": f"父: 0x{s['sig'][1]:04X}", "parent": s["sig"][1]})
+    return {"aid": aid, "segments": out}
+
+
 @router.get("/topology/graph")
 async def topology_graph(pan: str = Query(default=""),
                          time_start: float | None = Query(default=None),

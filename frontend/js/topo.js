@@ -83,9 +83,11 @@ reg('topo', function(){
     +'<div id="bottom-panels">'
     +'<div class="bp-head">'
     +'<button class="btn bp-tab on" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
+    +'<button class="btn bp-tab" onclick="togBpTab(\'history\',this)">🕐 链路历史</button>'
     +'<button class="btn bp-tab" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
     +'</div>'
     +'<div id="bp-routes" class="bp-body"></div>'
+    +'<div id="bp-history" class="bp-body hidden"></div>'
     +'<div id="bp-neighbors" class="bp-body hidden"></div>'
     +'</div>'
     +'</div></div>';
@@ -375,6 +377,7 @@ reg('topo', function(){
           'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
+        {selector:'edge.hist-hl', style:{'width':6,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48','z-index':999}},
       ],
         wheelSensitivity:0.3,
       });
@@ -696,9 +699,88 @@ reg('topo', function(){
     document.querySelectorAll('.bp-tab').forEach(function(b){b.classList.remove('on');b.style.borderBottomColor='transparent'});
     if(btn){btn.classList.add('on');btn.style.borderBottomColor='#3b82f6';}
     document.getElementById('bp-routes').style.display=bp==='routes'?'block':'none';
+    document.getElementById('bp-history').style.display=bp==='history'?'block':'none';
     document.getElementById('bp-neighbors').style.display=bp==='neighbors'?'block':'none';
+    if(bp==='history') renderHistoryPanel();
     if(bp==='neighbors') renderNeighborPanel();
   };
+
+  // ═══ 链路历史面板 (U13: 选节点 → 链路变化时间轴 → 点段看当时链路) ═══
+  var histAid=null, histSegs=null;
+  function fmtTsH(ts){
+    var d=new Date(ts*1000);
+    return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');
+  }
+  function renderHistoryPanel(){
+    var panel=document.getElementById('bp-history');
+    var ns=S.topo?S.topo.nodes:[];
+    // 有链路证据的节点 (parent 或 downlink 或 RR 源)
+    var candidates=ns.filter(function(n){
+      return (n.parent!=null)||(n.downlink&&n.downlink.length)||(n.aid===0);
+    });
+    var h='<div class="t-11 mb-1">选择节点查看链路变化时间轴 (RR 路径切换 / poll 父变更):</div>'
+      +'<select id="hist-sel" class="mono t-11">';
+    candidates.forEach(function(n){
+      h+='<option value="'+n.aid+'">0x'+n.aid.toString(16).toUpperCase().padStart(4,'0')+(n.model_id?' '+n.model_id:'')+'</option>';
+    });
+    h+='</select><span id="hist-info" class="t-10 text-muted" style="margin-left:8px"></span>';
+    h+='<div id="hist-timeline" class="mt-1"></div>';
+    panel.innerHTML=h;
+    var sel=document.getElementById('hist-sel');
+    if(histAid!=null&&candidates.some(function(n){return n.aid===histAid;}))sel.value=''+histAid;
+    sel.addEventListener('change',function(){histAid=parseInt(this.value);loadHist();});
+    if(sel.value)loadHist();
+  }
+  function loadHist(){
+    var info=document.getElementById('hist-info');
+    var tl=document.getElementById('hist-timeline');
+    if(!info||!tl)return;
+    info.textContent='加载中...';
+    var params=[];
+    if(S.topoPan)params.push('pan='+S.topoPan);
+    if(S.topoT0!=null)params.push('time_start='+S.topoT0);
+    if(S.topoT1!=null)params.push('time_end='+S.topoT1);
+    A.get('/api/topology/link-history?aid='+histAid+(params.length?'&'+params.join('&'):'')).then(function(d){
+      histSegs=d.segments||[];
+      info.textContent=d.error||(histSegs.length+' 段链路证据');
+      if(!histSegs.length){tl.innerHTML='<p class="empty">无链路证据帧</p>';return;}
+      var t0=histSegs[0].t0,t1=histSegs[histSegs.length-1].t1;
+      var span=Math.max(t1-t0,1);
+      var h='<div class="hist-bar">';
+      for(var i=0;i<histSegs.length;i++){
+        var s=histSegs[i];
+        var color=s.kind==='parent'?'#0ea5e9':PATH_COLORS[i%PATH_COLORS.length];
+        var w=Math.max(8,Math.round((s.t1-s.t0)/span*100));
+        h+='<div class="hist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
+          +'" style="width:'+w+'%;background:'+color+'"></div>';
+      }
+      h+='</div><div class="hist-legend t-10 text-muted">色块=链路稳定段 · 悬停看路径 · 点击高亮当时链路</div>'
+        +'<div id="hist-detail" class="t-11 mt-1"></div>';
+      tl.innerHTML=h;
+      tl.querySelectorAll('.hist-seg').forEach(function(b){
+        b.addEventListener('click',function(){
+          var i=parseInt(this.dataset.i);var s=histSegs[i];
+          // 高亮该段路径边
+          cy.edges().removeClass('hist-hl');
+          if(s.kind==='route'&&s.relays){
+            var chain=[histAid].concat(s.relays).concat([s.dst]);
+            cy.edges().forEach(function(e){
+              var a=parseInt(e.data('source')),b=parseInt(e.data('target'));
+              for(var j=0;j<chain.length-1;j++){
+                if((a===chain[j]&&b===chain[j+1])||(a===chain[j+1]&&b===chain[j])){e.addClass('hist-hl');break;}
+              }
+            });
+          }
+          document.getElementById('hist-detail').innerHTML='<b>'+fmtTsH(s.t0)+' ~ '+fmtTsH(s.t1)+'</b> '
+            +(s.kind==='route'?'上行路径: ':'父链路: ')+'<span class="mono">'+s.path_str+'</span>'
+            +(s.kind==='route'&&s.relays.length?' <span class="t-10 text-dim">'+((s.t1-s.t0)+'s 稳定')+'</span>':'');
+        });
+      });
+    }).catch(function(e){
+      info.textContent='加载失败';
+      tl.innerHTML='<p class="text-danger">'+e.message+'</p>';
+    });
+  }
 
   // ═══ 邻居关系面板 ═══
   function renderNeighborPanel(){
