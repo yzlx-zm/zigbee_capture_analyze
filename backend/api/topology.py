@@ -321,6 +321,22 @@ async def topology_from_events(pan: str = Query(default=""),
                                 link_status_tables=ls_tables,
                                 asymmetric_links=asym)
     _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为状态
+    # ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 — 窗口切换节点不跳变 (用户反馈:
+    # 30s 窗一批节点, 下个窗另一批, 不连贯)。窗内时返回全量拓扑节点中窗内
+    # 无活动的集合 (inactive_nodes), 前端灰度显示; 无过滤时不返回
+    if time_start is not None or time_end is not None:
+        try:
+            full_graph = rev.derive_topology(timeline, nodes, pan=pan_int,
+                                             t0=None, t1=None)
+            _enrich_nodes(full_graph, pkts, pan_int, None, None)
+            active_aids = {nd["aid"] for nd in graph.get("nodes", [])}
+            graph["inactive_nodes"] = [
+                {"aid": nd["aid"], "device_type": nd.get("device_type", "unknown"),
+                 "seen": nd.get("seen", 0)}
+                for nd in full_graph.get("nodes", []) if nd["aid"] not in active_aids
+            ]
+        except Exception:
+            graph["inactive_nodes"] = []
     return graph
 
 

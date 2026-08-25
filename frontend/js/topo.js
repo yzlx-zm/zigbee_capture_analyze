@@ -250,6 +250,16 @@ reg('topo', function(){
         classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')):'offpath'
       });
     }
+    // ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 (后端 inactive_nodes, 窗口切换不跳变)
+    var inact=d.inactive_nodes||[];
+    for(var ik=0;ik<inact.length;ik++){var ino=inact[ik];
+      cyNodes.push({
+        data:{id:'in-'+ino.aid, label:'0x'+ino.aid.toString(16).toUpperCase().padStart(4,'0'),
+              aid:ino.aid, device_type:ino.device_type||'unknown', seen:ino.seen||0,
+              on_path:false, inactive:true},
+        classes:'inactive'
+      });
+    }
 
     // ── 边: 数据流量 → 灰色细线背景 ──
     var cyEdges=[];
@@ -364,6 +374,9 @@ reg('topo', function(){
         {selector:'node.onpath', style:{'border-width':3,'border-color':'#7c3aed'}},
         // 路径外节点: 半透明缩小
         {selector:'node.offpath', style:{'background-color':'#e2e8f0','opacity':0.3,'width':10,'height':10,'font-size':'7px','color':'#94a3b8','text-opacity':0}},
+        // U13-A3: 窗外节点灰度保留 (窗口切换不跳变, 15% 透明灰点 + 小灰字)
+        {selector:'node.inactive', style:{'background-color':'#cbd5e1','opacity':0.15,'width':14,'height':14,
+          'font-size':'6px','color':'#64748b','text-opacity':0.6,'text-valign':'bottom','text-halign':'center','text-margin-y':2}},
         // 高亮/淡出
         {selector:'node.highlight', style:{'border-color':'#ef4444','border-width':3,'shadow-color':'#ef4444','shadow-blur':8,'shadow-opacity':0.5}},
         {selector:'node.faded', style:{'opacity':0.12}},
@@ -405,6 +418,8 @@ reg('topo', function(){
       document.getElementById('cy-graph').appendChild(tooltip);
 
       cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;
+        // U13-A3: 窗外灰度节点 tooltip
+        if(d.inactive){tooltip.innerHTML='<b>'+d.label+'</b>\n窗外节点 (当前时间窗无链路活动)';tooltip.style.display='block';updateTooltipPos(e);return;}
         // U14-4: tooltip 增强 — EUI64/厂商型号/行为状态/poll 间隔/帧量收/发/LS 邻居数
         var tName={coordinator:'协调器',router:'路由器',end_device:'终端设备',unknown:'未知'}[d.device_type]||d.device_type;
         var bName={active:'活跃',sleeping:'休眠',rejoining:'重连中',offline:'离线',unknown:'未知'}[d.behavior]||'未知';
@@ -473,7 +488,7 @@ reg('topo', function(){
         if(nd[t]!=null){var nd2=nd[t]+1;if(nd[s]==null||nd2<nd[s]){nd[s]=nd2;chg=true;}}
       });}
       var pathMax=0;for(var k in nd)if(nd[k]>pathMax)pathMax=nd[k];
-      cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}});
+      cy.nodes().forEach(function(n){if(n.data('inactive'))return;var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}});
       var cols={};cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var pos={},offAll=[];cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
       // U13 密度自适应 (用户反馈 08-25: 大网络节点多 → 列超长/重叠不友好):
@@ -525,8 +540,8 @@ reg('topo', function(){
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
     if(curLayout===0){  // fixed column
-      // off-path节点换琥珀色+连线换可见色
-      cy.nodes().forEach(function(n){n.style('display','element');var d=nd[n.data('aid')];if(d==null)d=99;
+      // off-path节点换琥珀色+连线换可见色 (inactive 窗外节点跳过, 保持灰度)
+      cy.nodes().forEach(function(n){if(n.data('inactive'))return;n.style('display','element');var d=nd[n.data('aid')];if(d==null)d=99;
         var isOnPath=n.data('on_path')===true; // 严格true才算路径节点
         if(!isOnPath){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
           n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
