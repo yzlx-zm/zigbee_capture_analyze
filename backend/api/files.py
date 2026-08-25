@@ -650,6 +650,7 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
     #   cubx 路径 aps_payload_hex 可得, pcap 路径待解析器补 APS 明文, 见 P5)
     has_link_status: set[int] = set()
     has_route_reply: set[int] = set()
+    has_route_relay: set[int] = set()   # U13: RR 中继 = FFD 强信号 (只有路由器转发 RR, SED 不转发任何帧)
     has_poll: set[int] = set()
     cap_declared: dict[int, str] = {}   # aid → "router"/"end_device" (入网时 capability 声明)
 
@@ -678,6 +679,11 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
             has_link_status.add(nwk_src)
         elif nwk_cmd == 2 and nwk_src is not None:
             has_route_reply.add(nwk_src)
+        # U13: RR 中继 = FFD 强信号 (素材实证 2026-08-25: 卷帘包 0x906C 中继被漏判 —
+        # 只有路由器转发 Route Record, SED 不转发任何帧; RR relay 列表即转发路径)
+        for relay in (p.get("route_record_relays") or {}).get("relays", []):
+            if isinstance(relay, int) and relay <= 0xFFF7:
+                has_route_relay.add(relay)
         if p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None:
             has_poll.add(p["mac_src"])
         # Device Announce (ZDP 0x0013) capability: [seq][nwk:2][eui64:8][cap:1], cap 在 pl[11]
@@ -698,7 +704,8 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
         if aid == 0:
             nodes[aid]["device_type"] = "coordinator"
             continue
-        ffd_ev = aid in has_link_status or aid in has_route_reply
+        ffd_ev = (aid in has_link_status or aid in has_route_reply
+                  or aid in has_route_relay)  # U13: +RR 中继 (FFD 强信号)
         sed_ev = aid in has_poll
         if ffd_ev and not sed_ev:
             nodes[aid]["device_type"] = "router"

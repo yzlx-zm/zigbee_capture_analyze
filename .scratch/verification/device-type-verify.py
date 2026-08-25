@@ -64,7 +64,9 @@ for aid, want in expect.items():
     got = nodes.get(aid, {}).get("device_type")
     check(got == want, f"0x{aid:04X} → {got} (期望 {want})")
 
-# ═══ 3. test2 (整网零信号 → unknown) ═══
+# ═══ 3. test2 (整网零信号 → unknown; U13 增补: RR relay → router) ═══
+# 2026-08-25 断言更新: test2 有 24 个 RR relay 节点 (真实转发中继, 只有 FFD 转发
+# Route Record) — 应判 router 而非 unknown; 零信号节点仍 unknown
 print("═══ 3. test2-ubiqua-export (早期'大量终端节点'素材) ═══")
 pkts, _, _ = cr.parse_cubx(TEST2, include_mac_frames=True)
 net = [p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None]
@@ -76,7 +78,12 @@ n_unk = sum(1 for n in nodes.values() if n.get("device_type") == "unknown")
 n_rt = sum(1 for n in nodes.values() if n.get("device_type") == "router")
 print(f"  分布: end_device={n_end}, unknown={n_unk}, router={n_rt}, 总 {len(nodes)}")
 check(n_end == 0, f"无信号节点不再误判终端 (end_device 数 = {n_end}, 期望 0)")
-check(n_unk > 0, f"无信号节点改为 unknown ({n_unk} 个)")
+check(n_unk > 0, f"零信号节点为 unknown ({n_unk} 个)")
+# U13: RR relay 节点 (实转发中继) 应为 router — 抽查几个
+rr_relay_expected = [0x0071, 0x1DA5, 0x2BD6]  # 素材实测 relay 列表成员 (2026-08-25)
+for ra in rr_relay_expected:
+    check(nodes.get(ra, {}).get("device_type") == "router",
+          f"0x{ra:04X} (RR relay 实转发中继) → {nodes.get(ra,{}).get('device_type')} (期望 router)")
 
 # ═══ 4. 入网素材: DA capability 偏移验证 ═══
 print("═══ 4. 1-标准入网抓包-2 (Device Announce capability 偏移验证) ═══")
