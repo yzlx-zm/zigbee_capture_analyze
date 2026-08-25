@@ -240,7 +240,9 @@ reg('topo', function(){
           behavior:n.behavior||'', poll_interval:n.poll_interval,
           eui64:n.eui64||'', tx_count:n.tx_count, rx_count:n.rx_count,
           // U13: 协议级父链路 + 下行 source-route (芯科规范 relay 反转)
-          parent:n.parent, parent_evidence:n.parent_evidence||'',
+          // ⚠️ 字段名不能用 parent — Cytoscape data.parent 是复合节点保留字段
+          // (2026-08-25 自审: 曾导致网关框住全部子设备), 改名 link_parent/link_ev
+          link_parent:n.parent, link_ev:n.parent_evidence||'',
           downlink:n.downlink||null},
         classes:(onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')):'offpath')
       });
@@ -284,11 +286,11 @@ reg('topo', function(){
     cyEdges.forEach(function(e){var s=e.data.source,t=e.data.target;linkKeys[Math.min(+s,+t)+'-'+Math.max(+s,+t)]=true;});
     for(var pi=0;pi<cyNodes.length;pi++){
       var pn=cyNodes[pi].data;
-      if(pn.parent==null)continue;
-      var pk=Math.min(pn.aid,pn.parent)+'-'+Math.max(pn.aid,pn.parent);
+      if(pn.link_parent==null)continue;
+      var pk=Math.min(pn.aid,pn.link_parent)+'-'+Math.max(pn.aid,pn.link_parent);
       if(linkKeys[pk])continue;   // 已有 route/邻居边 → 不重复
       cyEdges.push({
-        data:{id:'pe-'+pk, source:''+pn.aid, target:''+pn.parent,
+        data:{id:'pe-'+pk, source:''+pn.aid, target:''+pn.link_parent,
               edge_type:'parent', evidence:pn.parent_evidence||''},
         classes:'parent-edge'
       });
@@ -393,9 +395,9 @@ reg('topo', function(){
         if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
         // U13: 父链路 (协议级证据) + 下行 source-route
-        if(d.parent!=null){
+        if(d.link_parent!=null){
           var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.parent_evidence]||d.parent_evidence;
-          h+='\n父链路: 0x'+Number(d.parent).toString(16).toUpperCase().padStart(4,'0')+' ('+evN+')';
+          h+='\n父链路: 0x'+Number(d.link_parent).toString(16).toUpperCase().padStart(4,'0')+' ('+evN+')';
         }
         if(d.downlink&&d.downlink.length){
           h+='\n下行: '+d.downlink.map(function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');}).join('→');
