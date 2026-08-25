@@ -280,9 +280,12 @@ reg('topo', function(){
         var sid=''+full[j]; var tid=''+full[j+1];
         if(!cyNodeIds[sid]||!cyNodeIds[tid]) continue; // 跨PAN节点跳过
         var solid=hasFilter?(rp.active!==false):rp.is_current;
+        // U13-C (2026-08-25): 窗内同源多路径主次分明 — 最近路径 (is_current) 实线,
+        // 其余弱化虚线 (route-alt), 减少 02C2 类多路径交叉视觉
+        var isAlt=hasFilter&&rp.is_current!==true;
         cyEdges.push({
           data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, active:rp.active, edge_type:'route'},
-          classes:'route-path path-c'+ci+(solid?'':' historical')
+          classes:'route-path path-c'+ci+(solid?'':' historical')+(isAlt?' route-alt':'')
         });
       }
     }
@@ -390,6 +393,8 @@ reg('topo', function(){
           'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
+        // U13-C: 窗内非当前路径弱化 (同源多路径主次分明)
+        {selector:'edge.route-alt', style:{'opacity':0.22,'line-style':'dashed','width':1.5}},
         {selector:'edge.hist-hl', style:{'width':6,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48','z-index':999}},
       ],
         wheelSensitivity:0.3,
