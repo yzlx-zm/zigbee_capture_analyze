@@ -449,11 +449,26 @@ reg('topo', function(){
       cy.nodes().forEach(function(n){var aid=n.data('aid');if(nd[aid]==null)nd[aid]=99;n.style('display','element');var d=nd[aid];if(d==null)d=99;var isOnPath2=n.data('on_path')===true;if(!isOnPath2){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});}else{if(!n.hasClass('sleeping')){n.style('opacity','1');}}});
       var cols={};cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(!cols[d])cols[d]=[];cols[d].push(n);});
       var pos={},offAll=[];cy.nodes().forEach(function(n){var d=nd[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
-      var offCols=Math.max(3,Math.ceil(offAll.length/12));if(offCols<1)offCols=1;var offPerCol=Math.ceil(offAll.length/offCols),offStartX=-(offCols+2)*200;
-      for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol),ch=Math.max(300,chunk.length*36);chunk.forEach(function(n,i){pos[n.id()]={x:offStartX+c*200,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
+      // U13 密度自适应 (用户反馈 08-25: 大网络节点多 → 列超长/重叠不友好):
+      // >40 节点: 同深度列拆子列 (每列 ≤18, 间距≥34 保证不重叠) + 列宽/offpath 区压缩
+      var totalN=cy.nodes().length;
+      var dense=totalN>40;
+      var colGap=dense?34:48, perColMax=dense?18:1e9, colW=dense?150:200;
+      var offGap=dense?24:36, offRowN=dense?20:15, offSep=dense?20:28;
+      var offCols=Math.max(3,Math.ceil(offAll.length/12));if(offCols<1)offCols=1;var offPerCol=Math.ceil(offAll.length/offCols),offStartX=-(offCols+2)*colW;
+      for(var c=0;c<offCols;c++){var chunk=offAll.slice(c*offPerCol,(c+1)*offPerCol),ch=Math.max(300,chunk.length*offGap);chunk.forEach(function(n,i){pos[n.id()]={x:offStartX+c*colW,y:-(ch/2)+(ch/(chunk.length+1))*(i+1)};});}
       pos['0']={x:-200,y:0};
-      var rColX=0;for(var d2=1;d2<=pathMax;d2++){var nds3=cols[d2];if(!nds3)continue;nds3=nds3.filter(function(n){return nd[n.data('aid')]!=null&&nd[n.data('aid')]<99;});var pNodes=nds3.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=200;continue;}var ch3=Math.max(300,pNodes.length*48);pNodes.forEach(function(n,i){pos[n.id()]={x:rColX,y:-(ch3/2)+(ch3/(pNodes.length+1))*(i+1)};});rColX+=200;}
-      var d99=cols[99]||[];for(var oi=0;oi<d99.length;oi++){pos[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
+      var rColX=0;for(var d2=1;d2<=pathMax;d2++){var nds3=cols[d2];if(!nds3)continue;nds3=nds3.filter(function(n){return nd[n.data('aid')]!=null&&nd[n.data('aid')]<99;});var pNodes=nds3.filter(function(n){return n.data('on_path');});if(pNodes.length===0){rColX+=colW;continue;}
+        var subCols=Math.max(1,Math.ceil(pNodes.length/perColMax));
+        for(var si=0;si<subCols;si++){
+          var sub=pNodes.slice(si*perColMax,(si+1)*perColMax);
+          if(!sub.length)continue;
+          var ch3=Math.max(300,sub.length*colGap);
+          sub.forEach(function(n,i){pos[n.id()]={x:rColX+si*colW,y:-(ch3/2)+(ch3/(sub.length+1))*(i+1)};});
+        }
+        rColX+=subCols*colW;
+      }
+      var d99=cols[99]||[];for(var oi=0;oi<d99.length;oi++){pos[d99[oi].id()]={x:rColX+100+(oi%offRowN)*offSep,y:-200+Math.floor(oi/offRowN)*24};}
       cy.layout({name:'preset',positions:pos,fit:true,padding:40}).run();
       if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}  // 恢复用户缩放
       document.getElementById('off-label').style.display='block';
