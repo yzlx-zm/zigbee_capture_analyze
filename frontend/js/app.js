@@ -1,6 +1,9 @@
 // app.js — 路由引擎 + 模块引导
 // <script type="module" src="js/app.js"> 加载, 其他页面模块后续追加
-import { S, A, sb, fmtTs, sr, setProg, doPI, doI } from './state.js?v=20260813k';  // 缓存破坏: 大包阈值 1MB
+// ⚠️ 2026-08-25 修复: state.js 不得带版本号 — 曾 ?v=20260813k 导致浏览器把
+// './state.js?v=...' 与 './state.js' 当两个模块 → 双 S 实例 (window.S 与页面模块
+// S 不同步, topoT0/topoAddr 等跨模块状态全部失效 — 滑块/聚焦状态不同步根源)
+import { S, A, sb, fmtTs, sr, setProg, doPI, doI } from './state.js';
 
 // ── Re-expose to window for backwards-compat with remaining inline reg() callbacks ──
 // (逐步迁移各页面模块后删除)
@@ -10,7 +13,7 @@ window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
 import './topo.js?v=20260825o';  // 缓存破坏: 时区修复 (UTC→本地), 改版递增
 import './import.js?v=20260813k';  // 缓存破坏: 大包阈值 30MB→1MB, 改版递增
-import './timeline.js?v=20260824a';  // 缓存破坏: 详情 ZCL 属性展示, 改版递增
+import './timeline.js?v=20260825s';  // 缓存破坏: U16-3 摘要列, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260812c';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
 
