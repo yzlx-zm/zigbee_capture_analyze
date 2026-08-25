@@ -51,6 +51,7 @@ reg('topo', function(){
       +'<div class="lp-title mt-1">链路</div>'
       +'<div class="lp-row"><span class="edge-demo traffic"></span> 数据流 (通信)</div>'
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
+      +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网证据)</div>'
       +'<div class="lp-row"><span class="edge-demo neighbor"></span> 邻居关系 (Link Status)</div>'
       +'<div class="lp-title mt-1">状态</div>'
       +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
@@ -237,7 +238,10 @@ reg('topo', function(){
           aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
           model_id:model, manufacturer_name:n.manufacturer_name||'',
           behavior:n.behavior||'', poll_interval:n.poll_interval,
-          eui64:n.eui64||'', tx_count:n.tx_count, rx_count:n.rx_count},
+          eui64:n.eui64||'', tx_count:n.tx_count, rx_count:n.rx_count,
+          // U13: 协议级父链路 + 下行 source-route (芯科规范 relay 反转)
+          parent:n.parent, parent_evidence:n.parent_evidence||'',
+          downlink:n.downlink||null},
         classes:(onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')):'offpath')
       });
     }
@@ -272,6 +276,22 @@ reg('topo', function(){
           classes:'route-path path-c'+ci+(solid?'':' historical')
         });
       }
+    }
+
+    // ── 边: 协议级父链路 (U13) — poll 目标 / AssocResp 父 / RR 下一跳 (芯科依据)
+    // 与已有 route 边 (同链路) 去重 — route 边已表达转发路径, parent 边只补无路径设备的链路
+    var linkKeys={};
+    cyEdges.forEach(function(e){var s=e.data.source,t=e.data.target;linkKeys[Math.min(+s,+t)+'-'+Math.max(+s,+t)]=true;});
+    for(var pi=0;pi<cyNodes.length;pi++){
+      var pn=cyNodes[pi].data;
+      if(pn.parent==null)continue;
+      var pk=Math.min(pn.aid,pn.parent)+'-'+Math.max(pn.aid,pn.parent);
+      if(linkKeys[pk])continue;   // 已有 route/邻居边 → 不重复
+      cyEdges.push({
+        data:{id:'pe-'+pk, source:''+pn.aid, target:''+pn.parent,
+              edge_type:'parent', evidence:pn.parent_evidence||''},
+        classes:'parent-edge'
+      });
     }
 
     // ── 边: 邻居关系 (Link Status) — 物理层 (C2) ──
@@ -348,6 +368,9 @@ reg('topo', function(){
         // 邻居边 (C2): 物理层 — two-way 点线 / one-way 虚线+箭头 (方向=有出站成本侧)
         {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#64748b','width':1.5,'opacity':0.6}},
         {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#64748b','arrow-scale':0.6,'opacity':0.45}},
+        // U13: 协议级父链路 — 天蓝点线 + 箭头指向父 (poll/Assoc/RR 证据, tooltip 标注类型)
+        {selector:'edge.parent-edge', style:{'line-style':'dotted','line-color':'#0ea5e9','width':2,
+          'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
       ],
@@ -369,10 +392,23 @@ reg('topo', function(){
         h+='\n状态: '+bName;
         if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
+        // U13: 父链路 (协议级证据) + 下行 source-route
+        if(d.parent!=null){
+          var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.parent_evidence]||d.parent_evidence;
+          h+='\n父链路: 0x'+Number(d.parent).toString(16).toUpperCase().padStart(4,'0')+' ('+evN+')';
+        }
+        if(d.downlink&&d.downlink.length){
+          h+='\n下行: '+d.downlink.map(function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');}).join('→');
+        }
         h+='\n'+(d.on_path?'在路径上':'不在路径上')+'\nLS邻居:'+nbCount;
         tooltip.innerHTML=h;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
-    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};tooltip.style.display='block';updateTooltipPos(e);});
+    cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();
+      if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN;}
+      else if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}
+      else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}
+      else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};
+      tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
 
     function updateTooltipPos(e){
@@ -561,6 +597,18 @@ reg('topo', function(){
     var sep='<div class="sep"></div>';
     var h='';
 
+    // ── 下行路径 (Source Route, U13: 芯科规范 relay 反转) ──
+    if(paths.length>0){
+      h+='<div class="path-head mt-1"><span class="text-info text-strong">↓ 下行 (Source Route)</span> '
+        +'<span class="t-10 text-dim">协调器→设备, Route Record relay 反转 (芯科: concentrator 存反转列表)</span></div>';
+      for(var di=0;di<paths.length;di++){
+        var dp=paths[di];
+        var dl=[dp.dst].concat((dp.relays||[]).slice().reverse()).concat([dp.src]);
+        var dlStr=dl.map(function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');}).join(' → ');
+        h+='<div class="path-row" data-pidx="'+di+'"><span class="path-idx">#'+(di+1)+'</span> '
+          +'<span class="mono">'+dlStr+'</span> <span class="t-10 text-dim">(源路由 '+dp.hop_count+' 跳)</span></div>';
+      }
+    }
     // ── 上行路径 (Route Record) ──
     if(paths.length>0){
       var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}

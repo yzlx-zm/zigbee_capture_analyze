@@ -258,6 +258,7 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .legend-pop .edge-demo.traffic { border-color: #d1d5db; }
 .legend-pop .edge-demo.route { border-color: var(--c-route); border-top-style: dashed; }
 .legend-pop .edge-demo.neighbor { border-color: var(--c-text-4); border-top-style: dotted; }
+.legend-pop .edge-demo.parent { border-color: #0ea5e9; border-top-style: dotted; }
 /* 图例浮层内的形状圆点 (无 .legend 父级, 需独立定义) */
 .legend-pop .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
 .legend-pop .dot.coord { background: var(--c-warning); }
