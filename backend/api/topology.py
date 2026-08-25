@@ -150,13 +150,64 @@ def _behavior_of(aid: int, inf: dict | None, late_cut: float | None,
     return "unknown"
 
 
+def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
+    """U13: 协议级父链路证据 (单遍扫描, 窗内语义).
+
+    - poll: MAC Data Request (mac_cmd_id=4) dst = 父节点 (芯科: SED 只向父 poll)
+    - assoc: MAC AssocResp (mac_cmd_id=2) src = 父节点, dst = 入网设备
+    只接受短地址 (mac_src/dst 长地址为 EUI64 字符串, 与节点短地址 key 不对应).
+    后到证据覆盖先到 (父节点可能变化: 重入/切换).
+    """
+    parents: dict[int, dict] = {}
+
+    def _short(v) -> int | None:
+        return v if isinstance(v, int) and topo.is_unicast(v) else None
+
+    for p in full:
+        ts = p.get("ts", 0)
+        if t0 is not None and ts < t0:
+            continue
+        if t1 is not None and ts > t1:
+            continue
+        if p.get("mac_cmd_id") == 4:
+            s, d = _short(p.get("mac_src")), _short(p.get("mac_dst"))
+            if s is not None and d is not None:
+                parents[s] = {"parent": d, "evidence": "poll"}
+        elif p.get("mac_cmd_id") == 2:
+            s, d = _short(p.get("mac_src")), _short(p.get("mac_dst"))
+            if s is not None and d is not None:
+                parents[d] = {"parent": s, "evidence": "assoc"}
+    return parents
+
+
 def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
                   t0: float | None, t1: float | None) -> None:
     """U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描).
+    U13: 协议级父链路 (poll/assoc/RR 推断) + 下行 source-route 路径 (relay 反转).
     graph 与 events 两端点共用 — 拓扑页实际消费 events (2026-08-24 自审)."""
     full = get_full_packets()
     stats, _ls, _asym = _node_stats(pkts, pan_int)
     beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
+    parents = _parent_map(full if full else pkts, t0, t1)
+    # RR 推断: 无 poll/assoc 证据的节点, 用 RR relays 链推下一跳作链路参考
+    # (对 SED ≈ 父节点 — 其 RR 由父转发 append; 对 router/中继 = 转发下一跳, evidence=rr)
+    rr_parent: dict[int, int] = {}
+    for rp in graph.get("route_paths", []):
+        relays = rp.get("relays") or []
+        if not relays:
+            continue
+        chain = list(relays) + [rp["dst"]]
+        # 源节点 → relays[0]
+        if rp["src"] not in parents and rp["src"] not in rr_parent:
+            rr_parent[rp["src"]] = relays[0]
+        # 中继节点 → 链中下一个
+        for i, node in enumerate(relays):
+            if node not in parents and node not in rr_parent:
+                rr_parent[node] = chain[i + 1]
+    # 下行 source-route: [dst] + reversed(relays) + [src] (芯科: concentrator 反转 relay 列表)
+    downlink_map: dict[int, list[int]] = {}
+    for rp in graph.get("route_paths", []):
+        downlink_map[rp["src"]] = [rp["dst"]] + list(reversed(rp["relays"])) + [rp["src"]]
     for nd in graph.get("nodes", []):
         aid = nd["aid"]
         st = stats.get(aid)
@@ -168,6 +219,15 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
         nd["poll_interval"] = inf["poll_gap"] if inf else None
         nd["tx_count"] = inf["tx"] if inf else 0
         nd["rx_count"] = inf["rx"] if inf else 0
+        # U13: 父链路 (poll > assoc > rr 推断) + 下行路径
+        pe = parents.get(aid)
+        if pe is not None:
+            nd["parent"] = pe["parent"]
+            nd["parent_evidence"] = pe["evidence"]
+        elif aid in rr_parent:
+            nd["parent"] = rr_parent[aid]
+            nd["parent_evidence"] = "rr"
+        nd["downlink"] = downlink_map.get(aid)
 
 
 @router.get("/topology/graph")
