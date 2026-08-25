@@ -7,14 +7,13 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let playTO = null, silentHidden = false, neighborHidden = false;   // 播放/静默/邻居边 状态 (模块级, 跨页面保留)
+let silentHidden = false, neighborHidden = false;   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
 reg('topo', function(){
   // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
   if(cy){cy.destroy();cy=null;}
-  if(playTO){clearInterval(playTO);playTO=null;}
   clearTimeout(tSliderTO);
   var h='<div class="page">'
     // ── 左侧边栏 ──
@@ -64,7 +63,6 @@ reg('topo', function(){
     +'<select id="twin-size">'
     +'<option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option><option value="9999" selected>全部</option></select>'
     +'<button class="btn btn-o btn-s" id="tstep-bwd" title="前移">◀</button>'
-    +'<button class="btn btn-o btn-s" id="tplay" title="播放/暂停 (自动推进窗口)">▶</button>'
     +'<input type="range" id="tsl" min="0" max="1000" value="500" oninput="onTimeSlide()" onchange="onTimeSlideEnd()">'
     +'<button class="btn btn-o btn-s" id="tstep-fwd" title="后移">▶</button>'
     +'<span id="ttime-label">--:--:-- ~ --:--:--</span>'
@@ -1023,24 +1021,6 @@ reg('topo', function(){
   document.getElementById('tstep-fwd').addEventListener('click',function(){stepWindow(1);});
   document.getElementById('twin-size').addEventListener('change',setWindowFromSize);
 
-  // ═══ 播放/暂停: 自动推进时间窗口 (U7) ═══
-  window.togglePlay=function(){
-    var btn=document.getElementById('tplay');
-    if(playTO){clearInterval(playTO);playTO=null;btn.textContent='▶';btn.classList.remove('btn-p');return;}
-    var ws=getWinSize();
-    if(ws==null){document.getElementById('twin-size').value='120';setWindowFromSize();ws=120;}
-    if(tCenter==null){tCenter=tsStart+ws/2;document.getElementById('tsl').value=tsToSlider(tCenter);}
-    btn.textContent='⏸';btn.classList.add('btn-p');
-    playTO=setInterval(function(){
-      var w2=getWinSize()||120;
-      var step=Math.max(5,w2/4);
-      tCenter=Math.min(tsEnd-w2/2,tCenter+step);
-      document.getElementById('tsl').value=tsToSlider(tCenter);
-      applyTimeFilter();
-      if(tCenter>=tsEnd-w2/2) togglePlay();  // 到尾自动停
-    },600);
-  };
-  document.getElementById('tplay').addEventListener('click',togglePlay);
 
   // S.topoT0/T1 → 绝对时间戳: 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)
   // ⚠️ P2 修复: 此前字符串直接赋给 tsStart → 数值运算 NaN, 且 tsStart/tsEnd 被覆盖破坏滑块比例
