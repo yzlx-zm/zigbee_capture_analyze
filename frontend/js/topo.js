@@ -135,6 +135,13 @@ reg('topo', function(){
     focusAid=null;
     var bar=document.getElementById('focus-bar');
     if(bar)bar.style.display='none';
+    // ⚠️ 2026-08-25 用户反馈: 退出后"还在过滤界面" — 曾保留当前时间窗
+    // (S.topoT0/T1 不清) → 图仍是窗内视图; 退出 = 恢复全量视图
+    S.topoT0=null; S.topoT1=null;
+    var wsSel=document.getElementById('twin-size'); if(wsSel)wsSel.value='9999';
+    tCenter=null;
+    var slEl=document.getElementById('tsl'); if(slEl)slEl.value=500;
+    updateTimeLabel();
     reloadTopo();
   }
 
