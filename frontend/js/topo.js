@@ -347,7 +347,8 @@ reg('topo', function(){
           var ek3=Math.min(chain[jj],chain[jj+1])+'-'+Math.max(chain[jj],chain[jj+1]);
           if(lsKeys[ek3])continue;
           lsKeys[ek3]=true;
-          cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c0'});
+          // 按节点分配路径色 (曾全部 path-c0 全红 — 用户反馈)
+          cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c'+(aidN%PATH_COLORS.length)});
         }
       }else if(seg.kind==='parent'&&cyNodeIds[''+seg.parent]){
         var ek4=Math.min(aidN,seg.parent)+'-'+Math.max(aidN,seg.parent);
