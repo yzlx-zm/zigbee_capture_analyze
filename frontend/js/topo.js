@@ -232,9 +232,12 @@ reg('topo', function(){
       // U14-3: behavior 类 (rejoining/sleeping/offline) — 仅 onpath 节点应用
       //   (offpath 仅 LS 可见节点是辅助渲染, 行为状态无意义)
       var model=n.model_id||'';
+      // ⚠️ U13-B (2026-08-25): 密集模式 (>40 节点) 单行 label — 双行 (地址+型号)
+      // 高度超过列间距, 文字压到下方节点; 型号移入 tooltip (已有)
+      var dense=ns.length>40;
       cyNodes.push({
         data:{id:''+aid,
-          label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model?'\n'+model:''),
+          label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model&&!dense?'\n'+model:''),
           aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
           model_id:model, manufacturer_name:n.manufacturer_name||'',
           behavior:n.behavior||'', poll_interval:n.poll_interval,
