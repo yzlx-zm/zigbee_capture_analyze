@@ -247,7 +247,7 @@ reg('topo', function(){
           // (2026-08-25 自审: 曾导致网关框住全部子设备), 改名 link_parent/link_ev
           link_parent:n.parent, link_ev:n.parent_evidence||'',
           downlink:n.downlink||null},
-        classes:(onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')):'offpath')
+        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')):'offpath'
       });
     }
 
@@ -344,6 +344,13 @@ reg('topo', function(){
         {selector:'node.router', style:{'background-color':'#3b82f6','shape':'diamond','width':32,'height':32}},
         {selector:'node.end_device', style:{'background-color':'#16a34a','shape':'ellipse','width':22,'height':22}},
         {selector:'node.unknown', style:{'background-color':'#94a3b8','shape':'triangle','width':22,'height':22}},
+        // U13-B2 (2026-08-25): 密集模式 — label 移入节点内部 (白字居中, 不依赖列间距)
+        // + 节点缩小 (曾双行/单行 label 在节点下方, 间距 34px 只比节点 32px 多 2px → 文字必被压)
+        {selector:'node.dense', style:{'font-size':'7.5px','color':'#fff','text-valign':'center','text-halign':'center','text-margin-y':0,'font-weight':'normal'}},
+        {selector:'node.dense.router', style:{'width':26,'height':26}},
+        {selector:'node.dense.end_device', style:{'width':20,'height':20}},
+        {selector:'node.dense.unknown', style:{'width':20,'height':20}},
+        {selector:'node.dense.coordinator', style:{'width':52,'height':52,'font-size':'9px','font-weight':'bold'}},
         // U14-3: 行为状态样式 — 重连橙虚线边框 / 休眠灰半透明 / 离线暗红边框
         // (角标 canvas 难实现, 用粗红边框 + tooltip 状态文字表达)
         {selector:'node.rejoining', style:{'border-color':'#f59e0b','border-style':'dashed','border-width':3}},
