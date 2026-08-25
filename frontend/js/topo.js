@@ -263,15 +263,19 @@ reg('topo', function(){
     }
 
     // ── 边: Route Record 路径 (跳过不存在的节点, 避免PAN切换空图) ──
+    // ⚠️ U13-A2 (2026-08-25): 时间窗激活时**只画窗内活跃路径** (窗外历史路径不画,
+    // 曾以虚线保留 → 拓扑视觉永远不变, 拖动滑块看不出链路演化 — 用户反馈);
+    // 无过滤 (全部) 时保持现状 (当前实线/历史虚线)
     var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
+    var hasFilter=S.topoT0!=null||S.topoT1!=null;
     for(var i=0;i<rps.length;i++){
       var rp=rps[i];
+      if(hasFilter&&rp.active===false) continue;  // 窗内不活跃路径 → 不画
       var ci=i % PATH_COLORS.length;
       var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
       for(var j=0;j<full.length-1;j++){
         var sid=''+full[j]; var tid=''+full[j+1];
         if(!cyNodeIds[sid]||!cyNodeIds[tid]) continue; // 跨PAN节点跳过
-        var hasFilter=S.topoT0!=null||S.topoT1!=null;
         var solid=hasFilter?(rp.active!==false):rp.is_current;
         cyEdges.push({
           data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, active:rp.active, edge_type:'route'},
