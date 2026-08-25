@@ -533,6 +533,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
                 result["mac_beacon_permit"] = (pl[2] >> 7) & 1
         except Exception:
             pass
+    elif mac_frame_type == 2:
+        # ACK 帧 (2026-08-25 用户裁定保留): 仅 FCF+seq+FCS 无地址/载荷;
+        # frame pending bit (FCF bit4) = 协调器有数据待取 (SED poll 流程信号, 官方 UG235.02)
+        result["mac_ack_pending"] = 1 if (raw[0] >> 4) & 1 else 0
 
     # NWK layer
     if not pkt.haslayer(ZigbeeNWK):
@@ -827,10 +831,11 @@ def _cubx_prefilter(raw: bytes, include_mac_frames: bool) -> bool:
 
     规则 (保守超集, 不做任何推断):
     - ft==1 (Data): 保留完整解析 (解析后仍走原 is_nwk 过滤, 与现状逐位一致)
-    - ft∈{0,3} (Beacon/MAC Cmd): 仅 include_mac_frames=True 时保留 (L1-1/L1-2
-      入网检测 + 节点 SED poll 判定 + 详情 MAC 明细需要; 短 payload 帧由完整
-      解析兜底过滤)
-    - ft∈{2,4-7} (Ack/reserved): 排除 — 对应 scapy 类无 NWK 无 MAC 命令字段,
+    - ft∈{0,2,3} (Beacon/Ack/MAC Cmd): 仅 include_mac_frames=True 时保留
+      (L1-1/L1-2 入网检测 + 节点 SED poll 判定 + 详情 MAC 明细需要;
+      ft==2 Ack 于 2026-08-25 用户裁定保留 — 官方 Network Analyzer 展示,
+      投递确认/frame pending 位有分析价值)
+    - ft∈{4-7} (reserved): 排除 — 对应 scapy 类无 NWK 无 MAC 命令字段,
       主循环确定不保留
     - raw<3 无法读 FCF: 保守保留 (超集安全, 完整解析兜底; 实测素材短帧=0)
     """
@@ -839,7 +844,7 @@ def _cubx_prefilter(raw: bytes, include_mac_frames: bool) -> bool:
     ft = raw[0] & 0x07
     if ft == 1:
         return True
-    if ft in (0, 3):
+    if ft in (0, 2, 3):
         return include_mac_frames
     return False
 
@@ -975,7 +980,7 @@ def parse_cubx(path: str, include_mac_frames: bool = False,
                 continue  # 预筛排除帧 (旧路径解析后同样不保留)
             # 只保留 NWK 帧 (与 tshark -Y zbee_nwk 对齐), 除非 include_mac_frames
             is_nwk = pkt.get("nwk_src") is not None or pkt.get("nwk_dst") is not None
-            is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None)
+            is_mac_relevant = (pkt.get("mac_cmd_id") is not None) or (pkt.get("mac_beacon_pan") is not None) or (pkt.get("mac_frame_type") == 2)
             if is_nwk or (include_mac_frames and is_mac_relevant):
                 packets.append(pkt)
             # 进度上报 (每 500 包 + 末包, 避免每包回调开销; U11: 组装阶段占

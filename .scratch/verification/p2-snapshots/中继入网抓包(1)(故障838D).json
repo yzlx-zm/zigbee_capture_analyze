@@ -1,9 +1,10 @@
 {
- "kept_frames": 5913,
+ "kept_frames": 8435,
  "stats": {
   "pkt_type": {
    "APS Ack": 221,
    "APS Cmd": 65,
+   "Acknowledgement": 2522,
    "Beacon": 1454,
    "Data": 1582,
    "End Device Timeout Request": 1,
@@ -29,7 +30,7 @@
    "ZDP: Simple Desc Req": 11
   },
   "security": {
-   "": 1756,
+   "": 4278,
    "Decrypted": 1729,
    "Encrypted": 2428
   },
@@ -59,6 +60,6 @@
   "nodes_src": 107,
   "nodes_dst": 94
  },
- "frames_sha256": "6888a493bb1f7c7f75d1b06b66500eb97ac1d0d20fd84713f2befe5a6df78914",
+ "frames_sha256": "ba030f048fec95e43e93f1a5bb03a76c19855b955ae422c5da37bbeed4756008",
  "parser_commit": "e215bcf"
 }

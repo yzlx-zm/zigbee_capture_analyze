@@ -11,11 +11,11 @@ window.S = S; window.A = A; window.sb = sb; window.fmtTs = fmtTs;
 window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
-import './topo.js?v=20260825o';  // 缓存破坏: 时区修复 (UTC→本地), 改版递增
-import './import.js?v=20260813k';  // 缓存破坏: 大包阈值 30MB→1MB, 改版递增
-import './timeline.js?v=20260825s';  // 缓存破坏: U16-3 摘要列, 改版递增
+import './topo.js?v=20260825p';  // 缓存破坏: 报文改名 (topo 跳转按钮), 改版递增
+import './import.js?v=20260825a';  // 缓存破坏: 报文改名 (锁定提示), 改版递增
+import './timeline.js?v=20260825af';  // 缓存破坏: 🔒仅限NWK安全未解密, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
-import './diag.js?v=20260812c';  // 缓存破坏: 浏览器对 ES module 缓存激进, 改版后递增
+import './diag.js?v=20260825a';  // 缓存破坏: 报文改名 (设备跳转), 改版递增
 
 // ── 初始路由 ──
 if (window.rt) window.rt();

@@ -21,7 +21,7 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
     var v=d.verify;
     var vState=v.passed===true?'alert-ok':v.passed===false?'alert-bad':'';
     h+='<div class=\"alert '+vState+'\">';
-    h+='<div class=\"alert-title\">'+(v.passed===true?'✅ 数据校验通过':v.passed===false?'❌ 数据校验失败 (拓扑/时间线已锁定)':'⏳ 校验中...')+'</div>';
+    h+='<div class=\"alert-title\">'+(v.passed===true?'✅ 数据校验通过':v.passed===false?'❌ 数据校验失败 (拓扑/报文已锁定)':'⏳ 校验中...')+'</div>';
     if(v.checks){for(var ck in v.checks){var c=v.checks[ck];var icon=c.passed?'✅':'❌';h+='<div class=\"t-10 '+(c.passed?'text-success':'text-danger')+'\">'+icon+' '+esc(c.label)+': 预期='+esc(c.expected==null?'-':c.expected)+' 实际='+esc(c.actual==null?'-':c.actual)+'</div>';}}
     if(v.detail&&Object.keys(v.detail).length>0){h+='<details class=\"verify-detail\"><summary>⚠️ 差异明细 ('+Object.keys(v.detail).length+' 项)</summary><pre class=\"text-danger\">'+esc(JSON.stringify(v.detail))+'</pre></details>';}
     h+='</div>';S.verifyPassed=v.passed;

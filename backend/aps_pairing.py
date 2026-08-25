@@ -44,3 +44,57 @@ def build_ack_match(packets: list[dict]) -> tuple[dict, dict]:
         if best_i not in orig_to_ack or a.get("ts", 0.0) > orig_to_ack[best_i][1]:
             orig_to_ack[best_i] = (ai, a.get("ts", 0.0))
     return ack_to_orig, orig_to_ack
+
+
+# 应用层响应窗口 (与 detectors/l3.py L31_APP_RESP_WINDOW_S 同源: 素材实测 <0.4s, SED 边界 ~1.9s)
+APP_RESP_WINDOW_S = 2.0
+
+
+def build_transaction_peers(packets: list[dict]) -> dict:
+    """事务链 (U16-7a): ZCL 命令帧 → (ack, 同事务响应帧列表).
+
+    ⚠️ 2026-08-25 收紧修正 (用户反馈 33 帧误配): 首版复用了 L3-1 检测器的宽松判定
+    (同 tsn / 同 cluster / cluster 缺失降级任一反向帧), 密钥命令帧 (VerifyKeyConfirm,
+    无 ZCL 层 cluster=None) 把 2s 窗口内全部反向帧误列 — 检测器是布尔语义 ("设备
+    有没有回应"), UI 事务链需要精确语义. 修正:
+      - 只对 ZCL 命令帧建链 (有 zcl_seq); APS 命令帧不建 — 其确认由 APS Ack 表达
+      - 响应判定只认「同 ZCL tsn」 (事务级铁证, 素材实证: Write Attrs→Write Attrs Rsp
+        / On→On 报告同 tsn), 删除 cluster 匹配与 fallback 降级
+      - ack: APS Ack 配对 (build_ack_match, counter 级 + 5s 窗, 保留)
+
+    返回 {orig_idx: {"ack": ack_idx|None, "responses": [{"id", "packet_id",
+            "pkt_type", "zcl_cmd_name", "zcl_direction", "evidence"}]}}
+    索引为 packets 列表下标 (与 /api/packets/{idx} 一致).
+    """
+    _, orig_to_ack = build_ack_match(packets)
+    peers: dict = {}
+    for i, p in enumerate(packets):
+        # 只对 ZCL 命令帧建链 (需有事务序列号; 纯数据/报告帧/APS 命令不建)
+        tsn = p.get("zcl_seq")
+        if not p.get("zcl_cmd_name") or tsn is None:
+            continue
+        src, dst = p.get("nwk_src"), p.get("nwk_dst")
+        ts0 = p.get("ts", 0.0)
+        if src is None or dst is None or ts0 == 0.0:
+            continue
+        hi = ts0 + APP_RESP_WINDOW_S
+        responses = []
+        for qi, q in enumerate(packets):
+            if q.get("pkt_type") == "APS Ack":
+                continue
+            t = q.get("ts", 0.0)
+            if not (ts0 < t <= hi):
+                continue
+            if q.get("nwk_src") != dst or q.get("nwk_dst") != src:
+                continue  # 只认接收方 → 发送方的数据帧 (反向)
+            if q.get("zcl_seq") != tsn:
+                continue  # 同 ZCL 事务序列号 = 响应 (铁证, 唯一匹配标准)
+            responses.append({
+                "id": qi, "packet_id": q.get("packet_id"),
+                "pkt_type": q.get("pkt_type"), "zcl_cmd_name": q.get("zcl_cmd_name"),
+                "zcl_direction": q.get("zcl_direction"), "evidence": "tsn",
+            })
+        if responses or i in orig_to_ack:
+            peers[i] = {"ack": (orig_to_ack[i][0] if i in orig_to_ack else None),
+                        "responses": responses}
+    return peers

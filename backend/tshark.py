@@ -107,7 +107,8 @@ def parse_mac_frames(tshark_path: str, pcap_path: str) -> list[dict]:
       mac_beacon_pan / mac_beacon_permit / mac_frame_type / packet_id
     """
     cmd = [tshark_path, "-r", pcap_path, "-o", "wpan.802154_fcs_ok:FALSE",
-           "-Y", "wpan.cmd or wpan.assoc_permit", "-T", "json"]
+           # U16 (2026-08-25 用户裁定): 含 MAC Ack — 投递确认/frame pending 位有分析价值
+           "-Y", "wpan.cmd or wpan.assoc_permit or wpan.frame_type == 2", "-T", "json"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0 and not result.stdout.strip():
         return []
@@ -168,7 +169,9 @@ def parse_mac_frames(tshark_path: str, pcap_path: str) -> list[dict]:
             "mac_seq": _num(wpan.get("wpan.seq_no", "")),
             "pan_src": _h(wpan.get("wpan.src_pan", "")),
             "pan_dst": _h(wpan.get("wpan.dst_pan", "")),
-            "pkt_type": "MAC Cmd" if ft == 3 else "Beacon",
+            # U16 (2026-08-25): Ack 帧 frame pending 位 (FCF bit4, 与 cubx 对齐)
+            "mac_ack_pending": 1 if fcf_tree.get("wpan.frame_pending", "0") == "1" else None,
+            "pkt_type": "MAC Cmd" if ft == 3 else ("Acknowledgement" if ft == 2 else "Beacon"),
         }
         # Beacon PermitJoin (tshark 放在 "Superframe Specification" 子 dict)
         permit_raw = None

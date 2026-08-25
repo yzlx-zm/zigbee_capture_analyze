@@ -26,6 +26,8 @@ router = APIRouter()
 _packets: list[dict] = []
 _nodes: dict[int, dict] = {}
 _ack_match_cache: tuple = (None, None)   # (packets 引用 id, {ack_pid: orig_pid}) — 导入后失效
+_transaction_cache: tuple = (None, None)  # U16-7a 事务链缓存 (packets 引用 id, peers dict)
+_rr_path_cache: tuple = (None, None)      # U16-4b 上行路径缓存 (packets 引用 id, {(src,dst): [paths]})
 _file_type: str = ""
 _verify_report: dict | None = None  # 校验报告
 _parser_verify_report: dict | None = None  # 解析正确性校验报告 (P6) — 导入后自动跑
@@ -493,6 +495,8 @@ def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
             _full_packets.sort(key=lambda p: p["ts"])
         except Exception:
             _full_packets = list(_packets)
+        # U16-7 全量化 (2026-08-25 用户裁定): _packets = 全量帧 (含 MAC Cmd/Beacon/Ack)
+        _packets = _full_packets
         # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
         _nodes = _extract_nodes_from_packets(_packets, _full_packets)
 
@@ -565,8 +569,9 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
                              percent=min(base + int(done / total_rows * span), 10 + int((i + 1) / total * 80)))
             pkts, added, total_keys = _cubx.parse_cubx(tp, include_mac_frames=True, progress_cb=_cb)
             all_full.extend(pkts)
-            # _packets 只保留 NWK 帧 (与 tshark 对齐, 避免 verify 帧数不匹配)
-            all_pkts.extend(p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None)
+            # U16-7 全量化 (用户裁定 08-25): _packets = 全量帧 (含 poll/Beacon 等 MAC 帧),
+            # 时间线「报文」展示完整包; 检测器已用 full, 解析器/契约不变
+            all_pkts.extend(pkts)
             _last_ubiqua_sync = {"synced": added, "total_keys": total_keys}
         if not all_pkts:
             raise RuntimeError("无有效数据")
@@ -614,8 +619,8 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
         raise RuntimeError(str(e)) from e
     _last_ubiqua_sync = {"synced": added, "total_keys": total}
     _full_packets = pkts
-    _packets = [p for p in pkts if p.get("nwk_src") is not None or p.get("nwk_dst") is not None]
-    # 设备类型推断需要全量帧 (SED poll 是 MAC 帧, 不在 _packets)
+    # U16-7 全量化 (用户裁定 08-25): _packets = 全量帧 (含 poll/Beacon 等 MAC 帧)
+    _packets = pkts
     _nodes = _extract_nodes_from_packets(_packets, _full_packets)
     _file_type = "cubx"
     _pcap_paths = [path]
@@ -865,8 +870,11 @@ async def import_status():
 async def packet_list(addr: str = "", pan: str = "",
                       time_start: str = "", time_end: str = "",
                       pkt_type: str = "",
+                      hide_undecrypted: int = 0,
                       limit: int = 500, offset: int = 0):
-    """查询原始包列表，可按地址/PAN/时间过滤，返回分页+总数"""
+    """查询原始包列表，可按地址/PAN/时间过滤，返回分页+总数
+
+    hide_undecrypted=1: 过滤掉未解密帧 (U16-2 前端默认传 1)"""
     addr_int = int(addr, 16) if addr else None
     pan_int = int(pan, 16) if pan else None
     # Parse time: HH:MM:SS clock time → absolute timestamp
@@ -893,6 +901,10 @@ async def packet_list(addr: str = "", pan: str = "",
             continue
         if pkt_type and p.get("pkt_type", "") != pkt_type:
             continue
+        # U16-7 未解密语义 (08-25 用户裁定全量化后): 只隐藏「有 NWK 安全但解密失败」的帧;
+        # poll/Beacon 等纯 MAC 帧天然明文 (无 nwk_security) 不隐藏
+        if hide_undecrypted and not p.get("decrypted") and p.get("nwk_security"):
+            continue
         matched.append((idx, p))
     total = len(matched)
     page = matched[offset:offset + limit]
@@ -904,12 +916,18 @@ async def packet_list(addr: str = "", pan: str = "",
             "mac_src": p.get("mac_src"), "mac_dst": p.get("mac_dst"),
             "nwk_src": p.get("nwk_src"), "nwk_dst": p.get("nwk_dst"),
             "pan_src": p.get("pan_src"), "pan_dst": p.get("pan_dst"),
+            "nwk_security": p.get("nwk_security"),  # 前端 🔒 判定: 仅 NWK 安全未解密标锁
             "security": p.get("security", ""), "status": p.get("status", ""),
             "aps_cluster": p.get("aps_cluster"),
             "aps_cluster_name": p.get("aps_cluster_name"),
             "aps_cmd_name": p.get("aps_cmd_name"),   # APS 命令名 (时间线类型列显示)
             "zcl_cmd_name": p.get("zcl_cmd_name"),
             "decrypted": p.get("decrypted", False),
+            "summary": _packet_summary_short(p),  # U16-3 摘要列 (类型列替代)
+            "nwk_relays": p.get("nwk_relays"),  # U16-4 路径列 (下行 source route 中继列表)
+            "path_relays": (p.get("nwk_relays") or _uplink_relays_for(p, _get_uplink_path_index())),  # U16-4b 上行反转补路径
+            "aps_counter": p.get("aps_counter"),  # U16-5 APS Ctr 列 (消息回复对应分析)
+            "layer": _packet_layer(p),  # U16-6 层级着色 (zcl/aps/nwk/mac/mac_dreq/other)
             # NWK 命令级字段 (时间线事件标记用; tshark/cubx 双路径已输出)
             "nwk_cmd_id": p.get("nwk_cmd_id"),
             "nwk_leave_rejoin": p.get("nwk_leave_rejoin"),
@@ -918,6 +936,93 @@ async def packet_list(addr: str = "", pan: str = "",
         } for orig_idx, p in page],
         "total": total, "limit": limit, "offset": offset,
     }
+
+
+# ── U16-3 时间线摘要列: 精简名表 (MAC 命令名以 scapy dot15d4.py:327 源码级为准:
+# 4=DataReq, 3=DisassocNotify — 旧表 3/4/5/8 错位, 08-25 修正) ──
+_SUMMARY_MAC_CMD = {1: "AssocReq", 2: "AssocResp", 3: "DisassocNotify",
+                    4: "DataReq", 5: "PANIDConflict", 6: "OrphanNotify",
+                    7: "BeaconReq", 8: "CoordRealign", 9: "GTSReq"}
+_SUMMARY_NS_CODE = {0x00: "NO_ROUTE", 0x01: "TREE_LINK_FAIL", 0x02: "LINK_FAIL",
+                    0x03: "LOW_BATTERY", 0x04: "NO_ROUTE_CAP", 0x05: "NO_INDIRECT_CAP",
+                    0x0B: "SOURCE_ROUTE_FAIL", 0x0C: "MTORR_FAIL"}
+
+
+# NWK 命令类 pkt_type (加密 NWK 命令帧 nwk_cmd_id 为 None, 需按 pkt_type 兜底归 nwk)
+_NWK_CMD_TYPES = {"Link Status", "Route Request", "Route Reply", "Route Record",
+                  "Network Status", "Leave", "Rejoin Request", "Rejoin Response",
+                  "NWK Cmd"}
+
+
+def _packet_layer(p: dict) -> str:
+    """U16-6 层级判定 (ticket 对齐决策 #6): zcl > nwk > aps > mac > other.
+
+    - zcl: zcl_cmd_id 非空 (ZCL 命令帧)
+    - nwk: nwk_cmd_id 非空, 或 pkt_type 为 NWK 命令类 (加密命令帧兜底)
+    - aps: aps_cmd_id/aps_cluster 非空 (ZDP 命令/APS Ack)
+    - mac: mac_cmd_id 非空; DataReq (4=DataReq, scapy dot15d4.py 源码级; 终端轮询) 细分 mac_dreq 标红
+    - other: 无层级信息 (Beacon/ACK/未解密 Data 等)
+    """
+    if p.get("zcl_cmd_id") is not None:
+        return "zcl"
+    if p.get("nwk_cmd_id") is not None or p.get("pkt_type") in _NWK_CMD_TYPES:
+        return "nwk"
+    if p.get("aps_cmd_id") is not None or p.get("aps_cluster") is not None:
+        return "aps"
+    if p.get("mac_frame_type") == 2:  # ACK 帧 (2026-08-25 用户裁定保留)
+        return "mac"
+    if p.get("mac_cmd_id") == 4:  # DataReq (轮询) — 旧 3 错位修正 (scapy 源码级)
+        return "mac_dreq"
+    if p.get("mac_cmd_id") is not None:
+        return "mac"
+    return "other"
+
+
+def _packet_summary_short(p: dict) -> str:
+    """时间线摘要列 (U16-3): 精简语义摘要 — pkt_type + ZCL 命令名/方向 + 关键标志.
+
+    参考 scripts/export_ai_dataset.packet_summary 简化, 只取列表可读信息,
+    不引入完整 AI 摘要复杂度. 列表端点对返回页逐条生成 (非全量).
+    """
+    from ..cubx_reader import NWK_COMMAND_NAMES
+    parts: list[str] = []
+    cid = p.get("nwk_cmd_id")
+    if cid is not None:
+        name = NWK_COMMAND_NAMES.get(cid, f"NWK 0x{cid:02X}")
+        if name == "Leave":
+            flags = []
+            if p.get("nwk_leave_rejoin"):
+                flags.append("rejoin")
+            if p.get("nwk_leave_request"):
+                flags.append("request")
+            if p.get("nwk_leave_children"):
+                flags.append("children")
+            parts.append("Leave " + ",".join(flags) if flags else "Leave")
+        elif name == "Network Status" and p.get("nwk_status_code") is not None:
+            code = p["nwk_status_code"]
+            parts.append(f"NS {_SUMMARY_NS_CODE.get(code, f'0x{code:02X}')}")
+        elif name == "Route Record":
+            rr = p.get("route_record_relays")
+            n = len(rr.get("relays", [])) if isinstance(rr, dict) else 0
+            parts.append(f"Route Record relay={n}")
+        elif name == "Link Status":
+            ln = p.get("link_status_neighbors")
+            parts.append(f"Link Status nb={len(ln)}" if ln is not None else "Link Status")
+        else:
+            parts.append(name)
+    elif p.get("aps_cmd_name"):
+        parts.append(p["aps_cmd_name"])
+    if p.get("zcl_cmd_name"):
+        # 08-25 用户反馈: 摘要去掉簇 ID 与方向 (方向可从 NWK Src/Dst 推断, 簇 ID 详情面板有)
+        parts.append(f"ZCL {p['zcl_cmd_name']}")
+    if p.get("mac_cmd_id") is not None:
+        mc = p["mac_cmd_id"]
+        # 加密 MAC 命令帧 cmd_id 是密文首字节 (>9 垃圾值, P1 同类) → 不显示假名字
+        parts.append(_SUMMARY_MAC_CMD.get(mc) if mc in _SUMMARY_MAC_CMD else "MAC Cmd")
+    if p.get("mac_frame_type") == 2:
+        # ACK 帧 (2026-08-25 用户裁定保留): 无载荷, 仅标注 pending 位 (协调器有数据待取)
+        parts.append("MAC Ack" + (" pending" if p.get("mac_ack_pending") else ""))
+    return " | ".join(parts) if parts else (p.get("pkt_type") or "Unknown")
 
 
 @router.get("/packets/types")
@@ -960,6 +1065,8 @@ def _fallback_layers(p: dict) -> dict:
         # MAC 命令帧/Beacon 明细 (L1-1/L1-2 入网流程关键: AssocReq/AssocResp/BeaconReq)
         if p.get("mac_cmd_id") is not None:
             wpan["wpan.cmd_id"] = str(p["mac_cmd_id"])
+        if p.get("mac_ack_pending") is not None:
+            wpan["wpan.ack_pending"] = str(p["mac_ack_pending"])
         if p.get("mac_src64"):
             wpan["wpan.src64"] = p["mac_src64"]
         if p.get("mac_dst64"):
@@ -1180,6 +1287,7 @@ def _fallback_nwk_cmd_tree(cmd_name: str, p: dict) -> dict | None:
 
 # APS Ack 配对 — 共享模块 (backend/aps_pairing.py, 详情端点与 L3-1 检测器共用)
 from ..aps_pairing import build_ack_match as _build_ack_match  # noqa: E402
+from ..aps_pairing import build_transaction_peers as _build_transaction_peers  # noqa: E402
 
 
 def _get_ack_match() -> tuple[dict, dict]:
@@ -1190,6 +1298,66 @@ def _get_ack_match() -> tuple[dict, dict]:
         pairs = _build_ack_match(_packets)
         _ack_match_cache = (id(_packets), pairs)
     return pairs
+
+
+def _get_transaction_peers() -> dict:
+    """U16-7a 事务链惰性构建 + 缓存 (与 _get_ack_match 同模式, 首次详情访问构建一次)."""
+    global _transaction_cache
+    ref, peers = _transaction_cache
+    if ref != id(_packets) or peers is None:
+        peers = _build_transaction_peers(_packets)
+        _transaction_cache = (id(_packets), peers)
+    return peers
+
+
+def _get_uplink_path_index() -> dict:
+    """U16-4b 上行路径索引 (惰性缓存): {(src,dst): [{relays, first_ts, last_ts}]}.
+
+    素材实证 (08-25): 中继素材 RR 帧 relays 几乎全空 (31 帧仅 3 帧非空), 下行 source
+    route 丰富 (546 帧) → 上行路径用 U13 同源方法「下行 source-route 反转」:
+    上行帧 (设备→协调器) 查下行 (dst→src) 的 source route, 中继列表反转即为上行路径.
+    同 (src,dst) 多路径 (路由变更) 全保留, 时间窗匹配取最近.
+    """
+    global _rr_path_cache
+    ref, idx = _rr_path_cache
+    if ref != id(_packets) or idx is None:
+        agg: dict = {}
+        for p in _packets:
+            relays = p.get("nwk_relays")
+            src, dst = p.get("nwk_src"), p.get("nwk_dst")
+            if not relays or src is None or dst is None:
+                continue
+            key = (src, dst)
+            ts = p.get("ts", 0.0)
+            lst = agg.get(key)
+            if lst is None:
+                agg[key] = [{"relays": relays, "first_ts": ts, "last_ts": ts}]
+            else:
+                for m in lst:
+                    if m["relays"] == relays:
+                        m["first_ts"] = min(m["first_ts"], ts)
+                        m["last_ts"] = max(m["last_ts"], ts)
+                        break
+                else:
+                    lst.append({"relays": relays, "first_ts": ts, "last_ts": ts})
+        idx = agg
+        _rr_path_cache = (id(_packets), idx)
+    return idx
+
+
+def _uplink_relays_for(p: dict, idx: dict) -> list | None:
+    """上行帧 p 的路径中继: 查下行 (dst,src) source route 反转 (时间窗匹配 → 兜底最新)."""
+    src, dst = p.get("nwk_src"), p.get("nwk_dst")
+    if src is None or dst is None:
+        return None
+    cands = idx.get((dst, src))  # 反向: 下行 dst→src
+    if not cands:
+        return None
+    ts = p.get("ts", 0.0)
+    for m in cands:
+        if m["first_ts"] <= ts <= m["last_ts"] + 2.0:
+            return list(reversed(m["relays"]))
+    return list(reversed(max(cands, key=lambda m: m["last_ts"])["relays"]))
 
 
 def _detail_dict(p: dict, pkt_id: int) -> dict:
@@ -1248,4 +1416,8 @@ async def packet_detail(pkt_id: int):
             ack_pair = {"kind": "ack_from", "peer_id": got[0],
                         "text": f"被帧 #{got[0]} 确认"}
     d["aps_ack_pair"] = ack_pair  # APS Ack 配对 (2026-08-06)
+    # U16-7a 事务链: 命令帧 → (ack + ZCL 响应帧列表) (2026-08-25)
+    tr = _get_transaction_peers().get(pkt_id)
+    if tr:
+        d["transaction"] = tr
     return d

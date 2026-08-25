@@ -179,9 +179,23 @@ input.mono, select.mono { font-family: var(--font-mono); }
   font-size: var(--fs-xs); line-height: 1.5; vertical-align: 1px; }
 /* U5 ZCL 命令级显示: 类型列中命令名弱化 (Data · Report Attributes) */
 .zcl-cmd { color: var(--c-text-3); font-size: var(--fs-xs); }
+/* U16-3 摘要列 (2026-08-25): 长文本截断, hover 全显 */
+.tl-summary { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* U16-6 层级着色 (2026-08-25): 摘要文字+底色 (ZCL绿/APS紫/NWK蓝/MAC DataReq红/其他灰), 行其余列不染 */
+.tl-ly-zcl { color: #166534; background: rgba(22,163,74,.13); }
+.tl-ly-aps { color: #6d28d9; background: rgba(124,58,237,.13); }
+.tl-ly-nwk { color: #1d4ed8; background: rgba(37,99,235,.13); }
+.tl-ly-macdreq { color: #b91c1c; background: rgba(220,38,38,.13); }
+.tl-ly-mac, .tl-ly-other { color: #475569; background: rgba(100,116,139,.13); }
+/* U16-4 路径列 (2026-08-25): 完整路径 (起点→中继→终点) 过长截断, hover 全显, 点击展开 */
+.tl-path { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; cursor: pointer; }
+.tl-path.expanded { max-width: none; white-space: normal; word-break: break-all; }
 /* U5 后续: APS Ack 配对跳转链接 */
 .ack-jump { color: var(--c-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .ack-jump:hover { color: var(--c-primary-hover); }
+/* U16-1 字段点选过滤 (2026-08-25): 详情面板 PAN/地址值可点 */
+.tl-click-val { color: var(--c-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.tl-click-val:hover { color: var(--c-primary-hover); background: var(--c-primary-bg); }
 .badge-leave { background: var(--c-danger-bg); color: var(--c-danger); border: 1px solid var(--c-danger-border); }
 .badge-rej { background: #f3e8ff; color: var(--c-route); border: 1px solid #ddd0f2; }
 .badge-nstat { background: var(--c-warning-bg); color: var(--c-amber); border: 1px solid var(--c-warning-border); }

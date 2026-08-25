@@ -379,7 +379,7 @@ reg('import',function(){
     var vc = ok?'#16a34a':'#dc2626';
     var ph='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(ok?'#f0fdf4':'#fef2f2')+';border:1px solid '+vc+';font-size:11px">';
     ph+='<b style="color:'+vc+'">'+(ok?'✅ 解析正确性校验通过':'❌ 解析正确性校验异常')+'</b>';
-    if(pv.failure_type){ph+=' <span style="color:#94a3b8">('+(pv.failure_type==='parse_mismatch'?'解析错位, 已锁定拓扑/时间线/节点页':pv.failure_type==='missing_key'?'缺 key, 仅警告':'警告')+')</span>';}
+    if(pv.failure_type){ph+=' <span style="color:#94a3b8">('+(pv.failure_type==='parse_mismatch'?'解析错位, 已锁定拓扑/报文/节点页':pv.failure_type==='missing_key'?'缺 key, 仅警告':'警告')+')</span>';}
     if(pv.checks){for(var ck in pv.checks){var c=pv.checks[ck];
       ph+='<br>'+(c.passed?'✅':'⚠️')+' '+c.label+': <span style="color:#64748b">'+(c.actual||'')+'</span>';
     }}

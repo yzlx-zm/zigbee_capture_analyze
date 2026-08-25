@@ -1,9 +1,10 @@
 {
- "kept_frames": 464,
+ "kept_frames": 876,
  "stats": {
   "pkt_type": {
    "APS Ack": 7,
    "APS Cmd": 5,
+   "Acknowledgement": 412,
    "Beacon": 66,
    "Data": 203,
    "Link Status": 11,
@@ -18,7 +19,7 @@
    "ZDP: Node Desc Resp": 1
   },
   "security": {
-   "": 125,
+   "": 537,
    "Decrypted": 71,
    "Encrypted": 268
   },
@@ -39,6 +40,6 @@
   "nodes_src": 17,
   "nodes_dst": 11
  },
- "frames_sha256": "54e7595b61479e6be73bd9cb1a7f3df7b48ba8110ddac373049a34aa680f0af7",
+ "frames_sha256": "9485c6448b994ed5c2069129eed2e4e1f167dd13886161958bf5e7183ecae790",
  "parser_commit": "e215bcf"
 }

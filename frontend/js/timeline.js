@@ -9,6 +9,8 @@ reg('tl', function(){
   if(!S.tlTs1H) S.tlTs1H=''; if(!S.tlTs1M) S.tlTs1M=''; if(!S.tlTs1S) S.tlTs1S='';
   if(!S.tlHasSearched) S.tlHasSearched=false;
   if(!S.tlType) S.tlType='';
+  // U16-2: 未解密包默认隐藏 (开关在过滤行; 仅首次进入时默认开, 不覆盖用户选择)
+  if(typeof S.tlHideUndec==='undefined') S.tlHideUndec=true;
   // Override PAN if jumped from topology
   if(S.topoPan){S.tlPan=S.topoPan; S.tlHasSearched=true;}
   // Override node filter if jumped from topology
@@ -24,7 +26,7 @@ reg('tl', function(){
   var hourOpts=[];for(var hi=0;hi<24;hi++)hourOpts.push(hi);
   var minSecOpts=[];for(var mi=0;mi<60;mi++)minSecOpts.push(mi);
 
-  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 时间线</h3>'
+  document.getElementById('mc').innerHTML='<div class="card"><h3>📊 报文</h3>'
     // Row 1: PAN + Node text inputs
     +'<div class="tl-bar">'
     +'<span class="t-label">PAN:</span><input id="tl-pan" placeholder="FEED" class="mono w-90" value="'+S.tlPan+'">'
@@ -41,6 +43,8 @@ reg('tl', function(){
     // Row 3: View button + status
     +'<div class="tl-bar">'
     +'<select id="tl-type" class="mono"><option value="">全部类型</option></select>'
+    // U16-2 未解密开关 (默认勾选 = 隐藏未解密帧; 切换后自动重查)
+    +'<label class="t-10" title="勾选后隐藏未解密帧 (切换自动重查)"><input type="checkbox" id="tl-hide-undec"'+(S.tlHideUndec?' checked':'')+'> 🔒 未解密</label>'
     +'<button class="btn btn-p" id="tshow">🔍 查看</button>'
     +'<span id="tl-capture-info"></span>'
     +'<span id="tl-stat"></span></div>'
@@ -51,7 +55,9 @@ reg('tl', function(){
     // LEFT: packet table
     +'<div class="tl-table-wrap">'
     +'<table class="tbl" id="tltbl"><thead><tr>'
-    +'<th>帧号</th><th>时间</th><th>类型</th><th>NWK Src</th><th>NWK Dst</th><th>安全</th><th>状态</th>'
+    // U16-4 (2026-08-25): 安全/状态两列 → 路径列 (安全信息详情面板已有, 列表不占列)
+    // U16-5 (2026-08-25): 加 APS Ctr 列 (分析消息回复情况)
+    +'<th>帧号</th><th>时间</th><th>摘要</th><th>路径</th><th>NWK Src</th><th>NWK Dst</th><th>APS Ctr</th>'
     +'</tr></thead><tbody id="tltb"><tr><td colspan="7" class="tl-empty-cell">请输入过滤条件后点击「查看」</td></tr></tbody></table>'
     +'</div>'
     // RIGHT: protocol detail panel
@@ -109,6 +115,7 @@ reg('tl', function(){
     S.tlTs0H=document.getElementById('tl-h0').value; S.tlTs0M=document.getElementById('tl-m0').value; S.tlTs0S=document.getElementById('tl-s0').value;
     S.tlTs1H=document.getElementById('tl-h1').value; S.tlTs1M=document.getElementById('tl-m1').value; S.tlTs1S=document.getElementById('tl-s1').value;
     S.tlType=document.getElementById('tl-type').value;
+    S.tlHideUndec=document.getElementById('tl-hide-undec').checked;
     S.tlHasSearched=true;
     // 双向联动: 时间线→拓扑 (节点+时间)
     S.topoAddr=S.tlNode||null;
@@ -150,6 +157,8 @@ reg('tl', function(){
     if(tf.ts0)q+='&time_start='+encodeURIComponent(tf.ts0);
     if(tf.ts1)q+='&time_end='+encodeURIComponent(tf.ts1);
     if(typeVal)q+='&pkt_type='+encodeURIComponent(typeVal);
+    // U16-2: 未解密开关勾选 → 后端隐藏未解密帧
+    if(document.getElementById('tl-hide-undec').checked)q+='&hide_undecrypted=1';
     return q;
   }
 
@@ -211,27 +220,43 @@ reg('tl', function(){
         }else if(p.pkt_type==='Network Status'){
           evBadge='<span class="badge-ev badge-nstat" title="网络状态命令 (NWK 0x03), 详见右侧详情">⚠️ 状态</span>';
         }
-        // ZCL 命令级显示 (U5): 解密 Data 帧类型列直接显示实际命令 (如 "Down / Close"),
-        // 去掉笼统的 "Data"; 过滤仍按 pkt_type=Data (后端), 仅展示增强
-        var typeDisp=p.pkt_type;
-        // ⚠️ 修复: 仅 Data 帧走 ZCL 显示 — APS Ack 帧也带 cluster 且已解密, 此前被误标为簇名
-        if(p.pkt_type==='Data'&&p.decrypted&&p.zcl_cmd_name){
-          typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+(p.aps_cluster_name||'?')+' · 命令: '+p.zcl_cmd_name+'">'+p.zcl_cmd_name+'</span>';
-        }else if(p.pkt_type==='Data'&&p.decrypted&&p.aps_cluster_name){
-          typeDisp='<span class="zcl-cmd" title="ZCL 簇: '+p.aps_cluster_name+'">'+p.aps_cluster_name+'</span>';
-        }else if(p.pkt_type==='APS Cmd'&&p.aps_cmd_name){
-          typeDisp='<span class="zcl-cmd" title="APS 命令帧">'+p.aps_cmd_name+'</span>';
-        }
+        // U16-3 摘要列 (2026-08-25): 类型列改后端 summary 简述 (如 "ZCL On/Off C→S 0x0006" /
+        // "Leave rejoin"), 长文本截断 hover 全显; 事件徽章 (U5) 保留在摘要后
+        // U16-6 层级着色 (2026-08-25): 摘要文字+底色按 layer (ZCL绿/APS紫/NWK蓝/MAC DataReq红/其他灰)
+        var lyCls='tl-ly-other';
+        if(p.layer==='zcl')lyCls='tl-ly-zcl';
+        else if(p.layer==='aps')lyCls='tl-ly-aps';
+        else if(p.layer==='nwk')lyCls='tl-ly-nwk';
+        else if(p.layer==='mac_dreq')lyCls='tl-ly-macdreq';
+        else if(p.layer==='mac')lyCls='tl-ly-mac';
+        var typeDisp=p.summary
+          ? '<span class="tl-summary '+lyCls+'" title="'+p.summary+'">'+p.summary+'</span>'
+          : p.pkt_type;
+        // 08-25 用户反馈: ✅ (已解密) 图标在摘要列无上下文且无信息量 → 移除;
+        // 🔒 仅对「有 NWK 安全但解密失败」的帧显示 — 明文 MAC 帧 (poll/Beacon/Ack)
+        // decrypted=False 但无需解密, 不标锁 (08-25 全量化后自查修正); 📡 NWK 命令标记
         var decIcon='';
         if(isNwkCmdRow){
           decIcon='<span class="ic-nwk" title="NWK命令">📡</span>';
-        }else if(p.decrypted){
-          decIcon='<span class="ic-dec" title="已解密">✅</span>';
-        }else{
-          decIcon='<span class="ic-enc" title="加密">🔒</span>';
+        }else if(!p.decrypted&&p.nwk_security){
+          decIcon='<span class="ic-enc" title="NWK 安全未解密">🔒</span>';
         }
-        var stat=(p.status||'')+' '+decIcon;
-        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+(p.packet_id!=null?p.packet_id:'-')+'</td><td>'+ts+'</td><td>'+typeDisp+evBadge+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+(p.security||'')+'</td><td>'+stat+'</td></tr>';}
+        // U16-4 路径列 (完整路径): 起点→中继→终点 (0x0000→0x1885→0xF67F), 无中继 → —
+        // (08-25 用户反馈: 只显示中继 "→0x1885" 不直观 → 完整路径一行自洽)
+        // U16-4b: path_relays = 下行 source route 优先, 上行帧用 RR 证据补路径 (后端已合并)
+        var pathStr='—';
+        var pathRelays=p.path_relays||p.nwk_relays;
+        if(pathRelays&&pathRelays.length){
+          var pathNodes=[];
+          if(typeof p.nwk_src==='number')pathNodes.push('0x'+p.nwk_src.toString(16).toUpperCase().padStart(4,'0'));
+          for(var ri=0;ri<pathRelays.length;ri++)pathNodes.push('0x'+pathRelays[ri].toString(16).toUpperCase().padStart(4,'0'));
+          if(typeof p.nwk_dst==='number')pathNodes.push('0x'+p.nwk_dst.toString(16).toUpperCase().padStart(4,'0'));
+          pathStr='<span class="tl-path" title="路径: '+pathNodes.join(' → ')+'">'+pathNodes.join('→')+'</span>';
+        }
+        // U16-4: decIcon (✅/🔒/📡) 原在状态列, 随列删除移到摘要列前
+        // U16-5: APS Ctr 列 (请求/ack 帧 counter 肉眼对应)
+        var apsCtr=typeof p.aps_counter==='number'?String(p.aps_counter):'—';
+        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+(p.packet_id!=null?p.packet_id:'-')+'</td><td>'+ts+'</td><td>'+decIcon+typeDisp+evBadge+'</td><td>'+pathStr+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+apsCtr+'</td></tr>';}
       document.getElementById('tltb').innerHTML=h||'<tr><td colspan="7" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
@@ -240,6 +265,13 @@ reg('tl', function(){
           this.classList.add('hl');
           var pid=parseInt(this.dataset.pid);
           tlShowDetail(pid);
+        });
+      });
+      // U16-4 路径展开/收起 (08-25 用户反馈: 路径过长处理): 点击行内展开全路径, 再点收起
+      document.querySelectorAll('#tltb .tl-path').forEach(function(sp){
+        sp.addEventListener('click',function(e){
+          e.stopPropagation();  // 不触发行点击详情
+          this.classList.toggle('expanded');
         });
       });
       updPgr();
@@ -259,6 +291,18 @@ reg('tl', function(){
     tr.classList.add('hl');
     tr.scrollIntoView({block:'center',behavior:'smooth'});
     tlShowDetail(parseInt(tr.dataset.pid));
+  }
+
+  // U16-1 字段点选过滤 (2026-08-25): 详情字段值 (PAN/短地址) → 填入过滤框 + 自动查看
+  // ⚠️ 修复 (08-25 CDP 复现): fill 语义值 'pan'/'node' 需映射到过滤框元素 id ('tl-pan'/'tl-node')
+  function tlFillAndSearch(target, val){
+    var ids={pan:'tl-pan', node:'tl-node'};
+    var el=document.getElementById(ids[target]);
+    if(!el)return;
+    var v=String(val||'').trim().replace(/^0x/i,'').replace(/[^0-9a-fA-F]/g,'');
+    if(!v)return;
+    el.value='0x'+v.toUpperCase().padStart(4,'0');
+    tlPage=1; search();
   }
 
   // APS Ack 配对跳转 (U5 后续): 本页有 → 直接定位 (过滤完全保持);
@@ -291,6 +335,9 @@ reg('tl', function(){
     document.getElementById('tl-pan').value='';
     document.getElementById('tl-node').value='';
     document.getElementById('tl-type').value='';
+    // U16-2: 目标帧可能是未解密帧 → 清过滤时同步取消未解密隐藏, 保证定位能找到
+    document.getElementById('tl-hide-undec').checked=false;
+    S.tlHideUndec=false;
     if(tlCaptureStart&&tlCaptureEnd){
       var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
       document.getElementById('tl-h0').value=csd.getHours();document.getElementById('tl-m0').value=csd.getMinutes();document.getElementById('tl-s0').value=csd.getSeconds();
@@ -318,14 +365,35 @@ reg('tl', function(){
           +' <span class="text-dim">(APS Ack 配对'+(pk.kind==='ack_to'?', </span><a class="ack-jump" href="javascript:void(0)" data-peer="'+pk.peer_id+'">点击帧 #'+pk.peer_id+' 查看原帧</a><span class="text-dim">)':'<span class="text-dim">)')
           +'</span></div>';
       }
+      // U16-7a 事务链 (2026-08-25): 同事务响应帧 (仅同 ZCL tsn 铁证; 展示折叠 前5+展开)
+      if(d.transaction&&d.transaction.responses&&d.transaction.responses.length){
+        var respArr=d.transaction.responses;
+        var trLinks=[];
+        for(var ti=0;ti<respArr.length;ti++){
+          var rf=respArr[ti];
+          var dirTxt=rf.zcl_direction==='Server→Client'?'S→C':(rf.zcl_direction==='Client→Server'?'C→S':'');
+          var name=rf.zcl_cmd_name||rf.pkt_type;
+          trLinks.push('<a class="ack-jump" href="javascript:void(0)" data-peer="'+rf.id+'" title="跳转响应帧">#'
+            +rf.packet_id+' '+name+' '+dirTxt+'</a>');
+        }
+        var trHtml='<div class="ack-pair" style="margin:6px 0;padding:4px 8px;border-left:3px solid #7c3aed;background:#f5f3ff;font-size:11px">'
+          +'📩 同事务响应 ('+respArr.length+'): '+trLinks.slice(0,5).join(' · ');
+        if(trLinks.length>5){
+          trHtml+=' <a class="tr-toggle" href="javascript:void(0)" data-count="'+trLinks.length+'">展开全部</a>'
+            +'<span class="tr-hidden" style="display:none"> · '+trLinks.slice(5).join(' · ')+'</span>';
+        }
+        trHtml+='</div>';
+        html+=trHtml;
+      }
       var layers=d.layers;
       // MAC layer (wpan)
       if(layers.wpan){
         var wpanF=[['Frame Type', _tlMacType(layers.wpan)],
           ['Seq#', _tlF(layers.wpan,'wpan.seq_no')],
-          ['Dest PAN', _tlA(layers.wpan,'wpan.dst_pan')],
-          ['Dest Addr', _tlA(layers.wpan,'wpan.dst16')],
-          ['Src Addr', _tlA(layers.wpan,'wpan.src16')],
+          // U16-1 字段点选 (2026-08-25): PAN/地址值可点 → 填入过滤框 + 自动查看
+          ['Dest PAN', _tlA(layers.wpan,'wpan.dst_pan'), '', 'pan'],
+          ['Dest Addr', _tlA(layers.wpan,'wpan.dst16'), '', 'node'],
+          ['Src Addr', _tlA(layers.wpan,'wpan.src16'), '', 'node'],
           ['FCS OK', layers.wpan['wpan.fcs_ok']==='1'?'Yes':'No']];
         // MAC 命令帧/Beacon 明细 (cubx fallback; L1-1/L1-2 入网流程)
         if(layers.wpan['wpan.cmd_id']!=null){
@@ -334,8 +402,12 @@ reg('tl', function(){
         }
         if(layers.wpan['wpan.src64'])wpanF.push(['Src EUI64', layers.wpan['wpan.src64']]);
         if(layers.wpan['wpan.dst64'])wpanF.push(['Dest EUI64', layers.wpan['wpan.dst64']]);
+        // U16 (2026-08-25): ACK 帧 frame pending 位 (协调器有数据待取, poll 流程信号)
+        if(layers.wpan['wpan.ack_pending']!=null){
+          wpanF.push(['Ack Pending', layers.wpan['wpan.ack_pending']==='1'?'有数据待取':'无', 'ACK 帧 FCF frame pending 位']);
+        }
         if(layers.wpan['wpan.beacon_pan']!=null){
-          wpanF.push(['Beacon PAN', _tlA(layers.wpan,'wpan.beacon_pan')]);
+          wpanF.push(['Beacon PAN', _tlA(layers.wpan,'wpan.beacon_pan'), '', 'pan']);
           wpanF.push(['Permit Join', layers.wpan['wpan.beacon_permit']==='1'?'允许':'不允许']);
         }
         html+=_tlLayer('MAC', '#d97706', wpanF);
@@ -348,8 +420,9 @@ reg('tl', function(){
         var cmdName='';
         for(var ck in nwk){if(ck.startsWith('Command Frame:')){cmdName=ck.split(':')[1].trim();break;}}
         if(cmdName){nwkFields.push(['Command', cmdName]);}
-        nwkFields.push(['Dest', _tlA2(nwk,'zbee_nwk.dst')]);
-        nwkFields.push(['Src', _tlA2(nwk,'zbee_nwk.src')]);
+        // U16-1 字段点选: NWK 源/目标可点 → 填入节点过滤框
+        nwkFields.push(['Dest', _tlA2(nwk,'zbee_nwk.dst'), '', 'node']);
+        nwkFields.push(['Src', _tlA2(nwk,'zbee_nwk.src'), '', 'node']);
         nwkFields.push(['Radius', _tlF(nwk,'zbee_nwk.radius')]);
         nwkFields.push(['Seq#', _tlF(nwk,'zbee_nwk.seqno')]);
         var fct=nwk['zbee_nwk.fcf_tree']||{};
@@ -643,11 +716,28 @@ reg('tl', function(){
         }
       }
       panel.innerHTML=html;
-      // APS Ack 配对跳转 (U5 后续): 点击帧号链接 → 定位时间线对应行
+          // APS Ack 配对跳转 (U5 后续): 点击帧号链接 → 定位时间线对应行
       panel.querySelectorAll('.ack-jump').forEach(function(a){
         a.addEventListener('click',function(e){
           e.preventDefault();
           tlJumpToFrame(parseInt(this.dataset.peer));
+        });
+      });
+      // U16-1 字段点选过滤 (2026-08-25): 详情字段值 → 填入过滤框 + 自动查看
+      panel.querySelectorAll('.tl-click-val').forEach(function(a){
+        a.addEventListener('click',function(e){
+          e.preventDefault();
+          tlFillAndSearch(this.dataset.fill, this.dataset.val);
+        });
+      });
+      // U16-7a 事务链折叠 (2026-08-25): 响应帧 >5 时 展开/收起
+      panel.querySelectorAll('.tr-toggle').forEach(function(a){
+        a.addEventListener('click',function(e){
+          e.preventDefault();
+          var hid=this.nextElementSibling;
+          var n=parseInt(this.dataset.count);
+          if(hid.style.display==='none'){hid.style.display='';this.textContent='收起';}
+          else{hid.style.display='none';this.textContent='展开全部';}
         });
       });
     }).catch(function(e){
@@ -660,7 +750,12 @@ reg('tl', function(){
     h+='<div class="frame-title" style="color:'+color+'">'+title+'</div>';
     for(var i=0;i<fields.length;i++){
       var desc=fields[i][2]||'';
-      h+='<div class="field-row"><span class="k" title="'+desc+'">'+fields[i][0]+'</span><span class="v">'+fields[i][1]+'</span></div>';
+      var val=fields[i][1];
+      var fill=fields[i][3];  // U16-1: 'pan'|'node' → 值渲染为可点, 点击填入过滤框
+      if(fill&&String(val).match(/^0x[0-9a-fA-F]+$/)){
+        val='<a class="tl-click-val" href="javascript:void(0)" data-fill="'+fill+'" data-val="'+val+'" title="点击填入'+(fill==='pan'?'PAN':'节点')+'过滤框">'+val+'</a>';
+      }
+      h+='<div class="field-row"><span class="k" title="'+desc+'">'+fields[i][0]+'</span><span class="v">'+val+'</span></div>';
     }
     h+='</div>';
     return h;
@@ -673,9 +768,9 @@ reg('tl', function(){
     var types={0:'Beacon',1:'Data',2:'ACK',3:'MAC Cmd'};
     return (types[fcf&0x07]||'?')+' [0x'+fcf.toString(16).toUpperCase()+']';
   }
-  // MAC 命令名 (IEEE 802.15.4; L1-1/L1-2 入网流程)
+  // MAC 命令名 (scapy dot15d4.py:327 源码级映射, zigbee 协议; 08-25 修正: 旧表 3/4/5/8 错位)
   function _tlMacCmdName(id){
-    var names={1:'AssocReq (入网请求)',2:'AssocResp (入网应答)',3:'DataReq (数据请求)',4:'DataConf',5:'PollReq',7:'BeaconReq (信标请求)',8:'BeaconNotify',9:'GTSReq',10:'GTSNotify',11:'GTSConf'};
+    var names={1:'AssocReq (入网请求)',2:'AssocResp (入网应答)',3:'DisassocNotify (解除关联)',4:'DataReq (轮询)',5:'PANIDConflict',6:'OrphanNotify',7:'BeaconReq (信标请求)',8:'CoordRealign',9:'GTSReq'};
     return names[id]||'0x'+id.toString(16);
   }
   // APS 命令名 (Zigbee spec; L1-3 密钥流程)
@@ -753,6 +848,8 @@ reg('tl', function(){
 
   // Search button
   document.getElementById('tshow').addEventListener('click',function(){tlPage=1;search()});
+  // U16-2 未解密开关: 切换即重查 (无需点查看)
+  document.getElementById('tl-hide-undec').addEventListener('change',function(){tlPage=1;search()});
   // Pagination
   document.getElementById('tl-pp').addEventListener('click',function(){if(tlPage>1){tlPage--;search()}});
   document.getElementById('tl-pn').addEventListener('click',function(){tlPage++;search()});
@@ -789,9 +886,9 @@ reg('tl', function(){
         S.tlTs1H=String(endH);S.tlTs1M=String(endM);S.tlTs1S=String(endS);
       }
       // Auto-search after dropdowns are correct
-      if(S.topoPan || S.tlHasSearched){
-        tlPage=1; setTimeout(function(){search()},50);
-      }
+      // U16 (2026-08-25 用户反馈): 进页面默认展示全部包 (无过滤全量), 不再等用户点查看;
+      // topoPan/tlHasSearched 跳转联动仍在 (值会从 DOM 读, 此处只需无条件触发一次)
+      tlPage=1; setTimeout(function(){search()},50);
     }
   });
   // U5: 类型下拉页面加载即填充 (不依赖点查看; search() 内保留兜底)

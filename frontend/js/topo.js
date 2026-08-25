@@ -122,7 +122,7 @@ reg('topo', function(){
     var bar=document.getElementById('focus-bar');
     bar.innerHTML='🔍 聚焦 <b class="mono">0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
       +'<span class="t-10" style="color:#cbd5e1">拖动时间滑块观察该节点链路变化</span>'
-      +'<button class="btn btn-o btn-s" id="focus-tl" style="color:#fff">🔍 时间线</button>'
+      +'<button class="btn btn-o btn-s" id="focus-tl" style="color:#fff">🔍 报文</button>'
       +'<button class="btn btn-s" id="focus-exit">✕ 退出</button>';
     bar.style.display='flex';
     document.getElementById('focus-tl').addEventListener('click',function(){

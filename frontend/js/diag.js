@@ -57,8 +57,8 @@ function devLine(dev, verdict, subRule, statsHtml, summary, scenario) {
   var sc = scenario || 'L1';
   var dc = vClass(verdict, hitPrefixOf(sc));
   var addrTxt = '0x' + dev.toString(16).toUpperCase().padStart(4, '0');
-  var jump = '<a class="dev-jump" href="#tl" title="时间线查看该设备" '
-    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">🔍时间线</a>';
+  var jump = '<a class="dev-jump" href="#tl" title="报文页查看该设备" '
+    + 'onclick="event.stopPropagation();S.topoAddr=\'' + addrTxt + '\';S.topoT0=null;S.topoT1=null;">🔍报文</a>';
   return '<div class="dev"><b>' + addrTxt + '</b> ' + jump + ': '
     + '<span class="' + dc + '" title="' + (verdict || '—') + (subRule ? ' (' + subRule + ')' : '') + '">'
     + verdictText(sc, verdict) + '</span> '
