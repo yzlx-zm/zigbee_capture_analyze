@@ -7,7 +7,8 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let silentHidden = false, neighborHidden = false, focusAid = null;   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
+let silentHidden = false, neighborHidden = false, focusAid = null;
+let curT = null;   // U13 时刻游标 (当前时刻, 边按此过滤)   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
 
@@ -60,13 +61,10 @@ reg('topo', function(){
     +'</div>'
     // ── 时间控制条: 单滑块(窗口中心) + 窗口大小 ──
     +'<div class="timebar">'
-    +'<span class="t-label">⏱ 窗口:</span>'
-    +'<select id="twin-size">'
-    +'<option value="30">30s</option><option value="60">60s</option><option value="120">120s</option><option value="300">300s</option><option value="9999" selected>全部</option></select>'
-    +'<button class="btn btn-o btn-s" id="tstep-bwd" title="前移">◀</button>'
+    +'<span class="t-label">⏱ 时刻:</span>'
     +'<input type="range" id="tsl" min="0" max="1000" value="500" oninput="onTimeSlide()" onchange="onTimeSlideEnd()">'
-    +'<button class="btn btn-o btn-s" id="tstep-fwd" title="后移">▶</button>'
-    +'<span id="ttime-label">--:--:-- ~ --:--:--</span>'
+    +'<span id="ttime-label">--:--:--</span>'
+    +'<span class="t-10 text-muted" style="margin-left:8px">拖动游标观察该时刻的链路</span>'
     +'<div class="time-scale">'
       +'<span class="ts-label" id="ts-t0"></span>'
       +'<div class="ts-track"><div class="ts-window" id="ts-window"></div></div>'
@@ -114,8 +112,8 @@ reg('topo', function(){
 
   // ═══ U13-B: 聚焦模式 (选节点看链路变化, 其他隐藏) ═══
   function reloadTopo(){
-    var pan=S.topoPan||'';
-    loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){}}, S.topoT0, S.topoT1);
+    // U13 时刻游标: 数据已全量加载, 聚焦切换本地重渲染
+    if(S.topo) renderGraph(S.topo);
   }
   function enterFocus(aid){
     focusAid=aid;
@@ -137,10 +135,8 @@ reg('topo', function(){
     if(bar)bar.style.display='none';
     // ⚠️ 2026-08-25 用户反馈: 退出后"还在过滤界面" — 曾保留当前时间窗
     // (S.topoT0/T1 不清) → 图仍是窗内视图; 退出 = 恢复全量视图
-    S.topoT0=null; S.topoT1=null;
-    var wsSel=document.getElementById('twin-size'); if(wsSel)wsSel.value='9999';
-    tCenter=null;
     var slEl=document.getElementById('tsl'); if(slEl)slEl.value=500;
+    curT=sliderToTs(500);
     updateTimeLabel();
     reloadTopo();
   }
@@ -326,45 +322,39 @@ reg('topo', function(){
       });
     }
 
-    // ── 边: Route Record 路径 (跳过不存在的节点, 避免PAN切换空图) ──
-    // ⚠️ U13-A2 (2026-08-25): 时间窗激活时**只画窗内活跃路径** (窗外历史路径不画,
-    // 曾以虚线保留 → 拓扑视觉永远不变, 拖动滑块看不出链路演化 — 用户反馈);
-    // 无过滤 (全部) 时保持现状 (当前实线/历史虚线)
+    // ── 边: U13 时刻游标 (2026-08-25 重构) — curT 时刻链路快照 ──
+    // 每节点 T 时刻状态 = link_snapshots 分段中 t0<=curT 的最近一段:
+    //   route 段 → 该时刻路径全链边; parent 段 → 该时刻 poll 父边
+    // (曾用窗过滤 route_paths + 全程 parent — 时刻语义不精确, 用户反馈重做)
     var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
-    var hasFilter=S.topoT0!=null||S.topoT1!=null;
-    for(var i=0;i<rps.length;i++){
-      var rp=rps[i];
-      if(hasFilter&&rp.active===false) continue;  // 窗内不活跃路径 → 不画
-      var ci=i % PATH_COLORS.length;
-      var full=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
-      for(var j=0;j<full.length-1;j++){
-        var sid=''+full[j]; var tid=''+full[j+1];
-        if(!cyNodeIds[sid]||!cyNodeIds[tid]) continue; // 跨PAN节点跳过
-        var solid=hasFilter?(rp.active!==false):rp.is_current;
-        // U13-C (2026-08-25): 窗内同源多路径主次分明 — 最近路径 (is_current) 实线,
-        // 其余弱化虚线 (route-alt), 减少 02C2 类多路径交叉视觉
-        var isAlt=hasFilter&&rp.is_current!==true;
-        cyEdges.push({
-          data:{id:'rp-'+i+'-'+j, source:sid, target:tid, path_idx:i, hop:j, path_str:rp.path_str, is_current:rp.is_current, active:rp.active, edge_type:'route'},
-          classes:'route-path path-c'+ci+(solid?'':' historical')+(isAlt?' route-alt':'')
-        });
-      }
+    var snaps=d.link_snapshots||{};
+    var lsKeys={};
+    function snapAt(segs){
+      var best=null;
+      for(var si=0;si<segs.length;si++){if(segs[si].t0<=curT)best=segs[si];else break;}
+      return best;
     }
-
-    // ── 边: 协议级父链路 (U13) — poll 目标 / AssocResp 父 / RR 下一跳 (芯科依据)
-    // 与已有 route 边 (同链路) 去重 — route 边已表达转发路径, parent 边只补无路径设备的链路
-    var linkKeys={};
-    cyEdges.forEach(function(e){var s=e.data.source,t=e.data.target;linkKeys[Math.min(+s,+t)+'-'+Math.max(+s,+t)]=true;});
-    for(var pi=0;pi<cyNodes.length;pi++){
-      var pn=cyNodes[pi].data;
-      if(pn.link_parent==null)continue;
-      var pk=Math.min(pn.aid,pn.link_parent)+'-'+Math.max(pn.aid,pn.link_parent);
-      if(linkKeys[pk])continue;   // 已有 route/邻居边 → 不重复
-      cyEdges.push({
-        data:{id:'pe-'+pk, source:''+pn.aid, target:''+pn.link_parent,
-              edge_type:'parent', evidence:pn.parent_evidence||''},
-        classes:'parent-edge'
-      });
+    for(var aidS in snaps){
+      var seg=snapAt(snaps[aidS]);
+      if(!seg)continue;
+      var aidN=parseInt(aidS);
+      if(!cyNodeIds[''+aidN])continue;
+      if(seg.kind==='route'){
+        var chain=[aidN].concat(seg.relays||[]).concat([seg.dst]);
+        for(var jj=0;jj<chain.length-1;jj++){
+          var s3=''+chain[jj],t3=''+chain[jj+1];
+          if(!cyNodeIds[s3]||!cyNodeIds[t3])continue;
+          var ek3=Math.min(chain[jj],chain[jj+1])+'-'+Math.max(chain[jj],chain[jj+1]);
+          if(lsKeys[ek3])continue;
+          lsKeys[ek3]=true;
+          cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c0'});
+        }
+      }else if(seg.kind==='parent'&&cyNodeIds[''+seg.parent]){
+        var ek4=Math.min(aidN,seg.parent)+'-'+Math.max(aidN,seg.parent);
+        if(!lsKeys[ek4]){lsKeys[ek4]=true;
+          cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:'poll'},classes:'parent-edge'});
+        }
+      }
     }
 
     // ── 边: 邻居关系 (Link Status) — 物理层 (C2) ──
@@ -976,9 +966,8 @@ reg('topo', function(){
     // 否则 focusAid 残留 → 重置后仍只显示聚焦链路链节点
     focusAid=null;
     var fb=document.getElementById('focus-bar');if(fb)fb.style.display='none';
-    var wsSel=document.getElementById('twin-size');if(wsSel)wsSel.value='9999';
-    tCenter=null;
-    document.getElementById('tsl').value=500;
+    var slR=document.getElementById('tsl');if(slR)slR.value=500;
+    curT=sliderToTs(500);
     updateTimeLabel();
     loadData('',function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} try{clearHighlight();}catch(e){}});
   });
@@ -1041,13 +1030,9 @@ reg('topo', function(){
   }
 
   function updateTimeLabel(){
-    var tw=getTimeWindow();
-    if(tw.t0==null){document.getElementById('ttime-label').textContent=fmtTs(tsStart)+' ~ '+fmtTs(tsEnd)+' (全部)';}
-    else{
-      var dur=tw.t1-tw.t0;
-      document.getElementById('ttime-label').textContent=fmtTs(tw.t0)+' ~ '+fmtTs(tw.t1)+' ('+Math.round(dur)+'s)';
-    }
-    updateTimeScale(tw);
+    // U13 时刻游标: 显示当前时刻
+    var el=document.getElementById('ttime-label');
+    if(el&&curT!=null) el.textContent=fmtTs(curT);
   }
 
   // ── 时间刻度条: 总时长 + 当前窗口位置 (U7) ──
@@ -1087,15 +1072,17 @@ reg('topo', function(){
   }
   function hidePreviewMask(){var m=document.getElementById('time-mask');if(m)m.style.display='none';}
 
-  window.onTimeSlide=function(){   // oninput: 拖动中 — 标签/刻度条/预览遮罩实时, 图不刷新
+  // ⚠️ U13 时刻游标 (2026-08-25 重构): 滑块 = 时刻, 拖动实时本地重渲染 (不请求后端)
+  window.onTimeSlide=function(){
     var v=parseInt(document.getElementById('tsl').value);
-    tCenter=sliderToTs(v);
+    curT=sliderToTs(v);
     updateTimeLabel();
-    showPreviewMask();
+    clearTimeout(tSliderTO);
+    tSliderTO=setTimeout(function(){ if(S.topo) renderGraph(S.topo); },120);
   };
-  window.onTimeSlideEnd=function(){  // change: 松手 — 触发图刷新
-    applyTimeFilter();
-    hidePreviewMask();
+  window.onTimeSlideEnd=function(){
+    clearTimeout(tSliderTO);
+    if(S.topo) renderGraph(S.topo);
   };
 
   function stepWindow(dir){
@@ -1107,10 +1094,10 @@ reg('topo', function(){
     document.getElementById('tsl').value=tsToSlider(tCenter);
     applyTimeFilter();
     // 边界指示
-    document.getElementById('tstep-bwd').disabled=(tCenter<=tsStart+ws/2);
-    document.getElementById('tstep-fwd').disabled=(tCenter>=tsEnd-ws/2);
-    document.getElementById('tstep-bwd').style.opacity=document.getElementById('tstep-bwd').disabled?'0.3':'';
-    document.getElementById('tstep-fwd').style.opacity=document.getElementById('tstep-fwd').disabled?'0.3':'';
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
   }
 
   function setWindowFromSize(){
@@ -1130,9 +1117,9 @@ reg('topo', function(){
     applyTimeFilter();
   }
 
-  document.getElementById('tstep-bwd').addEventListener('click',function(){stepWindow(-1);});
-  document.getElementById('tstep-fwd').addEventListener('click',function(){stepWindow(1);});
-  document.getElementById('twin-size').addEventListener('change',setWindowFromSize);
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
+  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
+  // ⚠️ 2026-08-25 时刻游标重构: twin-size 控件已删, 此绑定曾致 null 异常中断初始化
 
 
   // S.topoT0/T1 → 绝对时间戳: 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)
@@ -1172,19 +1159,19 @@ reg('topo', function(){
   A.get('/api/import/status').then(function(s){
     dataTotal=s.total||0;
     tsStart=s.ts_start;tsEnd=s.ts_end;  // tsStart/tsEnd 始终 = 抓包范围 (滑块比例/刻度条基准)
+    if(curT==null)curT=tsStart+(tsEnd-tsStart)/2;  // U13 时刻游标初始 = 中点
     var t0n=topoTs(S.topoT0, tsStart), t1n=topoTs(S.topoT1, tsStart);
     if(t0n!=null&&t1n!=null&&t1n>t0n){tlT0=t0n;tlT1=t1n;}
     else if(t0n!=null){tlT0=t0n;}
     syncWinFromTimeline();
     updateTimeLabel();
 
-    // ═══ 初始加载 (等 tsStart 就绪方可转换时间线窗口; 数据用 UI 窗口保证与显示一致) ═══
+    // ═══ 初始加载 (U13 时刻游标: 全量加载含 link_snapshots, 拖动游标本地过滤) ═══
     var initPan=S.topoPan||'';
-    var tw0=getTimeWindow();
     loadData(initPan,function(d){
       try{renderGraph(d);}catch(e){console.error(e);}
       try{renderRoutePaths(d);}catch(e){console.error(e);}
       try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
-    },tw0.t0,tw0.t1);
+    });
   });
 });
