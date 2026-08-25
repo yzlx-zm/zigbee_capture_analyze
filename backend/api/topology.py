@@ -180,6 +180,49 @@ def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
     return parents
 
 
+def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
+                       max_gap: float = 60.0) -> dict:
+    """全图链路时刻分段 (U13 时刻游标重构, 2026-08-25): 单遍扫描每节点
+    RR 路径 / poll 父 的证据帧 → 分段 (签名变化或 >max_gap 间隔 → 新段).
+    返回 {aid: [ {kind, t0, t1, relays, dst, parent}, ... ]}
+    T 时刻节点链路状态 = 分段中 t0<=T 的最后一个段 (最近一次证据)."""
+    frames: dict[int, list] = {}
+    for p in full:
+        ts = p.get("ts", 0)
+        if t0 is not None and ts < t0:
+            continue
+        if t1 is not None and ts > t1:
+            continue
+        if p.get("nwk_cmd_id") == 5 and p.get("nwk_src") is not None:
+            rr = p.get("route_record_relays") or {}
+            frames.setdefault(p["nwk_src"], []).append(
+                (ts, "route", (p.get("nwk_dst"), tuple(rr.get("relays") or []))))
+        elif (p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None
+              and isinstance(p.get("mac_dst"), int)):
+            frames.setdefault(p["mac_src"], []).append(
+                (ts, "parent", ("parent", p["mac_dst"])))
+    out: dict[int, list] = {}
+    for aid, fl in frames.items():
+        segs: list[dict] = []
+        cur: dict | None = None
+        for ts, kind, sig in sorted(fl):
+            if cur is None or kind != cur["kind"] or sig != cur["sig"] or ts - cur["t1"] > max_gap:
+                if cur:
+                    segs.append(cur)
+                cur = {"kind": kind, "sig": sig, "t0": ts, "t1": ts}
+            else:
+                cur["t1"] = ts
+        if cur:
+            segs.append(cur)
+        out[aid] = [{
+            "kind": s["kind"], "t0": s["t0"], "t1": s["t1"],
+            "relays": list(s["sig"][1]) if s["kind"] == "route" else None,
+            "dst": s["sig"][0] if s["kind"] == "route" else None,
+            "parent": s["sig"][1] if s["kind"] == "parent" else None,
+        } for s in segs]
+    return out
+
+
 def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
                   t0: float | None, t1: float | None) -> None:
     """U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描).
@@ -243,50 +286,20 @@ async def link_history(aid: int, pan: str = Query(default=""),
     full = get_full_packets() or pkts
     pan_int = int(pan, 16) if pan else None
 
-    frames: list[tuple] = []  # (ts, kind, signature)
-    for p in full:
-        ts = p.get("ts", 0)
-        if time_start is not None and ts < time_start:
-            continue
-        if time_end is not None and ts > time_end:
-            continue
-        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
-            continue
-        if p.get("nwk_src") == aid and p.get("nwk_cmd_id") == 5:
-            rr = p.get("route_record_relays") or {}
-            relays = tuple(rr.get("relays") or [])
-            frames.append((ts, "route", (p.get("nwk_dst"), relays)))
-        elif (p.get("mac_cmd_id") == 4 and p.get("mac_src") == aid
-              and isinstance(p.get("mac_dst"), int)):
-            frames.append((ts, "parent", ("parent", p["mac_dst"])))
-
-    if not frames:
+    segmap = _all_link_segments(full, time_start, time_end)
+    segs = segmap.get(aid, [])
+    if not segs:
         return {"aid": aid, "segments": [], "error": "无链路证据帧 (该节点无 RR/poll)"}
-
-    # 分段: 签名变化或 >60s 间隔 → 新段
-    segments: list[dict] = []
-    cur: dict | None = None
-    for ts, kind, sig in sorted(frames):
-        if cur is None or kind != cur["kind"] or sig != cur["sig"] or ts - cur["t1"] > 60:
-            if cur:
-                segments.append(cur)
-            cur = {"kind": kind, "sig": sig, "t0": ts, "t1": ts}
-        else:
-            cur["t1"] = ts
-    if cur:
-        segments.append(cur)
-
     out: list[dict] = []
-    for s in segments:
+    for s in segs:
         if s["kind"] == "route":
-            dst, relays = s["sig"]
-            path_str = f"0x{aid:04X} → " + (" → ".join(f"0x{r:04X}" for r in relays) if relays else "(直连)")
+            path_str = f"0x{aid:04X} → " + (" → ".join(f"0x{r:04X}" for r in s["relays"]) if s["relays"] else "(直连)")
             out.append({"t0": s["t0"], "t1": s["t1"], "kind": "route",
-                        "path_str": path_str, "relays": list(relays), "dst": dst})
+                        "path_str": path_str, "relays": s["relays"], "dst": s["dst"]})
         else:
             out.append({"t0": s["t0"], "t1": s["t1"], "kind": "parent",
-                        "path_str": f"父: 0x{s['sig'][1]:04X}", "parent": s["sig"][1]})
-    return {"aid": aid, "segments": out}
+                        "path_str": f"父: 0x{s['parent']:04X}", "parent": s["parent"]})
+
 
 
 @router.get("/topology/graph")
@@ -321,6 +334,9 @@ async def topology_from_events(pan: str = Query(default=""),
                                 link_status_tables=ls_tables,
                                 asymmetric_links=asym)
     _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为状态
+    # U13 时刻游标重构 (2026-08-25): 全图链路时刻分段 — 前端拖动游标纯本地过滤
+    _full_pkts = get_full_packets()
+    graph["link_snapshots"] = _all_link_segments(_full_pkts if _full_pkts else pkts, time_start, time_end)
     # ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 — 窗口切换节点不跳变 (用户反馈:
     # 30s 窗一批节点, 下个窗另一批, 不连贯)。窗内时返回全量拓扑节点中窗内
     # 无活动的集合 (inactive_nodes), 前端灰度显示; 无过滤时不返回
