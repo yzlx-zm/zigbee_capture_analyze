@@ -90,7 +90,8 @@ function buildDOM() {
         <button class="btn btn-p btn-sm" id="zc-ai-savecfg">保存配置</button>
         <p id="zc-ai-cfg-msg" class="ai-dim"></p>
       </div>
-    </div>`;
+    </div>
+    <div class="ai-resize-handle" title="拖动调整大小">⤡</div>`;
   document.body.appendChild(panel);
 
   msgsEl = panel.querySelector('#zc-ai-msgs');
@@ -132,6 +133,25 @@ function buildDOM() {
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
   }
+  // 右下角 resize 手柄 (08-26 用户反馈: CSS resize 手柄看不见 → 自定义可见手柄)
+  const rsz = panel.querySelector('.ai-resize-handle');
+  let resizing = null;
+  rsz.addEventListener('mousedown', e => {
+    const r = panel.getBoundingClientRect();
+    resizing = { w: r.width, h: r.height, x: e.clientX, y: e.clientY };
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!resizing) return;
+    const w = Math.max(320, resizing.w + e.clientX - resizing.x);
+    const h = Math.max(300, resizing.h + e.clientY - resizing.y);
+    panel.style.width = w + 'px';
+    panel.style.height = h + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => { resizing = null; });
   panel.querySelector('#zc-ai-fold').addEventListener('click', toggle);
   panel.querySelector('#zc-ai-new').addEventListener('click', newSession);
   panel.querySelector('#zc-ai-send').addEventListener('click', send);

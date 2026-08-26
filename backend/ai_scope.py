@@ -158,11 +158,13 @@ _KEY_EVENT_MARK = ("Leave", "Network Status", "Rejoin", "TransportKey", "Remove 
                    "Update Device", "Device Announce", "Assoc", "Default Response")
 
 
-def _event_lines(pkts: list[dict], limit: int = 80) -> list[str]:
-    """关键事件文本: **全量扫描** (曾只扫前 40 帧 → 尾部关键帧如 Leave 被遗漏,
-    用户实证: 0x838D 入网后 Leave #6929 未入摘要 → LLM 误判"入网完全成功").
+def _event_lines(pkts: list[dict], limit: int = 40) -> list[str]:
+    """关键事件文本: 全量扫描 + **连续重复事件合并** + 关键帧 ⚠️ 标记.
 
-    超上限时关键事件类型 (Leave/NS/密钥管理/Announce) 保底保留, 其余按时间填满.
+    修复记录:
+    - 曾只扫前 40 帧 → 尾部关键帧 (0x838D Leave #6929) 遗漏 → LLM 误判 (08-26 用户实证)
+    - 全量 59 条事件过长 → LLM 忽略末尾 Leave (08-26 二次实证) → 合并重复
+      (RequestKey/VerifyKey 等连续重复帧合并为一行区间) + Leave/NS/密钥 ⚠️ 置顶醒目
     """
     try:
         from scripts.export_ai_dataset import packet_summary
@@ -185,22 +187,42 @@ def _event_lines(pkts: list[dict], limit: int = 80) -> list[str]:
             text = (p.get("pkt_type") or "Unknown")
         src = p.get("nwk_src") or p.get("mac_src")
         dst = p.get("nwk_dst") or p.get("mac_dst")
-        line = (f"- 帧#{pkt_id} {p.get('pkt_type') or 'Unknown'} "
+        line = (f"{p.get('pkt_type') or 'Unknown'} "
                 f"{f'0x{src:04X}' if src is not None else '-'} → "
                 f"{f'0x{dst:04X}' if dst is not None else '-'}: {text}")
         is_key = any(k in text for k in _KEY_EVENT_MARK)
         rows.append((pkt_id, line, is_key))
 
-    if len(rows) <= limit:
-        return [r[1] for r in rows]
+    # 合并连续相同事件 (帧#a,b,c line) — 59 条 → ~25 行, 关键帧不合并 (保持醒目)
+    merged: list[dict] = []
+    for pid, line, is_key in rows:
+        if merged and merged[-1]["line"] == line and not is_key:
+            merged[-1]["ids"].append(pid)
+        else:
+            merged.append({"line": line, "ids": [pid], "key": is_key})
+
+    def _fmt(m: dict) -> str:
+        ids = m["ids"]
+        if len(ids) == 1:
+            head = f"帧#{ids[0]}"
+        else:
+            # 连续区间 a-b, 否则 a,b,c
+            span = ids[0], ids[-1]
+            if len(ids) == span[1] - span[0] + 1:
+                head = f"帧#{span[0]}-{span[1]} (×{len(ids)})"
+            else:
+                head = f"帧#{','.join(str(x) for x in ids[:6])}" + ("…" if len(ids) > 6 else "")
+        mark = "⚠️ " if m["key"] else ""
+        return f"- {mark}{head} {m['line']}"
+
+    out = [_fmt(m) for m in merged]
+    if len(out) <= limit:
+        return out
     # 超限: 关键事件保底 + 其余按时间填满
-    keys = [r for r in rows if r[2]]
-    rest = [r for r in rows if not r[2]]
-    out = keys[:limit]
-    if len(out) < limit:
-        out.extend(rest[:limit - len(out)])
-    out.sort(key=lambda r: r[0])   # 保持时间序
-    return [r[1] for r in out]
+    keys = [(i, m) for i, m in enumerate(merged) if m["key"]]
+    rest = [(i, m) for i, m in enumerate(merged) if not m["key"]]
+    keep = sorted(keys[:limit] + rest[:max(limit - len(keys), 0)], key=lambda x: x[0])
+    return [_fmt(m) for _, m in keep]
 
 
 def _detector_verdicts(pkts: list[dict]) -> list[str]:
