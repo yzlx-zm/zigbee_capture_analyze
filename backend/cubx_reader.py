@@ -933,6 +933,14 @@ def parse_cubx(path: str, include_mac_frames: bool = False,
 
     db = sqlite3.connect(f"{cubx_path.as_uri()}?mode=ro", uri=True)
     try:
+        # S1 (2026-08-26): 探活 + 友好错误 — 0 字节/文本文件此前报
+        # "no such table: Keys" / "file is not a database" (P2 可读性)
+        try:
+            n_rows = db.execute("SELECT COUNT(*) FROM Packets").fetchone()[0]
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(f"无效的 cubx 文件 ({e})") from e
+        if n_rows == 0:
+            raise RuntimeError("cubx 文件无数据 (0 帧)")
         # Keys (cubx 内嵌 + zigbee_pc_keys 补充)
         nwk_keys, link_keys = _load_all_keys(db)
 

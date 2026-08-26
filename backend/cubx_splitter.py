@@ -174,8 +174,10 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
             if not batch:
                 break
             in_frames += len(batch)
+            # S1 (2026-08-26): 半开区间 [ts_start, ts_end) 会把恰在 ts_end 的帧
+            # 丢弃 (滑块最大值 = ts_last 时末帧必丢, P2) — 改为闭区间
             sel = [r for r in batch
-                   if r[4] is not None and ts_start <= r[4] < ts_end]
+                   if r[4] is not None and ts_start <= r[4] <= ts_end]
             if sel:
                 out.executemany(
                     "INSERT INTO Packets (Id, Raw, Stack, Channel, Timestamp, TimeDelta,"

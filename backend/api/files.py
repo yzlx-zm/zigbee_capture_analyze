@@ -100,7 +100,9 @@ async def cubx_upload_stage(file: UploadFile = File(...)):
     暂存文件不随导入完成删除, 由下次 stage 时清理旧文件 (容量控制).
     后续 split 或 local-cubx 导入均以返回的 path 为输入.
     """
-    fname = getattr(file, "filename", "stage.cubx")
+    # S1 (2026-08-26): 文件名取 basename — 恶意/异常文件名含路径分隔符会逃出
+    # 暂存目录 (路径穿越, P2); 浏览器通常剥路径, 但 API 层不依赖客户端
+    fname = os.path.basename(getattr(file, "filename", "stage.cubx"))
     if not fname.lower().endswith(".cubx"):
         return JSONResponse({"error": "仅支持 .cubx 文件"}, 400)
     os.makedirs(_CUBX_STAGE_DIR, exist_ok=True)
@@ -145,10 +147,16 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
     def _run(task_id: str) -> dict:
         from .. import cubx_splitter as _cs
         _task_update(task_id, stage="时间窗拆分", percent=0)
+        # S1 (2026-08-26): 接线 progress_cb — 此前拆分任务 percent 恒 0
+        # (前端顶栏全程显示 0%, P2)
+        def _cb(done: int, total: int) -> None:
+            _task_update(task_id, stage="时间窗拆分",
+                         percent=min(int(done / total * 90), 90))
         try:
-            r = _cs.split_cubx(path, ts_start, ts_end)
+            r = _cs.split_cubx(path, ts_start, ts_end, progress_cb=_cb)
         except Exception as e:
             raise RuntimeError(f"拆分失败: {e}") from e
+        _task_update(task_id, stage="时间窗拆分", percent=100)
         return {"in_frames": r["in_frames"], "out_frames": r["out_frames"],
                 "out_path": r["out_path"]}
 
@@ -170,7 +178,12 @@ async def cubx_download(path: str = Query(default="")):
         p_resolved = p.resolve()
         stage_resolved = Path(_CUBX_STAGE_DIR).resolve()
         in_stage = p_resolved.parent == stage_resolved
-        split_named = bool(re.search(r"_\d{8}_\d{6}-\d{8}_\d{6}\.cubx$", p_resolved.name))
+        # S1 修复 (2026-08-26): 拆分命名正则与 cubx_splitter 实际命名对齐 —
+        # 实际为 _MMDD_HHMM-MMDD_HHMM (4+4 位) + 同窗重复序号 _01; 此前按工单
+        # 描述 YYYYMMDD_HHMMSS (8+6) 写正则, 本地路径拆产物下载恒 400 (P1)
+        split_named = bool(re.search(
+            r"_\d{4}_\d{4}-\d{4}_\d{4}(_\d{2})?\.cubx$|_\d{8}_\d{6}-\d{8}_\d{6}\.cubx$",
+            p_resolved.name))
         if not (p_resolved.is_file() and p_resolved.suffix.lower() == ".cubx"
                 and (in_stage or split_named)):
             return JSONResponse({"error": "仅支持拆分产物 .cubx (暂存目录或拆分命名)"}, 400)
@@ -190,7 +203,16 @@ async def system_restart():
     返回 {"ok": True} 后前端轮询等待 + 自动刷新.
     """
     import subprocess
+    # S1 (2026-08-26): 端口从启动参数解析, 不硬编码 8720 (P2) —
+    # 非默认端口启动时重启后端口漂移会导致前端失联
     port = 8720
+    args = sys.argv or []
+    for i, a in enumerate(args):
+        if a == "--port" and i + 1 < len(args):
+            try:
+                port = int(args[i + 1])
+            except ValueError:
+                pass
     script = (f"taskkill /F /PID {os.getpid()} | Out-Null; "
               f"Start-Sleep 2; "
               f"Start-Process -WindowStyle Hidden -FilePath '{sys.executable}' "
@@ -753,11 +775,14 @@ def _import_result(filename: str | None = None) -> dict:
         "ubiqua_sync": _last_ubiqua_sync,  # Ubiqua key 同步结果 (None=不可达)
     }
     # 持久化摘要 (后端内存, 不受前端页面切换影响)
+    # S1 修复 (2026-08-26): 补 parser_verify — 此前摘要缺此项, 切页恢复时
+    # sr() 渲染无 P6 卡, 且 fresh import 后卡不出现 (前端独立 fetch 竞态, P2)
     _last_import_summary = {
         "packets": result["packets"], "nodes": result["nodes"],
         "file_type": result["file_type"], "filename": result["filename"],
         "by_type": result["by_type"], "decrypt_stats": result["decrypt_stats"],
         "verify": result["verify"], "ubiqua_sync": result["ubiqua_sync"],
+        "parser_verify": result["parser_verify"],  # S1: P6 卡随摘要持久化
         # U11: 拆分产物下载信息持久化 (切页回来结果区恢复下载按钮)
         "split_out_path": result.get("split_out_path"),
         "split_out_frames": result.get("split_out_frames"),
