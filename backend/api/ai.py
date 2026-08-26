@@ -137,7 +137,8 @@ async def ai_kb_search(q: str = ""):
     return {"type": "kb", "query": q, **ai_kb.search_kb(q)}
 
 
-_FRAME_REF_RE = re.compile(r"(?:第\s*(\d+)\s*帧|帧\s*[#＃]\s*(\d+))")
+# 帧引用: "第 352 帧" / "第 #4994 帧" / "帧#352" (实测 LLM 常输出 "第 #N 帧")
+_FRAME_REF_RE = re.compile(r"(?:第\s*[#＃]?\s*(\d+)\s*帧|帧\s*[#＃]\s*(\d+))")
 
 
 def _extract_frame_refs(text: str, packets: list[dict]) -> list[dict]:
