@@ -124,6 +124,15 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   锁定真实存在 / 密钥"失败"实为测试数据 17 组 hex 非法 / 补 pollImport 30 分钟
   长兜底 / 补测 4 缺口 13/13 / **CSV 导入删除 (用户需求, 只留抓包)** —
   删 /import/files + /import/local + csv_reader.py + 前端 CSV tab (cbb6806)
+- [S4 报文页稳定化](issues/S4-报文页稳定化.md) — 打包前稳定化 (用户指定跳过
+  S2/S3 先做 S4): **P1×2 清零** (①事务链构建 O(n²) — 群控 10.8 万帧点详情卡死
+  数分钟 → 索引化 (src,dst,tsn) 分组, 108324 帧详情 0.2s, 语义逐位一致
+  ②cubx 详情 Security 层整层缺失 — fallback 顶层 vs timeline 查 nwk 内 → 双查)
+  + P2×1 (详情标题帧号 vs 表格帧号不一致); 复验: CDP s4_verify 7/8 (路径列
+  单独实测正常 '0xED6F→0x5694→0x0000') + 回归 3 套 + 群控详情 0.2s;
+  **U16 遗留 2 部分闭环**: pcap MAC Ack 419 帧识别 ✓, pending=1 位待素材
+  (诚实标注); 提交 e127191; 遗留优化项 (上行反转假设/RR 证据/pending=1) 待用户
+  列出清单后处理; **用户抽验待确认**
 
 ## Not yet specified
 
