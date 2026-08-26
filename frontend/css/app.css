@@ -220,11 +220,7 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .stats { display: flex; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--fs-sm); color: var(--c-text-3); }
 .stats span { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; }
 
-/* 11.2 导入页 tabs */
-.tabs { display: flex; gap: 2px; margin-bottom: var(--sp-3); border-bottom: 2px solid var(--c-border); }
-.imp-tab { border-radius: var(--r-sm) var(--r-sm) 0 0; font-size: var(--fs-md); padding: 6px 14px;
-  border: none; background: #f1f5f9; color: #374151; }
-.imp-tab.on { background: var(--c-primary); color: #fff; }
+/* 11.2 导入页 (S1 自审 08-26: CSV tab 已删, .tabs/.imp-tab 废弃移除) */
 .key-panel { margin-top: var(--sp-2); background: #f8fafc; }
 .key-panel h4 { font-size: var(--fs-md); cursor: pointer; }
 .key-add-row { margin-top: var(--sp-2); display: flex; gap: var(--sp-1); }

@@ -72,9 +72,7 @@ function uploadXHR(url, fd, fname, onDone){
   xhr.onerror=function(){setErr('网络错误: 上传失败');};
   xhr.send(fd);
 }
-export function doI(file){setProg('上传中...',1);
-  var fd=new FormData();fd.append('files',file);
-  uploadXHR('/api/import/files',fd,file.name||'');}
+// S1 自审 (2026-08-26, 用户需求): doI (CSV 上传) 已删除 — 只保留抓包导入
 export function doPI(files){setProg('上传中...',1);
   var fd=new FormData(); var cubx=0; var fnames=[];
   for(var i=0;i<files.length;i++){fd.append('files',files[i]);
@@ -118,8 +116,14 @@ function tick(){
       if(onImportPage())setErr(p.error||'导入失败');
       else{_plastErr=p.error||'导入失败';sbTask('❌ 失败 · 点击查看','err');}
     }else if(p&&p.status==='running'){
-      _ptries=0;   // S1: 真实进度中不累计超时 — 大包解析 >5 分钟 (85MB≈8min)
-                   // 此前误报 "导入超时" 且轮询停止 (P2); unknown/网络失败才累计
+      // S1 自审 (08-26): running 不累计 5 分钟短超时 (大包 85MB≈8min 曾误报),
+      // 但保留 30 分钟长兜底 — 任务挂死 (线程异常) 时防无限轮询
+      if(++_ptries>6000){
+        _pdone=true;stopPoll();
+        if(onImportPage())setErr('导入超时 (30 分钟), 请重启后端或重试');
+        else sbTask('❌ 导入超时, 请重启后端','err');
+        return;
+      }
       var st=p.stage||'解析中',pct=p.percent||0;
       sbTask('⟳ '+st+' '+(pct!=null?pct+'%':''),'run');
       if(onImportPage())setProg(st+' ('+pct+'%)',pct);   // 切回导入页时进度条由 tick 恢复

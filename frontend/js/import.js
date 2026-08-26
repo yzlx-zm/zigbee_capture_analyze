@@ -1,26 +1,14 @@
 // import.js — 导入页面模块 (ES module)
-import { S, A, sb, sbTask, sr, setProg, setErr, doI, doPI, pollImport } from './state.js';
+// S1 自审 (2026-08-26, 用户需求): CSV 导入已删除, 只保留抓包导入 (pcap/cubx)
+import { S, A, sb, sbTask, sr, setProg, setErr, doPI, pollImport } from './state.js';
 
 reg('import',function(){
-  if(!S.impTab)S.impTab='csv';
   var h='<div class="card"><h3>📂 数据导入</h3>'
-    +'<div class="tabs">'
-    +'<button class="btn imp-tab'+(S.impTab==='csv'?' on':'')+'" data-tab="csv">📊 CSV 快速预览</button>'
-    +'<button class="btn imp-tab'+(S.impTab==='pcap'?' on':'')+'" data-tab="pcap">📡 抓包导入</button>'
-    +'</div>'
-    +'<div id="imp-csv" class="'+(S.impTab==='csv'?'':'hidden')+'">'
-      +'<p class="hint">Ubiqua File → Export → CSV</p>'
-      +'<div class="file-drop" id="drop"><p>拖拽 .csv 文件到此处</p><input type="file" id="finp" accept=".csv" class="hidden"></div>'
-      +'<button class="btn btn-o" id="lpath">或输入本地路径...</button>'
-    +'</div>'
-    +'<div id="imp-pcap" class="'+(S.impTab==='pcap'?'':'hidden')+'">'
-      +'<p class="hint">Ubiqua File → Export → pcap</p>'
-      +'<div class="file-drop" id="pdrop"><p>拖拽 .pcap / .cubx 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng,.cubx" multiple class="hidden"></div>'
-      +'<button class="btn btn-o" id="plpath">或输入本地路径 (逗号分隔多个)...</button>'
-      +'<div id="pkey-panel" class="card key-panel">'
-        +'<h4 id="pkey-toggle">🔑 密钥管理 ▸</h4>'
-        +'<div id="pkey-body" class="t-11 hidden"></div>'
-      +'</div>'
+    +'<div class="file-drop" id="pdrop"><p>拖拽 .pcap / .cubx 文件到此处 (支持多选)</p><input type="file" id="pfinp" accept=".pcap,.pcapng,.cubx" multiple class="hidden"></div>'
+    +'<button class="btn btn-o" id="plpath">或输入本地路径 (逗号分隔多个)...</button>'
+    +'<div id="pkey-panel" class="card key-panel">'
+      +'<h4 id="pkey-toggle">🔑 密钥管理 ▸</h4>'
+      +'<div id="pkey-body" class="t-11 hidden"></div>'
     +'</div>'
     +'<div id="cubx-prescan" class="card hidden">'
       +'<h4>⏱ 大包时间窗拆分导入 (U11)</h4>'
@@ -63,19 +51,7 @@ reg('import',function(){
     +'<button class="btn btn-r mt-2" id="clr">清除数据</button></div>';
   document.getElementById('mc').innerHTML=h;
   A.get('/api/import/last').then(function(d){if(d&&d.ok){sr(d,d.filename||'');}}).catch(function(){});
-
-  // Tab switch
-  document.querySelectorAll('.imp-tab').forEach(function(btn){
-    btn.addEventListener('click',function(){
-      S.impTab=this.dataset.tab;
-      document.getElementById('imp-csv').style.display=S.impTab==='csv'?'block':'none';
-      document.getElementById('imp-pcap').style.display=S.impTab==='pcap'?'block':'none';
-      document.querySelectorAll('.imp-tab').forEach(function(b){
-        b.classList.toggle('on',S.impTab===b.dataset.tab);
-      });
-      if(S.impTab==='pcap')loadKeyPanel();
-    });
-  });
+  setTimeout(function(){loadKeyPanel();},200);
 
   // ── 本地路径导入 (后台任务 + 轮询真实进度; 失败内联显示, 不弹 alert) ──
   function importPath(url, paramName, p, fname){
@@ -87,18 +63,7 @@ reg('import',function(){
     }).catch(function(e){setErr('网络错误: '+e.message);});
   }
 
-  // ── CSV tab ──
-  var drop=document.getElementById('drop'),inp=document.getElementById('finp');
-  drop.addEventListener('click',function(){inp.click()});
-  drop.addEventListener('dragover',function(e){e.preventDefault()});
-  drop.addEventListener('drop',function(e){e.preventDefault();if(e.dataTransfer.files.length)doI(e.dataTransfer.files[0])});
-  inp.addEventListener('change',function(){if(inp.files.length)doI(inp.files[0])});
-  document.getElementById('lpath').addEventListener('click',function(){
-    var p=prompt('CSV 文件路径:');if(!p)return;
-    importPath('/api/import/local','path',p,p.split(/[\\\\/]/).pop());
-  });
-
-  // ── pcap tab ──
+  // ── 抓包导入 (拖拽 / 文件选择 / 本地路径) ──
   var pdrop=document.getElementById('pdrop'),pinp=document.getElementById('pfinp');
   pdrop.addEventListener('click',function(){pinp.click()});
   pdrop.addEventListener('dragover',function(e){e.preventDefault()});
@@ -397,5 +362,4 @@ reg('import',function(){
   A.get('/api/import/verify').then(function(v){S.verifyPassed=v&&v.passed;}).catch(function(){});
   // S1 (2026-08-26): P6 解析正确性卡渲染移入 sr() (导入结果自带 parser_verify),
   // 删除此处独立 fetch — fresh import 后卡缺失的竞态修复
-  if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });

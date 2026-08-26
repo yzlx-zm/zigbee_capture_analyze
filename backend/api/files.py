@@ -15,7 +15,6 @@ BASE_DIR = str(Path(__file__).resolve().parents[2])
 from fastapi import APIRouter, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 
-from .. import csv_reader
 from .. import zcl_defs
 from .. import tuya_proto as _tuya_proto
 
@@ -296,89 +295,9 @@ def _parse_clock_time(time_str: str, base_ts: float) -> float | None:
     return midnight.timestamp() + clock_sec
 
 
-
-@router.post("/import/files")
-async def import_upload(files: list[UploadFile] = File(...)):
-    import tempfile
-    tmp_paths = []
-    for f in files:
-        tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
-        tmp.close()
-        with open(tmp.name, "wb") as out:
-            while data := await f.read(1024 * 1024):
-                out.write(data)
-        tmp_paths.append(tmp.name)
-    return _start_import(lambda tid: _run_csv_import(tid, tmp_paths))
-
-def _run_csv_import(task_id: str, tmp_paths: list[str]) -> dict:
-    """后台: CSV 解析 (无 tshark, 进度: 读取→解析→节点)"""
-    global _packets, _nodes, _file_type
-    try:
-        _task_update(task_id, stage="读取文件", percent=10)
-        all_pkts = []
-        total = len(tmp_paths)
-        for i, path in enumerate(tmp_paths):
-            pkts = csv_reader.read_csv(path)
-            all_pkts.extend(pkts)
-            _task_update(task_id, stage="解析 CSV", percent=10 + int((i + 1) / total * 60))
-        if not all_pkts:
-            raise RuntimeError("无有效数据")
-        all_pkts.sort(key=lambda p: p["ts"])
-        _task_update(task_id, stage="提取节点", percent=80)
-        _packets = all_pkts
-        _nodes = csv_reader.extract_nodes(all_pkts)
-        _file_type = "csv"
-        types = {}
-        for p in all_pkts:
-            t = p["pkt_type"] or "Unknown"
-            types[t] = types.get(t, 0) + 1
-        _task_update(task_id, stage="完成", percent=100)
-        return {"ok": True, "packets": len(all_pkts), "nodes": len(_nodes),
-                "file_type": "csv", "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20])}
-    finally:
-        for p in tmp_paths:
-            try: os.unlink(p)
-            except OSError: pass
-
-
-
-@router.post("/import/local")
-async def import_local(path: str = Form(...)):
-    if not os.path.exists(path):
-        return JSONResponse({"error": f"路径不存在: {path}"}, 400)
-
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".pcap", ".pcapng"):
-        return JSONResponse({"error": "pcap 格式暂不支持，请用 Ubiqua 导出 CSV"}, 400)
-    elif ext == ".cubx":
-        return JSONResponse({"error": "cubx 格式暂不支持，请用 Ubiqua 导出 CSV"}, 400)
-    elif ext != ".csv":
-        return JSONResponse({"error": f"不支持的文件格式: {ext}"}, 400)
-
-    return _start_import(lambda tid: _run_csv_local(tid, path))
-
-def _run_csv_local(task_id: str, path: str) -> dict:
-    """后台: CSV 本地路径解析"""
-    global _packets, _nodes, _file_type
-    _task_update(task_id, stage="解析 CSV", percent=30)
-    try:
-        _packets = csv_reader.read_csv(path)
-    except Exception as e:
-        raise RuntimeError(str(e)) from e
-    _file_type = "csv"
-    _task_update(task_id, stage="提取节点", percent=80)
-    _nodes = csv_reader.extract_nodes(_packets)
-    types = {}
-    for p in _packets:
-        t = p["pkt_type"] or "Unknown"
-        types[t] = types.get(t, 0) + 1
-    return {
-        "ok": True,
-        "packets": len(_packets),
-        "nodes": len(_nodes),
-        "file_type": _file_type,
-        "by_type": dict(sorted(types.items(), key=lambda x: -x[1])[:20]),
-    }
+# S1 自审 (2026-08-26, 用户需求): CSV 导入已删除 — 只保留抓包导入
+# (pcap/cubx)。原 /import/files (CSV 上传) + /import/local (CSV 本地路径)
+# + _run_csv_import/_run_csv_local + csv_reader 引用全部移除。
 
 
 @router.delete("/import/clear")
