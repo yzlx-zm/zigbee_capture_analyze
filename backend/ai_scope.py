@@ -153,17 +153,24 @@ def filter_packets(packets: list[dict], scope: dict) -> list[dict]:
 _EVENT_TYPES = {"NWK Cmd", "Link Status", "Route Request", "Route Reply", "Route Record",
                 "Network Status", "Leave", "Rejoin Request", "Rejoin Response",
                 "APS Cmd", "ZDP Cmd"}
+# 关键事件类型 (截断时保底保留 — 08-26 修复: 838D Leave #6929 曾被前 40 帧截断遗漏)
+_KEY_EVENT_MARK = ("Leave", "Network Status", "Rejoin", "TransportKey", "Remove Device",
+                   "Update Device", "Device Announce", "Assoc", "Default Response")
 
 
-def _event_lines(pkts: list[dict]) -> list[str]:
-    """关键事件文本 (前 40 条): 复用 export_ai_dataset.packet_summary (降级自实现)."""
+def _event_lines(pkts: list[dict], limit: int = 80) -> list[str]:
+    """关键事件文本: **全量扫描** (曾只扫前 40 帧 → 尾部关键帧如 Leave 被遗漏,
+    用户实证: 0x838D 入网后 Leave #6929 未入摘要 → LLM 误判"入网完全成功").
+
+    超上限时关键事件类型 (Leave/NS/密钥管理/Announce) 保底保留, 其余按时间填满.
+    """
     try:
         from scripts.export_ai_dataset import packet_summary
     except Exception:
         packet_summary = None
 
-    lines: list[str] = []
-    for i, p in enumerate(pkts[:40]):
+    rows: list[tuple[int, str, bool]] = []   # (packet_id, line, is_key)
+    for i, p in enumerate(pkts):
         pkt_id = p.get("packet_id") if p.get("packet_id") is not None else i
         has_ev = (p.get("nwk_cmd_id") is not None or p.get("aps_cmd_id") is not None
                   or p.get("aps_cluster") == 0x0013
@@ -178,10 +185,22 @@ def _event_lines(pkts: list[dict]) -> list[str]:
             text = (p.get("pkt_type") or "Unknown")
         src = p.get("nwk_src") or p.get("mac_src")
         dst = p.get("nwk_dst") or p.get("mac_dst")
-        lines.append(f"- 帧#{pkt_id} {p.get('pkt_type') or 'Unknown'} "
-                     f"{f'0x{src:04X}' if src is not None else '-'} → "
-                     f"{f'0x{dst:04X}' if dst is not None else '-'}: {text}")
-    return lines
+        line = (f"- 帧#{pkt_id} {p.get('pkt_type') or 'Unknown'} "
+                f"{f'0x{src:04X}' if src is not None else '-'} → "
+                f"{f'0x{dst:04X}' if dst is not None else '-'}: {text}")
+        is_key = any(k in text for k in _KEY_EVENT_MARK)
+        rows.append((pkt_id, line, is_key))
+
+    if len(rows) <= limit:
+        return [r[1] for r in rows]
+    # 超限: 关键事件保底 + 其余按时间填满
+    keys = [r for r in rows if r[2]]
+    rest = [r for r in rows if not r[2]]
+    out = keys[:limit]
+    if len(out) < limit:
+        out.extend(rest[:limit - len(out)])
+    out.sort(key=lambda r: r[0])   # 保持时间序
+    return [r[1] for r in out]
 
 
 def _detector_verdicts(pkts: list[dict]) -> list[str]:
@@ -226,7 +245,7 @@ def build_scope_summary(packets: list[dict], scope: dict) -> str:
     evs = _event_lines(pkts)
     if evs:
         lines.append("### 关键事件")
-        lines.extend(evs[:30])
+        lines.extend(evs)   # 全量事件 (曾 [:30] 截断 — 尾部 Leave #6929 被漏, 08-26 用户实证)
     else:
         lines.append("### 关键事件: (范围内无命令/状态事件)")
     vd = _detector_verdicts(pkts)

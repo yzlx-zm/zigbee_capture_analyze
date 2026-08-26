@@ -14,7 +14,15 @@ EmberZNet 与 Telink TLS8258 生态. 回答基于用户提供的抓包范围摘�
 Silicon Labs UG 文档), 不确定的明确标注"不确定", 不编造帧号或计数.
 用户可能引用帧号 (如"第 352 帧"), 引用时用"第 N 帧"格式便于定位. 术语
 参考: 0x0B=源路由失败(Source Route Failure) / 0x0C=MTORR 失败 /
-0x06=间接事务过期, APS Ack, SED 轮询, TC link key 等."""
+0x06=间接事务过期, APS Ack, SED 轮询, TC link key 等.
+
+**分析纪律 (08-26 用户反馈强化):**
+1. 必须**逐条通读关键事件列表再下结论**, 特别关注异常帧: Leave (含 rejoin/request
+   标志) / Network Status (0x0B/0x0C/0x06) / Rejoin / TransportKey / Remove Device /
+   Default Response — 设备入网后立即 Leave 或多次 Leave-Rejoin 是常见真实异常
+2. 摘要中未出现的事件**不得臆断其不存在** (摘要可能截断); 明确说明"摘要未见该帧"
+3. 结论分级: 有证据 → 明确; 无证据 → "无法判定"; 禁止过度自信的"完全成功/正常"
+4. 引用帧号必须来自摘要中的帧号"""
 
 
 class LLMError(Exception):

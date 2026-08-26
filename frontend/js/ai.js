@@ -10,7 +10,7 @@ const MAX_SESSIONS = 20;
 const PROVIDERS = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI', deepseek: 'DeepSeek' };
 
 // ── 状态 (模块级单例; localStorage 镜像) ──
-let st = { sessions: [], cur: null, tab: 'chat', open: false };
+let st = { sessions: [], cur: null, tab: 'chat', open: false, pos: null };
 
 function load() {
   try {
@@ -101,6 +101,37 @@ function buildDOM() {
   cfgEl = panel.querySelector('#zc-ai-cfg');
 
   fab.addEventListener('click', toggle);
+  // 面板拖拽移动 (08-26 用户反馈: 窗口可移动; 位置持久化)
+  const head = panel.querySelector('.ai-head');
+  let dragging = null;
+  head.addEventListener('mousedown', e => {
+    if (e.target.closest('select,button')) return;
+    const r = panel.getBoundingClientRect();
+    dragging = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(e.clientX - dragging.dx, window.innerWidth - 60));
+    const y = Math.max(0, Math.min(e.clientY - dragging.dy, window.innerHeight - 40));
+    panel.style.left = x + 'px';
+    panel.style.top = y + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) {
+      st.pos = { left: panel.style.left, top: panel.style.top };
+      save();
+    }
+    dragging = null;
+  });
+  if (st.pos) {
+    panel.style.left = st.pos.left;
+    panel.style.top = st.pos.top;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
   panel.querySelector('#zc-ai-fold').addEventListener('click', toggle);
   panel.querySelector('#zc-ai-new').addEventListener('click', newSession);
   panel.querySelector('#zc-ai-send').addEventListener('click', send);
