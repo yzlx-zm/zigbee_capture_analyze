@@ -12,7 +12,7 @@ window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
 import './topo.js?v=20260826a';  // 缓存破坏: 路由路径链折叠/展开全部, 改版递增
-import './import.js?v=20260825a';  // 缓存破坏: 报文改名 (锁定提示), 改版递增
+import './import.js?v=20260826a';  // S1: 时间容差/密钥面板/P6卡/拆分状态, 改版递增
 import './timeline.js?v=20260826a';  // U17: tlJumpFrame 暴露 (帧引用跳转), 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260825a';  // 缓存破坏: 报文改名 (设备跳转), 改版递增

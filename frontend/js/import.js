@@ -142,6 +142,7 @@ reg('import',function(){
   }
   function showPrescanPanel(d, path, fname){
     // U11: 面板状态持久化 (S.cubxPrescan) — 切页回来 reg() 重建时恢复
+    var prev = S.cubxPrescan;
     S.cubxPrescan={prescan:d, path:path, fname:fname};
     var panel=document.getElementById('cubx-prescan');
     // 概览
@@ -158,6 +159,11 @@ reg('import',function(){
     var s1=document.getElementById('cs-s1'),s2=document.getElementById('cs-s2');
     s1.min=s2.min=d.ts_first; s1.max=s2.max=d.ts_last;
     s1.value=d.ts_first; s2.value=d.ts_last;
+    // S1 (用户反馈 08-13: 拆分面板状态保持): 同素材重建时恢复上次窗口选择
+    if(prev && prev.winStart!=null && prev.prescan && prev.prescan.ts_first===d.ts_first){
+      s1.value=Math.max(+d.ts_first, +prev.winStart);
+      s2.value=Math.min(+d.ts_last, +prev.winEnd);
+    }
     var lbl=document.getElementById('cs-win');
     function updWin(){ lbl.textContent='窗口: '+fmtTsWin(+s1.value)+' → '+fmtTsWin(+s2.value)
       +' ('+Math.round((+s2.value-+s1.value)/60)+' 分钟)'; }
@@ -175,6 +181,8 @@ reg('import',function(){
       var path=csPanel.dataset.path;
       var tsStart=+document.getElementById('cs-s1').value,tsEnd=+document.getElementById('cs-s2').value;
       if(tsEnd<=tsStart){setErr('窗口无效: 结束时间必须大于开始时间');return;}
+      // S1: 保存窗口选择 (切页回来恢复用, 用户反馈 08-13)
+      if(S.cubxPrescan){S.cubxPrescan.winStart=tsStart;S.cubxPrescan.winEnd=tsEnd;}
       // 只拆不导 (定义核对 08-13): 轮询拆分任务 → 追加子包清单, 手动导入
       setProg('拆分中...',1);
       var fd=new FormData();fd.append('path',path);
@@ -185,13 +193,18 @@ reg('import',function(){
         var timer=setInterval(function(){
           A.get('/api/import/progress?task_id='+d.task_id).then(function(p){
             if(!p||p.status==='running'){
-              sbTask('⟳ '+(p?p.stage||'拆分中':'拆分中')+' '+(p&&p.percent!=null?p.percent+'%':''),'run');
+              var lbl=(p?p.stage||'拆分中':'拆分中')+' '+(p&&p.percent!=null?p.percent+'%':'');
+              sbTask('⟳ '+lbl,'run');
+              // S1: 页内进度条同步 (此前只更新顶栏, 页内条停在 1% "拆分中...")
+              setProg(lbl+'',p&&p.percent!=null?p.percent:0);
               if(++tries>1000){clearInterval(timer);setProg('');setErr('拆分超时 (5 分钟)');}
               return;
             }
             clearInterval(timer);
             if(p.status==='done'&&p.result){
               setProg('',0);
+              // S1: 完成清理顶栏 (此前 done 分支不清 → 顶栏残留 "⟳ 时间窗拆分 N%")
+              sb(S.pkts+'包 | '+S.nodes+'节点');
               S.cubxSubs=S.cubxSubs||[];
               S.cubxSubs.push({winStart:tsStart, winEnd:tsEnd,
                                frames:p.result.out_frames, path:p.result.out_path});
@@ -238,8 +251,12 @@ reg('import',function(){
     if(!t1v||!t2v){setErr('时间无效: 月 1-12 / 日 1-31 / 时 0-23 / 分 0-59');return;}
     var t1=new Date(year, t1v[0]-1, t1v[1], t1v[2], t1v[3], 0).getTime()/1000;
     var t2=new Date(year, t2v[0]-1, t2v[1], t2v[2], t2v[3], 0).getTime()/1000;
-    if(!(t1>=tsFirst&&t1<=tsLast&&t2>=tsFirst&&t2<=tsLast)){
+    // S1 修复 (2026-08-26): 输入粒度是分钟, 素材 ts_first/ts_last 带秒/小数秒 —
+    // 用户输入面板显示的起始分钟 (如 04:49) 会因 t1 < ts_first(04:49:38) 被拒 (P1)。
+    // 放宽到 ±60s 并 clamp 回素材范围 (窗口仍保证在素材内)。
+    if(!(t1>=tsFirst-60&&t1<=tsLast&&t2>=tsFirst&&t2<=tsLast+60)){
       setErr('时间超出素材范围: '+fmtTsWin(tsFirst)+' → '+fmtTsWin(tsLast));return;}
+    t1=Math.max(t1,tsFirst); t2=Math.min(t2,tsLast);
     if(t2<=t1){setErr('结束时间必须大于开始时间');return;}
     document.getElementById('cs-s1').value=t1;
     document.getElementById('cs-s2').value=t2;
@@ -275,9 +292,13 @@ reg('import',function(){
   if(S.cubxSubs&&S.cubxSubs.length)renderSubs();
 
   // Key panel toggle
+  // S1 (2026-08-26): 初始 body 带 class hidden (CSS display:none) 而 inline style 为空 —
+  // 原判断 body.style.display==='none' 首次点击误判为"已展开"→ 点一次无效 (P2)。改为
+  // class 或 inline 任一隐藏即视为收起。
   document.getElementById('pkey-toggle').addEventListener('click',function(){
     var body=document.getElementById('pkey-body');
-    var show=body.style.display==='none';
+    var show=body.classList.contains('hidden')||body.style.display==='none';
+    body.classList.toggle('hidden',!show);
     body.style.display=show?'block':'none';
     this.textContent=show?'🔑 密钥管理 ▾':'🔑 密钥管理 ▸';
     if(show)loadKeyPanel();
@@ -285,6 +306,8 @@ reg('import',function(){
 
   // ── 密钥面板 ──
   function normHex(raw){return (raw||'').replace(/[:\s-]/g,'').replace(/^0x/i,'').toUpperCase();}
+  // S1 (2026-08-26): key 标签为用户输入, 渲染进 innerHTML 必须转义 (P2 XSS)
+  function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function showKeyErr(msg){var el=document.getElementById('pk-err');if(el){el.textContent=msg;el.classList.remove('hidden');}}
   function clearKeyErr(){var el=document.getElementById('pk-err');if(el){el.textContent='';el.classList.add('hidden');}}
   function loadKeyPanel(){
@@ -300,11 +323,11 @@ reg('import',function(){
         var k=keys[i];
         var mk=stats&&stats.matched_keys&&stats.matched_keys.filter(function(m){return m.label===k.label})[0];
         var status=mk?'<span class="text-success">✓ 命中'+(mk.frame_count?' ('+mk.frame_count+'帧)':'')+'</span>':'<span class="text-dim">✗ 未命中</span>';
-        var del=k.is_preset?'':'<button class="btn btn-o btn-s text-danger-strong" data-kl="'+k.label+'">✕</button>';
+        var del=k.is_preset?'':'<button class="btn btn-o btn-s text-danger-strong" data-kl="'+escHtml(k.label)+'">✕</button>';
         var full=k.hex;
         var disp=full.length>16?full.substring(0,16)+'…':full;
-        h+='<tr><td class="mono t-10 key-hex" title="点击展开/收起" data-full="'+full+'" data-short="'+disp+'">'+disp+'</td>'
-          +'<td>'+k.label+(k.is_preset?' <span class="badge">预设</span>':'')+'</td>'
+        h+='<tr><td class="mono t-10 key-hex" title="点击展开/收起" data-full="'+escHtml(full)+'" data-short="'+escHtml(disp)+'">'+escHtml(disp)+'</td>'
+          +'<td>'+escHtml(k.label)+(k.is_preset?' <span class="badge">预设</span>':'')+'</td>'
           +'<td>'+status+'</td><td>'+del+'</td></tr>';
       }
       h+='</table>';
@@ -324,7 +347,8 @@ reg('import',function(){
       document.querySelectorAll('[data-kl]').forEach(function(btn){
         btn.addEventListener('click',function(){
           var kl=this.dataset.kl;
-          fetch('/api/keys/'+kl,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+          // S1: label 是用户输入, URL 必须编码 (含 #/? 等字符会截断/歧义, P2)
+          fetch('/api/keys/'+encodeURIComponent(kl),{method:'DELETE'}).then(r=>r.json()).then(function(d){
             if(d&&d.ok){loadKeyPanel();}else{showKeyErr((d&&d.error)||'删除失败');}
           }).catch(function(e){showKeyErr('网络错误: '+e.message)});
         });
@@ -371,24 +395,7 @@ reg('import',function(){
   });
   // 校验状态兜底 (刷新后导航锁定用) — 渲染已由 sr() 统一负责, 避免重复
   A.get('/api/import/verify').then(function(v){S.verifyPassed=v&&v.passed;}).catch(function(){});
-  // 解析正确性校验 (P6) — 导入后后台自动跑, 此处在导入结果区渲染结果卡片
-  A.get('/api/import/parser-verify').then(function(pv){
-    if(!pv||pv.passed===null||!document.getElementById('sout'))return;
-    S.parserPassed = (pv.failure_type!=='parse_mismatch');  // 解析错位 → 锁定导航
-    var ok = pv.passed===true;
-    var vc = ok?'#16a34a':'#dc2626';
-    var ph='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(ok?'#f0fdf4':'#fef2f2')+';border:1px solid '+vc+';font-size:11px">';
-    ph+='<b style="color:'+vc+'">'+(ok?'✅ 解析正确性校验通过':'❌ 解析正确性校验异常')+'</b>';
-    if(pv.failure_type){ph+=' <span style="color:#94a3b8">('+(pv.failure_type==='parse_mismatch'?'解析错位, 已锁定拓扑/报文/节点页':pv.failure_type==='missing_key'?'缺 key, 仅警告':'警告')+')</span>';}
-    if(pv.checks){for(var ck in pv.checks){var c=pv.checks[ck];
-      ph+='<br>'+(c.passed?'✅':'⚠️')+' '+c.label+': <span style="color:#64748b">'+(c.actual||'')+'</span>';
-    }}
-    if(pv.detail){for(var dk in pv.detail){var dd=pv.detail[dk];
-      ph+='<div style="color:#b45309;margin-top:4px">'+dk+': '+(Array.isArray(dd)?dd.slice(0,3).join(' | '):dd)+'</div>';
-    }}
-    ph+='</div>';
-    var el=document.getElementById('sdiv');
-    if(el){el.innerHTML+=ph;}
-  }).catch(function(){});
+  // S1 (2026-08-26): P6 解析正确性卡渲染移入 sr() (导入结果自带 parser_verify),
+  // 删除此处独立 fetch — fresh import 后卡缺失的竞态修复
   if(S.impTab==='pcap'){setTimeout(function(){loadKeyPanel();},200);}
 });

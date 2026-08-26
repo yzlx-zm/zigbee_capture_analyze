@@ -26,6 +26,24 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
     if(v.detail&&Object.keys(v.detail).length>0){h+='<details class=\"verify-detail\"><summary>⚠️ 差异明细 ('+Object.keys(v.detail).length+' 项)</summary><pre class=\"text-danger\">'+esc(JSON.stringify(v.detail))+'</pre></details>';}
     h+='</div>';S.verifyPassed=v.passed;
   }
+  // S1 (2026-08-26): P6 解析正确性卡统一由 sr() 渲染 (fresh import 与切页恢复
+  // 都随结果卡输出, 消除此前独立 fetch 的竞态 — fresh import 后卡缺失 P2)
+  if(d.parser_verify){
+    var pv=d.parser_verify;
+    S.parserPassed = (pv.failure_type!=='parse_mismatch');  // 解析错位 → 锁定导航
+    var pvok = pv.passed===true;
+    var pvc = pvok?'#16a34a':'#dc2626';
+    h+='<div style="margin-top:8px;padding:8px;border-radius:4px;background:'+(pvok?'#f0fdf4':'#fef2f2')+';border:1px solid '+pvc+';font-size:11px">';
+    h+='<b style="color:'+pvc+'">'+(pvok?'✅ 解析正确性校验通过':'❌ 解析正确性校验异常')+'</b>';
+    if(pv.failure_type){h+=' <span style="color:#94a3b8">('+(pv.failure_type==='parse_mismatch'?'解析错位, 已锁定拓扑/报文/节点页':pv.failure_type==='missing_key'?'缺 key, 仅警告':'警告')+')</span>';}
+    if(pv.checks){for(var ck in pv.checks){var c=pv.checks[ck];
+      h+='<br>'+(c.passed?'✅':'⚠️')+' '+esc(c.label)+': <span style="color:#64748b">'+esc(c.actual||'')+'</span>';
+    }}
+    if(pv.detail){for(var dk in pv.detail){var dd=pv.detail[dk];
+      h+='<div style="color:#b45309;margin-top:4px">'+esc(dk)+': '+(Array.isArray(dd)?esc(dd.slice(0,3).join(' | ')):esc(dd))+'</div>';
+    }}
+    h+='</div>';
+  }
   // U11: 拆分产物下载 (人工复验, 如 Ubiqua 打开) — 按钮样式明显
   if(d.split_out_path){
     h+='<p class="mt-1"><a class="btn btn-p btn-sm" href="/api/cubx/download?path='+encodeURIComponent(d.split_out_path)+'" download>⬇ 下载拆分产物 ('+((d.split_out_frames||0).toLocaleString())+' 帧)</a> <span class="t-10 text-dim">Ubiqua 打开复验用</span></p>';
@@ -84,12 +102,6 @@ export function pollImport(tid,fname,onDone){
 }
 function tick(){
   if(_pdone||!_ptid)return;
-  if(++_ptries>1000){            // 5 分钟超时兜底 (任务表容量清理后 progress=unknown 时防无限轮询)
-    _pdone=true;stopPoll();
-    if(onImportPage())setErr('导入超时 (5 分钟), 请重试');
-    else sbTask('❌ 导入超时, 请重试','err');
-    return;
-  }
   A.get('/api/import/progress?task_id='+_ptid).then(function(p){
     if(_pdone||!_ptid)return;
     if(p&&p.status==='done'){
@@ -106,11 +118,27 @@ function tick(){
       if(onImportPage())setErr(p.error||'导入失败');
       else{_plastErr=p.error||'导入失败';sbTask('❌ 失败 · 点击查看','err');}
     }else if(p&&p.status==='running'){
+      _ptries=0;   // S1: 真实进度中不累计超时 — 大包解析 >5 分钟 (85MB≈8min)
+                   // 此前误报 "导入超时" 且轮询停止 (P2); unknown/网络失败才累计
       var st=p.stage||'解析中',pct=p.percent||0;
       sbTask('⟳ '+st+' '+(pct!=null?pct+'%':''),'run');
       if(onImportPage())setProg(st+' ('+pct+'%)',pct);   // 切回导入页时进度条由 tick 恢复
+    }else{
+      // unknown (任务表容量清理后) 或异常响应 — 超时兜底, 防无限轮询
+      if(++_ptries>1000){
+        _pdone=true;stopPoll();
+        if(onImportPage())setErr('导入超时 (5 分钟), 请重试');
+        else sbTask('❌ 导入超时, 请重试','err');
+      }
     }
-  }).catch(function(){});       // 网络抖动静默, 下个 tick 重试
+  }).catch(function(){
+    // 网络失败 (后端重启等) 累计超时
+    if(++_ptries>1000){
+      _pdone=true;stopPoll();
+      if(onImportPage())setErr('导入超时 (5 分钟), 请重试');
+      else sbTask('❌ 导入超时, 请重试','err');
+    }
+  });
 }
 // 顶栏 #sb 点击 → 跳回导入页 (仅任务已终态且不在导入页时)
 document.addEventListener('click',function(e){
