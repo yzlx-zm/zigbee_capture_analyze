@@ -432,7 +432,9 @@ input.mono, select.mono { font-family: var(--font-mono); }
 /* U13 (08-26): 路由路径链 section 折叠交互 */
 .fold-head { cursor: pointer; user-select: none; }
 .fold-head:hover { background: rgba(59,130,246,.08); }
-.fold-arrow { display: inline-block; width: 14px; color: var(--c-text-4); }
+.fold-arrow { display: inline-block; width: 18px; font-size: 14px; font-weight: 700;
+  color: var(--c-text-2); line-height: 1; }   /* 加粗深色, 折叠头可点提示 */
+.fold-head:hover .fold-arrow { color: #3b82f6; }
 .path-body { overflow: hidden; }
 .expand-all { cursor: pointer; text-align: center; padding: 4px; font-size: 10px;
   color: #3b82f6; background: rgba(59,130,246,.06); border-radius: 4px; margin-top: 3px; }
