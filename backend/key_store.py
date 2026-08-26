@@ -140,13 +140,16 @@ def remove_key(label: str) -> bool:
 def get_match_stats(packets: list[dict]) -> dict:
     """统计 Key 命中情况: 哪些 Key 解密了多少帧"""
     key_counts: dict[str, int] = {}
-    total_data = 0
+    total_sec = 0   # 安全帧总数 (可解密帧): NWK 安全帧 + Data 帧兜底 (csv 无安全字段)
     decrypted = 0
     cluster_counts: dict[int, int] = {}
 
     for p in packets:
-        if p.get("pkt_type") == "Data":
-            total_data += 1
+        # S1 (2026-08-26): 口径修复 — 旧代码 total 只数 pkt_type=='Data', 而
+        # decrypted 数全部解密帧; U16-7 全量化后 APS Ack/NWK 帧解密 → 比率 >100%
+        # (实测 109.3%, encrypted 负数)。改为"安全帧"口径: 有 NWK 安全或 Data 帧
+        if p.get("nwk_security") or p.get("pkt_type") == "Data":
+            total_sec += 1
         if p.get("decrypted"):
             decrypted += 1
             label = p.get("sec_key_label", "")
@@ -167,10 +170,10 @@ def get_match_stats(packets: list[dict]) -> dict:
             unmatched_keys.append(k)
 
     return {
-        "total_data_frames": total_data,
+        "total_data_frames": total_sec,
         "decrypted": decrypted,
-        "encrypted": total_data - decrypted,
-        "decrypt_rate": round(decrypted / total_data, 3) if total_data else 0,
+        "encrypted": max(total_sec - decrypted, 0),
+        "decrypt_rate": round(decrypted / total_sec, 3) if total_sec else 0,
         "by_cluster": {f"0x{k:04X}": v for k, v in sorted(cluster_counts.items())},
         "matched_keys": matched_keys,
         "unmatched_keys": unmatched_keys,
