@@ -244,6 +244,8 @@ reg('tl', function(){
         // U16-4 路径列 (完整路径): 起点→中继→终点 (0x0000→0x1885→0xF67F), 无中继 → —
         // (08-25 用户反馈: 只显示中继 "→0x1885" 不直观 → 完整路径一行自洽)
         // U16-4b: path_relays = 下行 source route 优先, 上行帧用 RR 证据补路径 (后端已合并)
+        // S4 (2026-08-26 用户反馈): poll/Beacon/Ack 纯 MAC 帧无 NWK 路由 —
+        // 原显示 "—" 无信息量 → 标注 MAC 层地址 (DataReq = 设备→父节点轮询)
         var pathStr='—';
         var pathRelays=p.path_relays||p.nwk_relays;
         if(pathRelays&&pathRelays.length){
@@ -252,6 +254,11 @@ reg('tl', function(){
           for(var ri=0;ri<pathRelays.length;ri++)pathNodes.push('0x'+pathRelays[ri].toString(16).toUpperCase().padStart(4,'0'));
           if(typeof p.nwk_dst==='number')pathNodes.push('0x'+p.nwk_dst.toString(16).toUpperCase().padStart(4,'0'));
           pathStr='<span class="tl-path" title="路径: '+pathNodes.join(' → ')+'">'+pathNodes.join('→')+'</span>';
+        }else if(typeof p.nwk_src!=='number'&&typeof p.mac_src==='number'){
+          var macPath='0x'+p.mac_src.toString(16).toUpperCase().padStart(4,'0')
+            +'→0x'+(typeof p.mac_dst==='number'?p.mac_dst.toString(16).toUpperCase().padStart(4,'0'):'????');
+          var macTip=((p.summary||'').includes('DataReq'))?'MAC 层轮询: 设备→父节点 (Data Request)':'MAC 层地址 (无 NWK 路由)';
+          pathStr='<span class="tl-path" title="'+macTip+'">'+macPath+'</span>';
         }
         // U16-4: decIcon (✅/🔒/📡) 原在状态列, 随列删除移到摘要列前
         // U16-5: APS Ctr 列 (请求/ack 帧 counter 肉眼对应)
@@ -640,7 +647,9 @@ reg('tl', function(){
             apsF.push(['Ack Format', aps['zbee_aps.ack_format']==='0'?'沿用原帧 Counter':'新 Counter', 'ack 帧 FCF bit4']);
           }
           html+=_tlLayer('APS', '#16a34a', apsF);
-        }else if(!d.decrypted){
+        }else if(!d.decrypted&&d.nwk_security){
+          // S4 (2026-08-26 用户反馈): Encrypted 提示必须有 NWK 安全守卫 —
+          // poll/Beacon/Ack 纯 MAC 明文帧无 APS 层, 显示 "🔒 Encrypted" 是误导
           html+=_tlLayer('APS', '#16a34a', [['Status','🔒 Encrypted']]);
         }
       }
@@ -723,7 +732,8 @@ reg('tl', function(){
             if(pp.hex)zclFields.push(['载荷 hex', pp.hex]);
           }
           html+=_tlLayer('ZCL', '#7c3aed', zclFields);
-        }else if(!d.decrypted&&!isNwkCmd){
+        }else if(!d.decrypted&&d.nwk_security&&!isNwkCmd){
+          // S4 (2026-08-26 用户反馈): 同上守卫 — 明文 MAC 帧无 ZCL 层不标 Encrypted
           var isZdp=aps&&_tlIsZdp(aps);
           if(!isZdp){
             html+=_tlLayer('ZCL', '#7c3aed', [['Status','🔒 Encrypted (需要 Network Key)']]);

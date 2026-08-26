@@ -1331,6 +1331,9 @@ def _detail_dict(p: dict, pkt_id: int) -> dict:
         "ts": p["ts"],
         "pkt_type": p.get("pkt_type", ""),
         "decrypted": p.get("decrypted", False),
+        # S4 (2026-08-26): nwk_security 透出 — 前端 Encrypted 提示必须有此守卫:
+        # poll/Beacon/Ack 纯 MAC 明文帧 decrypted=False 是"无安全层"而非"加密未解"
+        "nwk_security": p.get("nwk_security"),
         "security": p.get("security", ""),
         "layers": layers,  # 完整 tshark JSON 层树 (cubx 路径为 fallback 构造)
         # S4 (2026-08-26): zcl_frame_type 透出 — 前端兜底命令名必须带 frame_type
