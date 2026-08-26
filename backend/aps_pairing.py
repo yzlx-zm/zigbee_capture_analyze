@@ -67,6 +67,21 @@ def build_transaction_peers(packets: list[dict]) -> dict:
     索引为 packets 列表下标 (与 /api/packets/{idx} 一致).
     """
     _, orig_to_ack = build_ack_match(packets)
+    # S1 (2026-08-26): 索引化修复 — 原实现每 ZCL 命令帧遍历全部 packets (O(n²)),
+    # 群控包 10.8 万帧点详情时事务构建卡死数分钟 (P1 性能缺陷)。
+    # 响应候选按 (src, dst, tsn) 分组, 查询 O(1) 组内再过滤时间窗 —
+    # 候选集合与原逻辑逐位一致 (同 tsn 反向帧), 语义不变, 线性复杂度.
+    resp_cand: dict = defaultdict(list)
+    for qi, q in enumerate(packets):
+        if q.get("pkt_type") == "APS Ack":
+            continue
+        tsn = q.get("zcl_seq")
+        if tsn is None:
+            continue
+        s, d = q.get("nwk_src"), q.get("nwk_dst")
+        if s is None or d is None:
+            continue
+        resp_cand[(s, d, tsn)].append((qi, q))
     peers: dict = {}
     for i, p in enumerate(packets):
         # 只对 ZCL 命令帧建链 (需有事务序列号; 纯数据/报告帧/APS 命令不建)
@@ -79,16 +94,11 @@ def build_transaction_peers(packets: list[dict]) -> dict:
             continue
         hi = ts0 + APP_RESP_WINDOW_S
         responses = []
-        for qi, q in enumerate(packets):
-            if q.get("pkt_type") == "APS Ack":
-                continue
+        for qi, q in resp_cand.get((dst, src, tsn), []):
+            # 响应候选已限定 (src,dst,tsn) 反向同 tsn; 时间窗过滤保留
             t = q.get("ts", 0.0)
             if not (ts0 < t <= hi):
                 continue
-            if q.get("nwk_src") != dst or q.get("nwk_dst") != src:
-                continue  # 只认接收方 → 发送方的数据帧 (反向)
-            if q.get("zcl_seq") != tsn:
-                continue  # 同 ZCL 事务序列号 = 响应 (铁证, 唯一匹配标准)
             responses.append({
                 "id": qi, "packet_id": q.get("packet_id"),
                 "pkt_type": q.get("pkt_type"), "zcl_cmd_name": q.get("zcl_cmd_name"),

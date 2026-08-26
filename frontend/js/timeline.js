@@ -359,7 +359,10 @@ reg('tl', function(){
         panel.innerHTML='<p class="text-danger text-center">无法加载帧详情</p>';
         return;
       }
-      var html='<div class="frame-meta">帧 #'+pid+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
+      // S1 (2026-08-26): 详情标题帧号与表格"帧号"列一致 — 表格显示抓包原始帧号
+      // (packet_id), 标题原只显示列表索引 pid → 用户对照困惑 (P2); 两者都显示
+      var frameNoStr = (d.packet_id!=null && d.packet_id!==pid) ? '帧 #'+pid+' (抓包帧号 '+d.packet_id+')' : '帧 #'+(d.packet_id!=null?d.packet_id:pid);
+      var html='<div class="frame-meta">'+frameNoStr+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
       // APS Ack 配对 (2026-08-06: 字段级 counter 匹配)
       if(d.aps_ack_pair){
         var pk=d.aps_ack_pair;
@@ -433,7 +436,10 @@ reg('tl', function(){
         nwkFields.push(['Security', secEnabled?'Enabled':'Disabled']);
         html+=_tlLayer('NWK', '#2563eb', nwkFields);
         // Security header — always show if tshark parsed it
-        var sec=nwk['ZigBee Security Header']||{};
+        // S1 (2026-08-26): cubx 路径 fallback 构造把安全头放在层树顶层
+        // (files.py _fallback_layers: layers["ZigBee Security Header"]), 此前只查
+        // nwk 内 → 解密 key/帧计数/MIC 在 cubx 详情整层缺失 (P1)
+        var sec=layers['ZigBee Security Header']||nwk['ZigBee Security Header']||{};
         if(Object.keys(sec).length>0&&sec['zbee.sec.field']){
           var klabel=sec['zbee.sec.decryption_key']||(sec['zbee.sec.key']?'Key matched':'');
           html+=_tlLayer('Security', '#dc2626', [
