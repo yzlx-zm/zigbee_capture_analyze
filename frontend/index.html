@@ -1,14 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Zigbee 拓扑分析</title>
-<link rel="stylesheet" href="css/app.css?v=20260826b"></head>
+<link rel="stylesheet" href="css/app.css?v=20260826c"></head>
 <body>
 <script src="lib/cytoscape.min.js"></script>
 <nav id="nb"><span class="logo">📡 Zigbee 拓扑分析</span><div class="nt">
 <a class="nt on" data-r="import">导入</a><a class="nt" data-r="topo">拓扑</a>
 <a class="nt" data-r="tl">报文</a><a class="nt" data-r="nodes">节点</a>
-<a class="nt" data-r="diag">诊断</a>
-<a class="nt" data-r="ai">AI</a></div>
+<a class="nt" data-r="diag">诊断</a></div>
 <span id="sb">就绪</span><button class="btn btn-r btn-sm" id="sb-restart" title="导入卡死时重启后端">⟳ 重启后端</button></nav>
 <div id="mc"></div>
 <script>
@@ -29,7 +28,6 @@ window.addEventListener('hashchange',rt);
 </script>
 <script type="module" src="js/app.js?v=20260826a"></script>
 <script>
-reg('ai',function(){document.getElementById('mc').innerHTML='<div class="card"><h3>🤖 AI 分析</h3><p class="hint">后续版本实现</p></div>'});
 document.querySelectorAll('.nt a').forEach(function(t){t.addEventListener('click',function(e){e.preventDefault();location.hash=this.dataset.r})});
 // 状态栏初始化移到 js/app.js (module 内执行, 避免 A 未定义的时序问题)
 </script></body></html>
