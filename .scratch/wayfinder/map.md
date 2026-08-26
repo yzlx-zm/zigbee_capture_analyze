@@ -132,7 +132,12 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   单独实测正常 '0xED6F→0x5694→0x0000') + 回归 3 套 + 群控详情 0.2s;
   **U16 遗留 2 部分闭环**: pcap MAC Ack 419 帧识别 ✓, pending=1 位待素材
   (诚实标注); 提交 e127191; 遗留优化项 (上行反转假设/RR 证据/pending=1) 待用户
-  列出清单后处理; **用户抽验待确认**
+  列出清单后处理; **用户抽验待确认**; **用户逐层核对补修 (08-26, cf562ba)**:
+  poll/Ack 逐层对照 Ubiqua 发现 2 个 P1 — ①FCF 截断 (0x0003 vs 真实 0x8863,
+  高位 security/ackreq/寻址模式全丢 → 存完整 mac_fcf) ②GP 帧命令误标
+  ("Write Attributes" 实为 GP Proxy Commissioning Mode, 官方 SDK command-id.h
+  依据 → zcl_defs 补 GP 表 + 前端 frame_type 守卫不猜) — 帧96 标题
+  "ZCL GP Proxy Commissioning Mode" ✓, poll FCF 0x8863 ✓, 回归 3 套全过
 
 ## Not yet specified
 
