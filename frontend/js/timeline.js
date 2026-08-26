@@ -362,7 +362,12 @@ reg('tl', function(){
       // S1 (2026-08-26): 详情标题帧号与表格"帧号"列一致 — 表格显示抓包原始帧号
       // (packet_id), 标题原只显示列表索引 pid → 用户对照困惑 (P2); 两者都显示
       var frameNoStr = (d.packet_id!=null && d.packet_id!==pid) ? '帧 #'+pid+' (抓包帧号 '+d.packet_id+')' : '帧 #'+(d.packet_id!=null?d.packet_id:pid);
-      var html='<div class="frame-meta">'+frameNoStr+' | '+tlFmtTs(d.ts)+' | '+d.pkt_type+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
+      // S4 (2026-08-26 用户反馈): 类型显示更精确 — Data 帧实为 ZCL 命令时显示
+      // "ZCL Write Attributes (0x2)" 而非笼统 "Data"; APS 命令帧同理
+      var typeStr = d.pkt_type||'';
+      if(d.zcl_cmd_name && !typeStr.includes('ZCL')){typeStr='ZCL '+d.zcl_cmd_name;}
+      else if(d.aps_cmd_name && !typeStr.includes('APS') && !typeStr.includes('ZDP')){typeStr='APS '+d.aps_cmd_name;}
+      var html='<div class="frame-meta">'+frameNoStr+' | '+tlFmtTs(d.ts)+' | '+typeStr+' | '+(d.decrypted?'<span class="text-success">已解密</span>':'<span class="text-danger">加密</span>')+'</div>';
       // APS Ack 配对 (2026-08-06: 字段级 counter 匹配)
       if(d.aps_ack_pair){
         var pk=d.aps_ack_pair;
@@ -691,7 +696,8 @@ reg('tl', function(){
           else if(typeof fcf==='object'&&fcf['zbee_zcl.dir']==='0')dir='Client→Server';
           // ⚠️ 修复 (U5): 优先用后端按簇解析的命令名 (zcl_defs), 前端混合表兜底 —
           // 此前 0x01 在 Window Covering 簇被误标为 "OTA: Query Next Image"
-          var zclCmd=d.zcl_cmd_name||_tlZclCmd(zcl);
+          // S4: 兜底带 frame_type 守卫 (cluster-specific 不猜, P1 误标修复)
+          var zclCmd=d.zcl_cmd_name||_tlZclCmd(zcl, d.zcl_frame_type);
           var zclFields=[
             ['Command', zclCmd],
             ['Direction', dir],
@@ -805,16 +811,22 @@ reg('tl', function(){
     return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
   }
   function _tlIsZdp(aps){return (aps['zbee_aps.profile']||'')==='0x0000';}
-  function _tlZclCmd(zcl){
+  function _tlZclCmd(zcl, frameType){
     var cid=zcl['zbee_zcl.cmd.id'];
     if(!cid)return '-';
     // ⚠️ 兜底只保留全局命令表 (ZCL spec 2.3.1 frame type=0), 不得混入簇/OTA 命令:
     // 此前 0x00/0x01/0x02 重复键被 OTA 表覆盖 (0x00 → 'OTA: Image Notify' 等),
     // 且无 cluster/frame_type 维度无法正确命名 — 簇命令名由后端 zcl_defs
     // (zcl_cmd_name, frame_type 区分) 提供, 兜底仅为后端无名字时的原始 ID 展示
-    var names={0x00:'Read Attributes',0x01:'Read Attributes Response',0x02:'Write Attributes',0x03:'Write Attributes Undivided',0x04:'Write Attributes Response',0x05:'Write Attributes No Response',0x06:'Configure Reporting',0x07:'Configure Reporting Response',0x08:'Read Reporting Configuration',0x09:'Read Reporting Configuration Response',0x0A:'Report Attributes',0x0B:'Default Response',0x0C:'Discover Attributes',0x0D:'Discover Attributes Response'};
+    // S4 (2026-08-26 用户逐层核对): 加 frame_type 守卫 — cluster-specific/厂商
+    // 命令 (1/2/3) 不得用全局表猜: GP 帧 0x02 曾被误标 "Write Attributes"
+    // (实为 GP Proxy Commissioning Mode, P1 误标); frame_type 未提供时兼容旧数据
     var num=parseInt(cid,16);
-    return (names[num]||'')+' (0x'+num.toString(16).toUpperCase()+')';
+    if(frameType!==0){
+      return '0x'+num.toString(16).toUpperCase()+(frameType===1?' (簇特定命令)':frameType===2?' (厂商特定命令)':'');
+    }
+    var names={0x00:'Read Attributes',0x01:'Read Attributes Response',0x02:'Write Attributes',0x03:'Write Attributes Undivided',0x04:'Write Attributes Response',0x05:'Write Attributes No Response',0x06:'Configure Reporting',0x07:'Configure Reporting Response',0x08:'Read Reporting Configuration',0x09:'Read Reporting Configuration Response',0x0A:'Report Attributes',0x0B:'Default Response',0x0C:'Discover Attributes',0x0D:'Discover Attributes Response'};
+    return (names[num]||'0x'+num.toString(16).toUpperCase())+' (0x'+num.toString(16).toUpperCase()+')';
   }
   function _tlROpts(opts){
     if(!opts)return '?';

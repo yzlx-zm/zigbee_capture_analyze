@@ -997,7 +997,10 @@ def _fallback_layers(p: dict) -> dict:
         if p.get("mac_fcs_ok") is not None:
             wpan["wpan.fcs_ok"] = "1" if p["mac_fcs_ok"] else "0"
         mft = (p.get("mac_frame_type") or 1) & 0x07
-        wpan["wpan.fcf"] = f"0x{mft:04X}"
+        # S4 (2026-08-26): 完整 FCF 优先 (cubx 已解析 mac_fcf 2 字节小端);
+        # 无 mac_fcf 时兜底低 3 位 (旧素材快照/未重导)
+        mac_fcf = p.get("mac_fcf")
+        wpan["wpan.fcf"] = f"0x{mac_fcf:04X}" if isinstance(mac_fcf, int) else f"0x{mft:04X}"
         if p.get("mac_seq") is not None:
             wpan["wpan.seq_no"] = str(p["mac_seq"])
         if p.get("pan_dst") is not None:
@@ -1330,6 +1333,9 @@ def _detail_dict(p: dict, pkt_id: int) -> dict:
         "decrypted": p.get("decrypted", False),
         "security": p.get("security", ""),
         "layers": layers,  # 完整 tshark JSON 层树 (cubx 路径为 fallback 构造)
+        # S4 (2026-08-26): zcl_frame_type 透出 — 前端兜底命令名必须带 frame_type
+        # 守卫 (全局命令表只适用于 frame_type=0, cluster-specific 不得猜, P1 误标修复)
+        "zcl_frame_type": p.get("zcl_frame_type"),
         # ZCL 按簇正确解析的命令名 (前端详情 ZCL 层优先使用, 避免前端混合表误标)
         "zcl_cmd_name": p.get("zcl_cmd_name"),
         "aps_cluster_name": p.get("aps_cluster_name"),

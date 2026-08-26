@@ -499,6 +499,10 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
 
     mac = pkt.payload
     mac_frame_type = int(pkt.fcf_frametype)
+    # S4 (2026-08-26 用户逐层核对): 完整 FCF 2 字节 (小端: 低字节在前) —
+    # 此前只存 frame_type (低 3 位), 详情 FCF 显示 0x0003 而非真实 0x8863
+    # (security/ack-req/pan-compression/寻址模式等高位全丢, 双路径不一致 P1)
+    result["mac_fcf"] = (raw[0] | (raw[1] << 8)) if len(raw) >= 2 else mac_frame_type
 
     def _pan_field(field_name) -> int | None:
         v = getattr(mac, field_name, None)

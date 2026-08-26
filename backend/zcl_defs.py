@@ -82,6 +82,21 @@ CLUSTER_COMMANDS: dict[int, dict[int, str]] = {
         0x06: "Upgrade End Request",
         0x07: "Upgrade End Response",
     },
+    # Green Power (0x0021) — S4 (2026-08-26 用户逐层核对): 官方命令表
+    # (Silicon Labs SDK command-id.h, GP spec gp-1.0a-09-5499-26, Server→Client 段)。
+    # ⚠️ SDK 方向标注与 client macro 存在矛盾 (如 0x02 Proxy Commissioning Mode
+    # 在 command-id.h S→C 段但 client-command-macro.h 有 client 版) — 以 ID 表为准,
+    # 素材帧 (中继包, S→C) 实证 0x02 命中性。此前该簇无命令表 → 后端 zcl_cmd_name=None
+    # + 前端全局表兜底误标 "Write Attributes" (P1 误标实锤)。
+    0x0021: {
+        0x00: "GP Notification Response",
+        0x01: "GP Pairing",
+        0x02: "GP Proxy Commissioning Mode",
+        0x06: "GP Response",
+        0x08: "GP Translation Table Response",
+        0x0A: "GP Sink Table Response",
+        0x0B: "GP Proxy Table Request",
+    },
     # Basic (0x0000)
     0x0000: {
         0x00: "Reset to Factory Defaults",
