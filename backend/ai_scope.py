@@ -16,7 +16,8 @@ from .api.files import _parse_clock_time
 _TIME_WINDOW_RE = re.compile(
     r"(?P<t1>\d{1,2}:\d{2}(?::\d{2})?)\s*[-~至到]\s*(?P<t2>\d{1,2}:\d{2}(?::\d{2})?)")
 _REL_TIME_RE = re.compile(r"(?:最近|前|过去)\s*(?P<n>\d+)\s*(?P<u>秒|分钟|分|小时)")
-_ADDR_RE = re.compile(r"0x(?P<a>[0-9A-Fa-f]{3,4})\b")
+# 短地址: 0x 前缀 3-4 位, 或**无前缀 4 位含字母** ("838d"; 排除纯数字如 "1234" 防误判计数)
+_ADDR_RE = re.compile(r"0x(?P<a>[0-9A-Fa-f]{3,4})\b|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])(?P<a2>[0-9A-Fa-f]{4})(?![0-9A-Fa-f])")
 _PAN_RE = re.compile(r"(?:PAN|pan)\s*0x(?P<p>[0-9A-Fa-f]{4})\b")
 _AFTER_RE = re.compile(r"(?P<t>\d{1,2}:\d{2}(?::\d{2})?)\s*(?:之后|以后|开始|以来)")
 _UNTIL_RE = re.compile(r"(?P<t>\d{1,2}:\d{2}(?::\d{2})?)\s*(?:之前|以前|为止|结束)")
@@ -45,10 +46,10 @@ def parse_scope(message: str, packets: list[dict], prev: dict | None = None) -> 
         scope["pan_text"] = f"0x{scope['pan']:04X}"
         signals.append(f"PAN {scope['pan_text']}")
 
-    # 短地址 (0x838D; 排除广播 ≥0xFFF0)
+    # 短地址 (0x838D 或裸 4 位 hex 含字母 "838d"; 排除广播 ≥0xFFF0)
     am = _ADDR_RE.search(m)
     if am:
-        a = int(am.group("a"), 16)
+        a = int(am.group("a") or am.group("a2"), 16)
         if a < 0xFFF0:
             scope["addr"] = a
             scope["addr_text"] = f"0x{a:04X}"

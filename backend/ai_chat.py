@@ -21,17 +21,23 @@ class LLMError(Exception):
     """LLM 调用失败 (无 key/网络/额度/参数) — message 为人类可读提示."""
 
 
-def _load_key(provider: str) -> str | None:
-    """key 解析: ai_config.json → 环境变量 (ANTHROPIC_API_KEY 等)."""
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_config.json")
+
+
+def _load_config() -> dict:
     try:
         import json
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "ai_config.json"), encoding="utf-8") as f:
-            cfg = json.load(f)
-        if cfg.get("provider") == provider and cfg.get("api_key"):
-            return cfg["api_key"]
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        pass
+        return {}
+
+
+def _load_key(provider: str) -> str | None:
+    """key 解析: ai_config.json → 环境变量 (ANTHROPIC_API_KEY 等)."""
+    cfg = _load_config()
+    if cfg.get("provider") == provider and cfg.get("api_key"):
+        return cfg["api_key"]
     env = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
            "deepseek": "DEEPSEEK_API_KEY"}.get(provider)
     if env:
@@ -41,24 +47,27 @@ def _load_key(provider: str) -> str | None:
 
 def load_provider() -> str | None:
     """已配置 key 的提供商 (无 key → None). 按配置 provider 检测."""
-    try:
-        import json
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "ai_config.json"), encoding="utf-8") as f:
-            cfg = json.load(f)
-        p = cfg.get("provider")
-        if p and cfg.get("api_key"):
-            return p
-        if p and os.environ.get({"anthropic": "ANTHROPIC_API_KEY",
-                                 "openai": "OPENAI_API_KEY",
-                                 "deepseek": "DEEPSEEK_API_KEY"}.get(p, "")):
-            return p
-    except Exception:
-        pass
+    cfg = _load_config()
+    p = cfg.get("provider")
+    if p and cfg.get("api_key"):
+        return p
+    if p and os.environ.get({"anthropic": "ANTHROPIC_API_KEY",
+                             "openai": "OPENAI_API_KEY",
+                             "deepseek": "DEEPSEEK_API_KEY"}.get(p, "")):
+        return p
     for p in ("anthropic", "openai", "deepseek"):
         if _load_key(p):
             return p
     return None
+
+
+def _api_style(provider: str, cfg: dict) -> str:
+    """API 兼容风格: 显式配置 api_style 优先 (deepseek 也可走 Anthropic 兼容端点,
+    如 https://api.deepseek.com/anthropic), 默认按 provider."""
+    s = (cfg.get("api_style") or "").strip()
+    if s in ("anthropic", "openai"):
+        return s
+    return "anthropic" if provider == "anthropic" else "openai"
 
 
 # 默认模型 (ai_config.json 可覆盖)
@@ -79,34 +88,40 @@ def stream_chat(provider: str, messages: list[dict], on_chunk) -> str:
     api_key = _load_key(provider)
     if not api_key:
         raise LLMError("未配置 LLM API Key — 请在 AI 助手「设置」中填写 (仅存本地)")
-    try:
-        import json
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "ai_config.json"), encoding="utf-8") as f:
-            cfg = json.load(f)
-        model = (cfg.get("model") or "").strip() or DEFAULT_MODELS.get(provider)
-    except Exception:
-        model = DEFAULT_MODELS.get(provider)
+    cfg = _load_config()
+    model = (cfg.get("model") or "").strip() or DEFAULT_MODELS.get(provider)
+    base_url = (cfg.get("base_url") or "").strip() or None
+    style = _api_style(provider, cfg)
 
     full: list[str] = []
-    if provider == "anthropic":
+    if style == "anthropic":
+        # Anthropic 风格 (anthropic 官方或 Anthropic 兼容端点, 如 deepseek 的 /anthropic)
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        kwargs: dict = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = anthropic.Anthropic(**kwargs)
+        msgs = [m for m in messages if m["role"] != "system"]
+        if not msgs:
+            # 端点要求至少 1 条消息 (实测 DeepSeek /anthropic 空 messages → 400)
+            msgs = [{"role": "user", "content": "请基于抓包范围摘要分析。"}]
         with client.messages.stream(
                 model=model,
                 max_tokens=2048,
                 system=messages[0]["content"] if messages and messages[0]["role"] == "system" else SYSTEM_PROMPT,
-                messages=[m for m in messages if m["role"] != "system"],
+                messages=msgs,
         ) as stream:
             for text in stream.text_stream:
                 full.append(text)
                 on_chunk(text)
         return "".join(full)
 
-    # OpenAI 兼容 (openai / deepseek)
+    # OpenAI 风格 (openai / deepseek openai 端点)
     import openai
     kwargs = {"api_key": api_key}
-    if provider == "deepseek":
+    if base_url:
+        kwargs["base_url"] = base_url
+    elif provider == "deepseek":
         kwargs["base_url"] = "https://api.deepseek.com"
     client = openai.OpenAI(**kwargs)
     stream = client.chat.completions.create(

@@ -24,7 +24,8 @@ AI_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os
 
 # ── 意图分流 (U17 对齐决策: 统一对话输入框, 自动分流, 非双 Tab) ──
 # 分析信号: 范围/包关键词 → 阶段二对话式分析; 无信号 → 纯知识检索
-_ADDR_RE = re.compile(r"0x[0-9A-Fa-f]{3,4}\b")        # 短地址/PAN (0x838D / 0xBE5A)
+# 短地址/PAN (0x838D / 0xBE5A) + 裸 4 位 hex 含字母 ("838d", 排除纯数字计数)
+_ADDR_RE = re.compile(r"0x[0-9A-Fa-f]{3,4}\b|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{4}(?![0-9A-Fa-f])")
 _TIME_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?")    # 时间窗 (10:00 / 10:00:30)
 _REL_TIME_RE = re.compile(r"(?:最近|前|过去)\s*\d+\s*(?:秒|分钟|分|小时)")  # 相对时间
 _SCOPE_WORDS = re.compile(
@@ -92,6 +93,10 @@ class ConfigRequest(BaseModel):
     provider: str = "anthropic"   # anthropic / openai / deepseek
     api_key: str = ""
     mcp_token: str = ""           # 可选: 芯科 MCP Bearer token (留空自动发现本机凭证)
+    # 模型配置细分 (用户反馈 08-26: 端点/模型须可配, 如 DeepSeek Anthropic 兼容端点)
+    base_url: str = ""            # 可选: API 端点 (如 https://api.deepseek.com/anthropic)
+    model: str = ""               # 可选: 模型名 (如 deepseek-v4-flash), 默认按提供商
+    api_style: str = ""           # 可选: anthropic / openai (端点兼容风格; 默认按提供商)
 
 
 @router.post("/ai/chat")
@@ -230,6 +235,9 @@ async def ai_config_get():
         "key_set": bool((cfg.get("api_key") or "").strip()),
         "kb_token_ok": bool(ai_kb.resolve_token()),   # 知识源 token 可用性 (自动发现也算)
         "key_location": AI_CONFIG_PATH,
+        "base_url": cfg.get("base_url", ""),          # 模型配置细分 (08-26)
+        "model": cfg.get("model", ""),
+        "api_style": cfg.get("api_style", ""),
     }
 
 
@@ -245,6 +253,13 @@ async def ai_config_put(req: ConfigRequest):
     # 空 key 传回 = 保留原 key (前端不回传明文)
     if req.mcp_token.strip():
         cfg["mcp_token"] = req.mcp_token.strip()
+    # 模型配置细分 (08-26): 显式空字符串 = 清除 (回默认)
+    for k in ("base_url", "model", "api_style"):
+        v = (getattr(req, k) or "").strip()
+        if v:
+            cfg[k] = v
+        else:
+            cfg.pop(k, None)
     try:
         _save_config(cfg)
     except OSError as e:

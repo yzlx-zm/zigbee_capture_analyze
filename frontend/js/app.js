@@ -16,7 +16,7 @@ import './import.js?v=20260825a';  // 缓存破坏: 报文改名 (锁定提示),
 import './timeline.js?v=20260826a';  // U17: tlJumpFrame 暴露 (帧引用跳转), 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260825a';  // 缓存破坏: 报文改名 (设备跳转), 改版递增
-import './ai.js?v=20260826d';  // U17: 阶段二范围确认卡+流式+帧引用, 改版递增
+import './ai.js?v=20260826e';  // U17: 模型细分配置+处理动画, 改版递增
 
 // ── 初始路由 ──
 if (window.rt) window.rt();

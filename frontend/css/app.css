@@ -580,3 +580,9 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 .ai-scope-actions { display: flex; gap: 6px; margin-top: 6px; }
 .ai-ref { color: var(--c-primary); font-weight: 600; text-decoration: none; border-bottom: 1px dashed var(--c-primary); }
 .ai-ref:hover { text-decoration: underline; }
+
+/* ── U17: 处理中动画 (08-26 用户反馈) ── */
+.ai-thinking .ai-bubble { color: var(--c-text-3); display: flex; align-items: center; gap: 6px; }
+.ai-spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--c-border-strong);
+  border-top-color: var(--c-primary); border-radius: 50%; animation: ai-spin .8s linear infinite; flex-shrink: 0; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }

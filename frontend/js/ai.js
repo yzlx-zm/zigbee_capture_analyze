@@ -75,6 +75,16 @@ function buildDOM() {
         <label class="ai-lbl">API Key <span class="ai-dim">（仅存本地，不入 git/分发包）</span></label>
         <input id="zc-ai-key" class="ai-in" type="password" placeholder="粘贴你的 API Key">
         <p id="zc-ai-key-state" class="ai-dim"></p>
+        <label class="ai-lbl">API 端点 base_url <span class="ai-dim">（可选，如 DeepSeek Anthropic 兼容端点 https://api.deepseek.com/anthropic）</span></label>
+        <input id="zc-ai-base" class="ai-in" placeholder="留空用默认端点">
+        <label class="ai-lbl">模型 <span class="ai-dim">（可选，如 deepseek-v4-flash）</span></label>
+        <input id="zc-ai-model" class="ai-in" placeholder="留空用默认模型">
+        <label class="ai-lbl">API 风格 <span class="ai-dim">（端点兼容风格）</span></label>
+        <select id="zc-ai-style" class="ai-in">
+          <option value="">自动（按提供商）</option>
+          <option value="anthropic">Anthropic 风格</option>
+          <option value="openai">OpenAI 风格</option>
+        </select>
         <label class="ai-lbl">芯科访问 token <span class="ai-dim">（可选，留空自动使用本机授权凭证）</span></label>
         <input id="zc-ai-tok" class="ai-in" type="password" placeholder="粘贴 MCP Bearer token">
         <button class="btn btn-p btn-sm" id="zc-ai-savecfg">保存配置</button>
@@ -153,9 +163,12 @@ function send() {
   if (!text) return;
   const s = curSession();
   pushMsg({ role: 'user', kind: 'text', content: text });
+  const tIdx = s.messages.length;   // thinking 占位索引 (响应到达时替换)
+  pushMsg({ role: 'assistant', kind: 'thinking', content: '' });
   inputEl.value = '';
   save(); render();
   A.post('/api/ai/chat', { message: text, prev_scope: lastScopeOf(s) }).then(resp => {
+    s.messages.splice(tIdx, 1);   // 移除 thinking 占位
     if (resp && resp.error) {
       pushMsg({ role: 'assistant', kind: 'error', content: resp.error });
     } else if (resp && resp.type === 'kb') {
@@ -174,6 +187,7 @@ function send() {
     }
     save(); render();
   }).catch(e => {
+    s.messages.splice(tIdx, 1);
     pushMsg({ role: 'assistant', kind: 'error', content: '网络错误: ' + (e.message || '无法连接后端') });
     save(); render();
   });
@@ -323,6 +337,11 @@ function msgNode(m, s) {
     wrap.appendChild(list);
     return wrap;
   }
+  if (m.kind === 'thinking') {
+    // 处理中动画: spinner + 提示 (08-26 用户反馈)
+    wrap.innerHTML = '<div class="ai-bubble ai-thinking"><span class="ai-spin"></span>正在处理…</div>';
+    return wrap;
+  }
   if (m.kind === 'scope' && m.scope) {
     // 范围确认卡 (阶段二): 解析范围 + 摘要预览 + 确认/重述
     wrap.innerHTML = '<div class="ai-bubble ai-scope-head">📐 ' + esc(m.message || '') + '</div>' +
@@ -332,7 +351,9 @@ function msgNode(m, s) {
       '<button class="btn btn-o btn-sm" data-act="redo">✏️ 换种说法</button>' +
       '</div>';
     wrap.querySelector('[data-act="confirm"]').addEventListener('click', () => {
-      wrap.querySelector('[data-act="confirm"]').disabled = true;
+      const btn = wrap.querySelector('[data-act="confirm"]');
+      btn.disabled = true;
+      btn.textContent = '⏳ 分析中…';   // 处理动画 (08-26 用户反馈)
       analyzeScope(m.scope, s);
     });
     wrap.querySelector('[data-act="redo"]').addEventListener('click', () => {
@@ -394,6 +415,9 @@ function initCfg() {
     panel.querySelector('#zc-ai-prov').value = c.provider || 'anthropic';
     const ks = panel.querySelector('#zc-ai-key-state');
     ks.textContent = c.key_set ? '✅ Key 已配置（本地）' : '⚠️ 未配置 Key — 阶段二对话分析需要；知识检索不受影响';
+    panel.querySelector('#zc-ai-base').value = c.base_url || '';
+    panel.querySelector('#zc-ai-model').value = c.model || '';
+    panel.querySelector('#zc-ai-style').value = c.api_style || '';
     if (c.kb_token_ok) panel.querySelector('#zc-ai-tok').placeholder = '✅ 已自动使用本机芯科授权凭证';
     else panel.querySelector('#zc-ai-tok').placeholder = '❌ 未找到凭证，粘贴 token 或检查网络';
   }).catch(() => {});
@@ -403,10 +427,16 @@ function saveCfg() {
   const prov = panel.querySelector('#zc-ai-prov').value;
   const key = panel.querySelector('#zc-ai-key').value.trim();
   const tok = panel.querySelector('#zc-ai-tok').value.trim();
+  const base = panel.querySelector('#zc-ai-base').value.trim();
+  const model = panel.querySelector('#zc-ai-model').value.trim();
+  const style = panel.querySelector('#zc-ai-style').value;
   const msg = panel.querySelector('#zc-ai-cfg-msg');
   const body = { provider: prov };
   if (key) body.api_key = key;
   if (tok) body.mcp_token = tok;
+  body.base_url = base;   // 显式空串 = 清除回默认
+  body.model = model;
+  body.api_style = style;
   fetch('/api/ai/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     .then(r => r.json()).then(d => {
       if (d && d.ok) {
