@@ -17,8 +17,11 @@ _TIME_WINDOW_RE = re.compile(
     r"(?P<t1>\d{1,2}:\d{2}(?::\d{2})?)\s*[-~至到]\s*(?P<t2>\d{1,2}:\d{2}(?::\d{2})?)")
 _REL_TIME_RE = re.compile(r"(?:最近|前|过去)\s*(?P<n>\d+)\s*(?P<u>秒|分钟|分|小时)")
 # 短地址: 0x 前缀 3-4 位, 或**无前缀 4 位含字母** ("838d"; 排除纯数字如 "1234" 防误判计数)
-_ADDR_RE = re.compile(r"0x(?P<a>[0-9A-Fa-f]{3,4})\b|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])(?P<a2>[0-9A-Fa-f]{4})(?![0-9A-Fa-f])")
-_PAN_RE = re.compile(r"(?:PAN|pan)\s*0x(?P<p>[0-9A-Fa-f]{4})\b")
+# ⚠️ 边界用 (?![0-9A-Fa-f]) 而非 \b — 中文"的/网络"是 Unicode 单词字符, \b 会导致
+# "FEED的网络" / "0x838D的整体" 不匹配 (08-27 用户实证 PAN FEED 误判节点)
+_ADDR_RE = re.compile(r"0x(?P<a>[0-9A-Fa-f]{3,4})(?![0-9A-Fa-f])|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])(?P<a2>[0-9A-Fa-f]{4})(?![0-9A-Fa-f])")
+# PAN: "PAN 0x1234" / "PANid 为 FEED" / "PAN ID: 1234" / "PAN 1234" ((?:0x)? 整体可选)
+_PAN_RE = re.compile(r"(?:PAN|pan)\s*(?:id|ID)?\s*(?:为|是|[:：])?\s*(?:0x)?(?P<p>[0-9A-Fa-f]{4})(?![0-9A-Fa-f])")
 _AFTER_RE = re.compile(r"(?P<t>\d{1,2}:\d{2}(?::\d{2})?)\s*(?:之后|以后|开始|以来)")
 _UNTIL_RE = re.compile(r"(?P<t>\d{1,2}:\d{2}(?::\d{2})?)\s*(?:之前|以前|为止|结束)")
 
@@ -39,12 +42,13 @@ def parse_scope(message: str, packets: list[dict], prev: dict | None = None) -> 
     scope: dict = {}
     signals: list[str] = []
 
-    # PAN (0x1234 4 位, PAN 前缀强信号)
+    # PAN (0x1234 / PANid 为 FEED / PAN 1234 — 08-27 修复: 支持无 0x 前缀 + 连写 PANid)
     pm = _PAN_RE.search(m)
     if pm:
         scope["pan"] = int(pm.group("p"), 16)
         scope["pan_text"] = f"0x{scope['pan']:04X}"
         signals.append(f"PAN {scope['pan_text']}")
+        m = _PAN_RE.sub(" ", m, count=1)   # 移除 PAN hex 段 — 防 "FEED" 又被当节点
 
     # 短地址 (0x838D 或裸 4 位 hex 含字母 "838d"; 排除广播 ≥0xFFF0)
     am = _ADDR_RE.search(m)

@@ -25,7 +25,8 @@ AI_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os
 # ── 意图分流 (U17 对齐决策: 统一对话输入框, 自动分流, 非双 Tab) ──
 # 分析信号: 范围/包关键词 → 阶段二对话式分析; 无信号 → 纯知识检索
 # 短地址/PAN (0x838D / 0xBE5A) + 裸 4 位 hex 含字母 ("838d", 排除纯数字计数)
-_ADDR_RE = re.compile(r"0x[0-9A-Fa-f]{3,4}\b|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{4}(?![0-9A-Fa-f])")
+# ⚠️ 边界 (?![0-9A-Fa-f]) 而非 \b — 中文后缀 (0x838D的) 时 \b 失效 (08-27)
+_ADDR_RE = re.compile(r"0x[0-9A-Fa-f]{3,4}(?![0-9A-Fa-f])|(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[A-Fa-f])[0-9A-Fa-f]{4}(?![0-9A-Fa-f])")
 _TIME_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?")    # 时间窗 (10:00 / 10:00:30)
 _REL_TIME_RE = re.compile(r"(?:最近|前|过去)\s*\d+\s*(?:秒|分钟|分|小时)")  # 相对时间
 _SCOPE_WORDS = re.compile(
