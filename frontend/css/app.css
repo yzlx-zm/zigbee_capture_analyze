@@ -429,6 +429,14 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .path-row .p-icon { min-width: 14px; text-align: center; }
 .path-row .p-tag { font-size: 9px; white-space: nowrap; }
 .sep { border-top: 1px solid var(--c-border); margin: var(--sp-2) 0; }
+/* U13 (08-26): 路由路径链 section 折叠交互 */
+.fold-head { cursor: pointer; user-select: none; }
+.fold-head:hover { background: rgba(59,130,246,.08); }
+.fold-arrow { display: inline-block; width: 14px; color: var(--c-text-4); }
+.path-body { overflow: hidden; }
+.expand-all { cursor: pointer; text-align: center; padding: 4px; font-size: 10px;
+  color: #3b82f6; background: rgba(59,130,246,.06); border-radius: 4px; margin-top: 3px; }
+.expand-all:hover { background: rgba(59,130,246,.14); }
 
 /* 11.6 节点页 */
 .nodes-search { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }

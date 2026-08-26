@@ -685,6 +685,11 @@ reg('topo', function(){
   }
 
   // ═══ 路由路径链 ═══
+  // U13 (08-26): 4 个 section 头部点击折叠/展开 + 超长列表尾部"展开全部"按钮
+  // 折叠状态模块级保存, 数据刷新重绘后保留
+  var MAX_ROWS=20;                       // 超长列表截断阈值
+  var foldSec={down:false,up:false,probe:false,fail:false};    // false=展开
+  var expandAll={down:false,up:false,probe:false,fail:false};  // false=截断前20条
   function renderRoutePaths(d){
     var panel=document.getElementById('bp-routes');
     var paths=d.route_paths||[];
@@ -695,87 +700,124 @@ reg('topo', function(){
       panel.innerHTML='<p class="empty">未发现路由事件 (该网络无 Route Record/Request/Status 帧)</p>';return;
     }
 
-    // 样式
     var sep='<div class="sep"></div>';
     var h='';
 
+    // ── section 辅助: 可点击折叠头 + 明细容器 (超长自动截断 + 展开全部按钮) ──
+    function secHead(sec,titleHtml){
+      return '<div class="path-head fold-head" data-sec="'+sec+'" title="点击折叠/展开">'
+        +'<span class="fold-arrow">'+(foldSec[sec]?'▸':'▾')+'</span>'+titleHtml+'</div>';
+    }
+    function secBody(sec,rows,rowsLen){
+      var body;
+      if(rowsLen>MAX_ROWS&&!expandAll[sec]){
+        body=rows.slice(0,MAX_ROWS).join('')
+          +'<div class="expand-all" data-sec="'+sec+'">... 展开全部 '+rowsLen+' 条 ▾</div>';
+      }else if(rowsLen>MAX_ROWS){
+        body=rows.join('')+'<div class="expand-all" data-sec="'+sec+'">▲ 收起至前 '+MAX_ROWS+' 条</div>';
+      }else{
+        body=rows.join('');
+      }
+      return '<div class="path-body" data-body="'+sec+'"'+(foldSec[sec]?' style="display:none"':'')+'>'+body+'</div>';
+    }
+
     // ── 下行路径 (Source Route, U13: 芯科规范 relay 反转) ──
     if(paths.length>0){
-      h+='<div class="path-head mt-1"><span class="text-info text-strong">↓ 下行 (Source Route)</span> '
-        +'<span class="t-10 text-dim">协调器→设备, Route Record relay 反转 (芯科: concentrator 存反转列表)</span></div>';
+      var downRows=[];
       for(var di=0;di<paths.length;di++){
         var dp=paths[di];
         var dl=[dp.dst].concat((dp.relays||[]).slice().reverse()).concat([dp.src]);
         var dlStr=dl.map(function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');}).join(' → ');
-        h+='<div class="path-row" data-pidx="'+di+'"><span class="path-idx">#'+(di+1)+'</span> '
-          +'<span class="mono">'+dlStr+'</span> <span class="t-10 text-dim">(源路由 '+dp.hop_count+' 跳)</span></div>';
+        downRows.push('<div class="path-row" data-pidx="'+di+'"><span class="path-idx">#'+(di+1)+'</span> '
+          +'<span class="mono">'+dlStr+'</span> <span class="t-10 text-dim">(源路由 '+dp.hop_count+' 跳)</span></div>');
       }
+      h+=secHead('down','<span class="text-info text-strong">↓ 下行 (Source Route)</span> '
+        +'<span class="t-10 text-dim">协调器→设备, Route Record relay 反转 (芯科: concentrator 存反转列表)</span> '
+        +'<b>'+downRows.length+'条</b>')
+        +secBody('down',downRows,downRows.length);
     }
     // ── 上行路径 (Route Record) ──
     if(paths.length>0){
       var srcPaths={}; for(var i=0;i<paths.length;i++){var s=paths[i].src;if(!srcPaths[s])srcPaths[s]=[];srcPaths[s].push(paths[i]);}
       var changed=0; for(var k in srcPaths){if(srcPaths[k].length>1)changed++;}
-      h+='<div class="path-head">'
-        +'<span class="text-route text-strong">↑ 上行路径 (Route Record)</span> '
-        +paths.length+'条 | '+Object.keys(srcPaths).length+'个设备'
-        +(changed>0?' | <b class="text-amber">'+changed+'个发生过路由变更</b>':'')
-        +'</div>'
-        +'<div class="path-tip">●实线=当前路由 · ◌虚线=历史路由</div>';
-      var maxShow=Math.min(paths.length,20);
-      for(var i=0;i<maxShow;i++){
+      var upRows=[];
+      for(var i=0;i<paths.length;i++){
         var p=paths[i];
         var icon=p.is_current?'●':'◌';
         var color=p.is_current?'#7c3aed':'#94a3b8';
         var ts0=new Date(p.first_ts*1000);ts0=String(ts0.getHours()).padStart(2,'0')+':'+String(ts0.getMinutes()).padStart(2,'0')+':'+String(ts0.getSeconds()).padStart(2,'0');
         var ts1=new Date(p.last_ts*1000);ts1=String(ts1.getHours()).padStart(2,'0')+':'+String(ts1.getMinutes()).padStart(2,'0')+':'+String(ts1.getSeconds()).padStart(2,'0');
         var dur=p.first_ts===p.last_ts?'':(' ~ '+ts1);
-        h+='<div class="path-row'+(p.is_current?' text-strong':'')+'" data-pidx="'+i+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
+        upRows.push('<div class="path-row'+(p.is_current?' text-strong':'')+'" data-pidx="'+i+'" title=\"首帧:'+ts0+' 末帧:'+ts1+' 共'+p.frame_count+'帧\">'
           +'<span class="p-icon" style="color:'+color+'">'+icon+'</span>'
           +'<span style="color:'+color+'">'+p.path_str+'</span>'
           +'<span class="p-tag text-dim">'+p.hop_count+'跳 ×'+p.frame_count+'帧</span>'
           +'<span class="p-tag text-dim">'+ts0+dur+'</span>'
           +(p.is_current?'<span class="p-tag text-success text-strong">当前</span>':'<span class="p-tag text-dim">历史</span>')
-          +'</div>';
+          +'</div>');
       }
-      if(paths.length>maxShow) h+='<p class="text-dim t-10 text-center">...还有'+(paths.length-maxShow)+'条路径</p>';
+      h+=secHead('up','<span class="text-route text-strong">↑ 上行路径 (Route Record)</span> '
+        +paths.length+'条 | '+Object.keys(srcPaths).length+'个设备'
+        +(changed>0?' | <b class="text-amber">'+changed+'个发生过路由变更</b>':''))
+        +'<div class="path-tip">●实线=当前路由 · ◌虚线=历史路由</div>'
+        +secBody('up',upRows,upRows.length);
     }
 
     // ── 下行探测 (Route Request) ──
     if(probes.length>0){
-      h+=sep+'<div class="path-head">'
-        +'<span class="text-info text-strong">↓ 下行探测 (Route Request)</span> '
-        +probes.length+'对</div>';
-      var maxP=Math.min(probes.length,10);
-      for(var i=0;i<maxP;i++){
+      var probeRows=[];
+      for(var i=0;i<probes.length;i++){
         var pp=probes[i];
         var ts0=new Date(pp.first_ts*1000);ts0=String(ts0.getHours()).padStart(2,'0')+':'+String(ts0.getMinutes()).padStart(2,'0')+':'+String(ts0.getSeconds()).padStart(2,'0');
-        h+='<div class="path-row" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
+        probeRows.push('<div class="path-row" title=\"radius='+pp.radius+' 共'+pp.count+'次\">'
           +'<span class="p-icon text-info">→</span>'
           +'<span class="text-info">'+pp.path_str+'</span>'
           +'<span class="p-tag text-dim">×'+pp.count+'次</span>'
           +'<span class="p-tag text-dim">'+ts0+'</span>'
-          +'</div>';
+          +'</div>');
       }
+      h+=sep+secHead('probe','<span class="text-info text-strong">↓ 下行探测 (Route Request)</span> '
+        +probes.length+'对')
+        +secBody('probe',probeRows,probeRows.length);
     }
 
     // ── 下行失败 (Network Status) ──
     if(failures.length>0){
-      h+=sep+'<div class="path-head">'
-        +'<span class="text-danger text-strong">✕ 下行失败 (Network Status)</span> '
-        +failures.length+'处</div>';
+      var failRows=[];
       for(var i=0;i<failures.length;i++){
         var f=failures[i];
         var ts=new Date(f.timestamp*1000);ts=String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0')+':'+String(ts.getSeconds()).padStart(2,'0');
-        h+='<div class="path-row">'
+        failRows.push('<div class="path-row">'
           +'<span class="p-icon text-danger">✕</span>'
           +'<span class="text-danger">'+f.path_str+'</span>'
           +'<span class="p-tag text-danger">'+f.status_name+'</span>'
           +'<span class="p-tag text-dim">'+ts+'</span>'
-          +'</div>';
+          +'</div>');
       }
+      h+=sep+secHead('fail','<span class="text-danger text-strong">✕ 下行失败 (Network Status)</span> '
+        +failures.length+'处')
+        +secBody('fail',failRows,failRows.length);
     }
 
     panel.innerHTML=h;
+
+    // ── 折叠交互: 点击 section 头折叠/展开 (DOM 操作, 不重绘) ──
+    panel.querySelectorAll('.fold-head').forEach(function(hd){
+      hd.addEventListener('click',function(){
+        var sec=hd.dataset.sec;
+        foldSec[sec]=!foldSec[sec];
+        hd.querySelector('.fold-arrow').textContent=foldSec[sec]?'▸':'▾';
+        var body=panel.querySelector('[data-body="'+sec+'"]');
+        if(body) body.style.display=foldSec[sec]?'none':'block';
+      });
+    });
+    // ── 展开全部/收起: 重绘 (状态在模块变量, 保留折叠状态) ──
+    panel.querySelectorAll('.expand-all').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        expandAll[btn.dataset.sec]=!expandAll[btn.dataset.sec];
+        renderRoutePaths(S.topo||topoData);
+      });
+    });
 
     // ── 路径行 ↔ 图联动: hover 高亮图上对应路径 (U7 优化) ──
     function highlightPathOnGraph(idx){
