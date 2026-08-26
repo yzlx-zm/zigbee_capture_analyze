@@ -32,7 +32,9 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
   }
   document.getElementById('sdiv').innerHTML=h;
   S.pkts=d.packets||0;S.nodes=d.nodes||0;sb(S.pkts+'包 | '+S.nodes+'节点');
-  A.get('/api/topology/graph').then(function(td){S.topo=td});}
+  A.get('/api/topology/graph').then(function(td){S.topo=td});
+  // U17: AI 侧边栏上下文切换提示 (导入完成广播, ai.js 监听插入系统消息)
+  window.dispatchEvent(new CustomEvent('zc:imported',{detail:{filename:fname||'',packets:d.packets||0}}));}
 // XHR 上传 (可上报真实上传进度 0-10%), 完成后转任务轮询
 function uploadXHR(url, fd, fname, onDone){
   var xhr=new XMLHttpRequest();

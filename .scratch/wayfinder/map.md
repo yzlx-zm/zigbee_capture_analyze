@@ -98,6 +98,15 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   MCP 依据: 官方 Network Analyzer 展示 Ack) / 自动加载全量 / DataReq 命名 scapy 源码级
   修正 (4=DataReq) / 🔒 仅限 NWK 安全; 上行路径=下行 source-route 反转 (RR 证据实证
   不足: 31 帧仅 3 帧 relays 非空); 回归 P1 15/15 + P2 4/4 + CDP 9 脚本 74/74
+- [U17 AI 侧边栏助手 (阶段一)](issues/U17-AI侧边栏助手.md) — ①知识检索先行闭环
+  (提交待填): **MCP 端点实测非匿名** (OAuth 保护, public OAuth; Python mcp 库未装无需 —
+  httpx 直调 streamable-HTTP + SSE 解析); token 自动发现链 (ai_config.json → Claude Code
+  凭证, 用户已授权 kapa.ai); **意图分流统一对话入口** (非双 Tab): 纯知识 → 检索结果
+  (8 条+官方链接); 含范围/包 → analyze 引导 (阶段二); 侧边栏 (右下角浮标, 任何页面) +
+  单例+localStorage 多会话持久化 (刷新恢复) + 导入新包上下文提示 + 设置区 (key 仅存本地,
+  不入 git/分发包); 修复 2 bug (load() 未调用 → 刷新不恢复; ai-system/ai-error class 选择器
+  不匹配); CDP 14/14; ⚠️ 并发冲突 (并行会话 15c1709 卷入 app.css/恢复 AI 导航, 用户裁定
+  本会话继续, 已合并); 阶段二 (范围解析→摘要→LLM) 待 key, 界面就绪
 
 ## Not yet specified
 

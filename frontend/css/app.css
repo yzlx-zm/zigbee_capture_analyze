@@ -532,12 +532,12 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 .ai-msg { display: flex; flex-direction: column; max-width: 92%; }
 .ai-msg.user { align-self: flex-end; align-items: flex-end; }
 .ai-msg.assistant, .ai-msg.system { align-self: flex-start; }
-.ai-msg.system { align-self: center; }
+.ai-msg.ai-system { align-self: center; }
 .ai-bubble { padding: 7px 10px; border-radius: 8px; line-height: 1.55; white-space: pre-wrap;
   word-break: break-word; background: var(--c-primary-bg); color: var(--c-text); }
 .ai-msg.user .ai-bubble { background: var(--c-primary); color: #fff; }
-.ai-msg.system .ai-bubble { background: var(--c-warning-bg); color: var(--c-warning-text); font-size: 12px; }
-.ai-msg.error .ai-bubble { background: var(--c-danger-bg); color: var(--c-danger); }
+.ai-msg.ai-system .ai-bubble { background: var(--c-warning-bg); color: var(--c-warning-text); font-size: 12px; }
+.ai-msg.ai-error .ai-bubble { background: var(--c-danger-bg); color: var(--c-danger); }
 .ai-kb-q { padding: 5px 10px; background: #eef2ff; color: var(--c-purple); border-radius: 8px 8px 0 0;
   font-size: 12px; font-weight: 600; }
 .ai-kb-list { display: flex; flex-direction: column; gap: 8px; padding: 8px; background: #fafbff;

@@ -5,7 +5,7 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent | **Assignee:** U17-实现窗口 (2026-08-26) — 阶段一已完成, 阶段二待 key
 
 **Type:** task | **AFK** (② 依赖使用者 key, 界面先行)
 
@@ -85,3 +85,33 @@
 - LLM 提供商差异: 兼容层封装, 先用一个提供商实测再扩展
 - 侧边栏与页面联动: 上下文 = 当前导入包; 导入新包时对话提示"上下文已切换"
 - key 安全: 本地配置, 界面提示"key 仅存本地"
+
+## Resolution (2026-08-26, 阶段一: ①知识检索先行 — 已完成并验证)
+
+**交付范围**: 阶段一全部 (知识检索 + 侧边栏框架 + 统一对话入口意图分流 + localStorage 持久化 + 设置区界面先行)。阶段二 (范围解析/取数摘要/LLM 对话) 未做, 界面与引导文案就绪。
+
+### 后端 (3 文件)
+- `backend/ai_kb.py` — 芯科 MCP 客户端: **直调 HTTP 端点方案** (实测 2026-08-26: 端点 `https://silabs.mcp.kapa.ai` 为 OAuth 保护 (401 invalid_token, .well-known/oauth-protected-resource), Python mcp 库未装且无需 — httpx + SSE 解析 3 步打通: initialize → tools/call → 提取); **token 自动发现链**: ai_config.json 显式配置 (mcp_token) → Claude Code 凭证 (~/.claude/.credentials.json mcpOAuth, 用户已授权 kapa.ai) → 无 token 降级提示不阻断; 检索结果来源 = structuredContent.results[].source_url (content 文本无 URL, 实测)
+- `backend/api/ai.py` — POST /api/ai/chat 意图分流 (4 位 hex 地址/时间窗/范围词 → analyze; 知识问法 → kb; 无法判定不臆测) + GET /api/ai/kb + GET/PUT /api/ai/config (key 存 ai_config.json, 不入 git, 响应不回传 key 明文)
+- `backend/api/router.py` — 注册 ai 路由
+
+### 前端 (5 文件)
+- `frontend/js/ai.js` — 侧边栏模块: 右下角 🤖 浮标 + fixed 面板 (任何页面可用); 统一对话输入框 → 意图分流渲染 (kb 结果卡片 title/snippet/🔗链接 / analyze 引导文案); 模块级单例 (切页保留) + localStorage 持久化 (多会话, 刷新恢复); 设置区 (provider 下拉 + API key + MCP token, "仅存本地"提示); 导入新包 → 系统消息"上下文已切换"
+- `frontend/index.html` — **移除 AI 导航项 + reg('ai') 占位** (用户确认决策); 版本号递增
+- `frontend/js/app.js` — import ai.js (版本号递增); `frontend/js/state.js` — sr() 广播 zc:imported 事件; `frontend/css/app.css` — .ai-* 样式 (43 规则)
+
+### 修复的真 bug (验证中发现)
+1. **load() 从未被调用** — localStorage 持久化从未生效 (切页保留靠内存单例正常, 刷新恢复失效); 修复: 模块底部 buildDOM 前 load()
+2. **消息 class 选择器不匹配** — wrap.className='ai-msg ai-system' vs CSS .ai-msg.system (含 .ai-msg.error 同样问题, 错误样式从未生效); 修复: CSS 改 .ai-msg.ai-system/.ai-msg.ai-error + msgNode 附加 ai-error
+
+### 验证 (14/14 CDP, .scratch/verification/u17-ai-sidebar/u17_verify.mjs)
+- 知识检索 "parent end device" → 8 条结果含官方链接 ✅ (U13 实证查询可复现)
+- 侧边栏开/折叠 ✅; 切页保留 ✅; 刷新恢复 (localStorage) ✅; 导入事件提示 ✅
+- 意图分流: "分析 10:00-10:30 的 0x838D" → analyze 引导文案 (不崩不臆测) ✅; 边界 "什么是 0x0B 网络状态码" → kb ✅
+- 设置区 key 状态显示 (无 key 不崩) ✅; 无 JS 异常 ✅; 后端回归 (import/status/packets) ✅
+
+### ⚠️ 并发冲突记录 (铁律 5)
+并行会话 (15c1709 等 5 条提交) 同时改动 U17 相关文件: 恢复 AI 导航链接 + 折叠箭头样式 + 把我未提交的 app.css 改动卷入 HEAD。用户裁定: 本会话继续并提交 (按决策移除导航)。两会话文件已合并一致, 无残留冲突。
+
+### 阶段二待办 (未做)
+范围解析 (时间窗/PAN/节点/簇) → 取数摘要 (复用 export_ai_dataset) → LLM 兼容层 (Anthropic/OpenAI/DeepSeek 流式, ai_config.json key) → 帧引用跳转时间线。设置区 UI 已就绪, key 配置可直接用。
