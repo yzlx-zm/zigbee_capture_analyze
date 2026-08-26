@@ -99,7 +99,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   修正 (4=DataReq) / 🔒 仅限 NWK 安全; 上行路径=下行 source-route 反转 (RR 证据实证
   不足: 31 帧仅 3 帧 relays 非空); 回归 P1 15/15 + P2 4/4 + CDP 9 脚本 74/74
 - [U17 AI 侧边栏助手 (阶段一)](issues/U17-AI侧边栏助手.md) — ①知识检索先行闭环
-  (提交待填): **MCP 端点实测非匿名** (OAuth 保护, public OAuth; Python mcp 库未装无需 —
+  (提交 d7d7c89): **MCP 端点实测非匿名** (OAuth 保护, public OAuth; Python mcp 库未装无需 —
   httpx 直调 streamable-HTTP + SSE 解析); token 自动发现链 (ai_config.json → Claude Code
   凭证, 用户已授权 kapa.ai); **意图分流统一对话入口** (非双 Tab): 纯知识 → 检索结果
   (8 条+官方链接); 含范围/包 → analyze 引导 (阶段二); 侧边栏 (右下角浮标, 任何页面) +
