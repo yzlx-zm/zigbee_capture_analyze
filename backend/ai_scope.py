@@ -268,6 +268,33 @@ def build_scope_summary(packets: list[dict], scope: dict) -> str:
         f"| 解密: {dec}/{len(pkts)} ({dec * 100 // max(len(pkts), 1)}%) 加密未解密: {enc}",
         "- 类型分布: " + ", ".join(f"{k}:{v}" for k, v in types.most_common(8)),
     ]
+    # MAC 命令细分 (08-27 用户实证: 1537 帧 89% MAC Cmd 无法判断 — poll/Beacon 等)
+    try:
+        from .api.files import _SUMMARY_MAC_CMD as _mac_names
+    except Exception:
+        _mac_names = {}
+    mac_cmds: Counter = Counter()
+    for p in pkts:
+        cid = p.get("mac_cmd_id")
+        if cid is not None:
+            mac_cmds[_mac_names.get(cid, f"0x{cid:02X}")] += 1
+    if mac_cmds:
+        lines.append("- MAC 命令: " + ", ".join(
+            f"{k}:{v}" for k, v in mac_cmds.most_common(8)))
+    # ZCL 命令统计 (控制命令答案来源; 方向: addr 范围 → 接收/发送, 否则按实际源)
+    zcl_cmds: Counter = Counter()
+    for p in pkts:
+        name = p.get("zcl_cmd_name")
+        if not name:
+            continue
+        if scope.get("addr") is not None:
+            direction = "接收" if p.get("nwk_dst") == scope["addr"] else "发送"
+        else:
+            direction = "接收" if p.get("nwk_dst") is not None else "发送"
+        zcl_cmds[f"{name}({direction})"] += 1
+    if zcl_cmds:
+        lines.append("- ZCL 命令: " + ", ".join(
+            f"{k}:{v}" for k, v in zcl_cmds.most_common(10)))
     evs = _event_lines(pkts)
     if evs:
         lines.append("### 关键事件")
