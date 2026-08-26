@@ -589,8 +589,8 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
   border-top-color: var(--c-primary); border-radius: 50%; animation: ai-spin .8s linear infinite; flex-shrink: 0; }
 @keyframes ai-spin { to { transform: rotate(360deg); } }
 
-/* ── U17: 自定义 resize 手柄 (08-26 用户反馈: 默认手柄看不见) ── */
-.ai-resize-handle { position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px;
-  cursor: nwse-resize; color: var(--c-text-3); font-size: 12px; line-height: 18px;
-  text-align: center; user-select: none; z-index: 3; }
-.ai-resize-handle:hover { color: var(--c-primary); }
+/* ── U17: resize 手柄 (08-26 用户反馈 2 次: 右下角太小被遮挡 → 头部加减号中间) ── */
+.ai-resize-handle { cursor: nwse-resize; color: var(--c-text-3); font-size: 13px;
+  user-select: none; background: var(--c-canvas); border: 1px solid var(--c-border-strong);
+  border-radius: 4px; line-height: 1; }
+.ai-resize-handle:hover { color: var(--c-primary); border-color: var(--c-primary); }

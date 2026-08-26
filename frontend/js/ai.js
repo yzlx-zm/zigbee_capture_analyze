@@ -48,6 +48,7 @@ function buildDOM() {
       <span class="ai-title">🤖 AI 助手</span>
       <select class="ai-sel" title="切换会话"></select>
       <button class="btn btn-o btn-sm" id="zc-ai-new" title="新会话">＋</button>
+      <button class="btn btn-sm ai-resize-handle" id="zc-ai-rsz" title="拖动调整面板大小">⤡</button>
       <button class="btn btn-sm ai-close" id="zc-ai-fold" title="折叠">─</button>
     </div>
     <div class="ai-tabs">
@@ -90,8 +91,7 @@ function buildDOM() {
         <button class="btn btn-p btn-sm" id="zc-ai-savecfg">保存配置</button>
         <p id="zc-ai-cfg-msg" class="ai-dim"></p>
       </div>
-    </div>
-    <div class="ai-resize-handle" title="拖动调整大小">⤡</div>`;
+    </div>`;
   document.body.appendChild(panel);
 
   msgsEl = panel.querySelector('#zc-ai-msgs');
@@ -133,14 +133,14 @@ function buildDOM() {
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
   }
-  // 右下角 resize 手柄 (08-26 用户反馈: CSS resize 手柄看不见 → 自定义可见手柄)
-  const rsz = panel.querySelector('.ai-resize-handle');
+  // 头部 ⤡ resize 手柄 (08-26 用户反馈 2 次: 右下角手柄太小被遮挡 → 移到头部加减号中间)
+  const rsz = panel.querySelector('#zc-ai-rsz');
   let resizing = null;
   rsz.addEventListener('mousedown', e => {
     const r = panel.getBoundingClientRect();
     resizing = { w: r.width, h: r.height, x: e.clientX, y: e.clientY };
     e.preventDefault();
-    e.stopPropagation();
+    e.stopPropagation();   // 防头部拖拽移动
   });
   document.addEventListener('mousemove', e => {
     if (!resizing) return;
