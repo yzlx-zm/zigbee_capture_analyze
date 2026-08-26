@@ -128,21 +128,44 @@ function pushMsg(m) {
   if (cs.messages.length === 1 && m.role === 'user') cs.title = (m.content || '新会话').slice(0, 24);
 }
 
+// ── 会话上下文辅助 (U17 阶段二) ──
+function lastScopeOf(s) {
+  // 最近一个 scope 消息的范围 (追问继承: 无新范围信号时沿用)
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    if (s.messages[i].kind === 'scope' && s.messages[i].scope) return s.messages[i].scope;
+  }
+  return null;
+}
+function lastHistory(s, excludeScopeId) {
+  // 对话历史 (user/assistant 文本, 最后 10 条; 不含范围确认卡)
+  const out = [];
+  for (let i = s.messages.length - 1; i >= 0 && out.length < 10; i--) {
+    const m = s.messages[i];
+    if (m.role === 'user' && m.kind === 'text') out.unshift({ role: 'user', content: m.content });
+    else if (m.role === 'assistant' && m.kind === 'text' && m.content) out.unshift({ role: 'assistant', content: m.content });
+  }
+  return out;
+}
+
 // ── 发送: 统一对话入口 → 意图分流 ──
 function send() {
   const text = inputEl.value.trim();
   if (!text) return;
+  const s = curSession();
   pushMsg({ role: 'user', kind: 'text', content: text });
   inputEl.value = '';
   save(); render();
-  A.post('/api/ai/chat', { message: text }).then(resp => {
+  A.post('/api/ai/chat', { message: text, prev_scope: lastScopeOf(s) }).then(resp => {
     if (resp && resp.error) {
       pushMsg({ role: 'assistant', kind: 'error', content: resp.error });
     } else if (resp && resp.type === 'kb') {
       if (resp.ok) pushMsg({ role: 'assistant', kind: 'kb', content: resp.query, results: resp.results || [] });
       else pushMsg({ role: 'assistant', kind: 'error', content: resp.error || '检索失败' });
+    } else if (resp && resp.type === 'scope') {
+      // 范围确认卡: 展示解析范围 + 摘要预览, 用户确认后流式分析
+      pushMsg({ role: 'assistant', kind: 'scope', scope: resp.scope, summary: resp.summary, message: resp.message || '' });
     } else if (resp && resp.type === 'analyze') {
-      pushMsg({ role: 'assistant', kind: 'analyze', content: resp.message || '该问题属于抓包分析，将在阶段二支持。' });
+      pushMsg({ role: 'assistant', kind: 'analyze', content: resp.message || '' });
     } else if (resp && resp.detail) {
       // 后端 FastAPI 错误结构 (如 404 旧后端无此接口): 显示实际原因, 不显示"未知响应"
       pushMsg({ role: 'assistant', kind: 'error', content: '后端接口异常: ' + String(resp.detail).slice(0, 100) });
@@ -155,6 +178,107 @@ function send() {
     save(); render();
   });
 }
+
+// ── 范围确认 → 流式对话分析 (SSE) ──
+function analyzeScope(scope, s) {
+  const history = lastHistory(s);
+  // 占位消息 (流式填充)
+  const sm = { role: 'assistant', kind: 'stream', content: '…', refs: [] };
+  s.messages.push(Object.assign({ ts: Date.now() }, sm));
+  save(); render();
+  const idx = s.messages.length - 1;
+  fetch('/api/ai/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope, history }),
+  }).then(resp => {
+    if (!resp.ok || !resp.body) { throw new Error('HTTP ' + resp.status); }
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('event-stream')) {
+      // 非流式 (如无 key → no_key JSON): 替换占位消息
+      return resp.json().then(d => {
+        if (d && d.type === 'no_key') {
+          s.messages[idx] = { role: 'assistant', kind: 'no_key', content: d.message || '未配置 LLM Key' };
+        } else {
+          s.messages[idx].content = '❌ ' + ((d && (d.message || d.error)) || '分析失败');
+          s.messages[idx].kind = 'error';
+        }
+        save(); render();
+      });
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    const pump = () => reader.read().then(({ done, value }) => {
+      if (done) return;
+      buf += decoder.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const m = /^data:\s*(.*)$/m.exec(block.trim());
+        if (!m) continue;
+        let d; try { d = JSON.parse(m[1]); } catch (e) { continue; }
+        if (d.delta) {
+          s.messages[idx].content = (s.messages[idx].content === '…' ? '' : s.messages[idx].content) + d.delta;
+          updateStreamMsg(s, idx);
+        } else if (d.refs) {
+          s.messages[idx].refs = d.refs || [];
+          s.messages[idx].kind = 'text';
+          finalizeRefs(s, idx);
+          save();
+        } else if (d.error) {
+          s.messages[idx].content = '❌ ' + d.error;
+          s.messages[idx].kind = 'error';
+          save(); render();
+        }
+      }
+      pump();
+    }).catch(e => {
+      if (s.messages[idx]) { s.messages[idx].content = '❌ 流式中断: ' + (e.message || ''); s.messages[idx].kind = 'error'; }
+      save(); render();
+    });
+    pump();
+  }).catch(e => {
+    if (s.messages[idx]) { s.messages[idx].content = '❌ 分析失败: ' + (e.message || ''); s.messages[idx].kind = 'error'; }
+    save(); render();
+  });
+}
+
+function updateStreamMsg(s, idx) {
+  // 流式增量更新 (仅改最后一个消息气泡, 避免全量重渲染)
+  const msgs = msgsEl.querySelectorAll('.ai-msg');
+  const el = msgs[msgs.length - 1];
+  if (el) {
+    const b = el.querySelector('.ai-bubble');
+    if (b) b.textContent = s.messages[idx].content + (s.messages[idx].kind === 'stream' ? '▌' : '');
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+}
+
+function finalizeRefs(s, idx) {
+  // 回答完成: 帧引用 "第 N 帧" → 可点击链接 (点击跳时间线定位)
+  const m = s.messages[idx];
+  if (!m.refs || !m.refs.length) { render(); return; }
+  let text = m.content;
+  const sorted = m.refs.slice().sort((a, b) => (b.packet_id || 0) - (a.packet_id || 0));
+  sorted.forEach(r => {
+    if (!r.packet_id) return;
+    const link = `<a class="ai-ref" data-id="${r.id}" href="#tl">第 ${r.packet_id} 帧</a>`;
+    text = text.split('第 ' + r.packet_id + ' 帧').join(link);
+    text = text.split('帧#' + r.packet_id).join(link);
+  });
+  m.content = text; m.kind = 'text';
+  render();
+}
+// 帧引用点击 → 报文页定位 (timeline.js 暴露 window.tlJumpFrame)
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t && t.classList && t.classList.contains('ai-ref')) {
+    e.preventDefault();
+    location.hash = 'tl';
+    setTimeout(() => { if (window.tlJumpFrame) window.tlJumpFrame(parseInt(t.dataset.id, 10)); }, 300);
+  }
+});
 
 // ── 渲染 ──
 function renderTabs() {
@@ -178,11 +302,11 @@ function render() {
     msgsEl.innerHTML = '<div class="ai-empty">👋 有什么可以帮你？<br>· 知识：<span class="ai-dim">"什么是 parent end device"</span><br>· 分析（阶段二）：<span class="ai-dim">"分析 10:00-10:30 的 0x838D"</span></div>';
     return;
   }
-  s.messages.forEach(m => msgsEl.appendChild(msgNode(m)));
+  s.messages.forEach(m => msgsEl.appendChild(msgNode(m, s)));
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
-function msgNode(m) {
+function msgNode(m, s) {
   const wrap = document.createElement('div');
   // role → ai-user/ai-assistant/ai-system; error 消息附加 ai-error (样式用)
   wrap.className = 'ai-msg ai-' + m.role + (m.kind === 'error' ? ' ai-error' : '');
@@ -197,6 +321,33 @@ function msgNode(m) {
       list.appendChild(c);
     });
     wrap.appendChild(list);
+    return wrap;
+  }
+  if (m.kind === 'scope' && m.scope) {
+    // 范围确认卡 (阶段二): 解析范围 + 摘要预览 + 确认/重述
+    wrap.innerHTML = '<div class="ai-bubble ai-scope-head">📐 ' + esc(m.message || '') + '</div>' +
+      '<div class="ai-scope-summary">' + esc(m.summary || '') + '</div>' +
+      '<div class="ai-scope-actions">' +
+      '<button class="btn btn-p btn-sm" data-act="confirm">✅ 确认并分析</button>' +
+      '<button class="btn btn-o btn-sm" data-act="redo">✏️ 换种说法</button>' +
+      '</div>';
+    wrap.querySelector('[data-act="confirm"]').addEventListener('click', () => {
+      wrap.querySelector('[data-act="confirm"]').disabled = true;
+      analyzeScope(m.scope, s);
+    });
+    wrap.querySelector('[data-act="redo"]').addEventListener('click', () => {
+      inputEl.value = '分析 ' + (m.scope.text || '');
+      inputEl.focus();
+      inputEl.select();
+    });
+    return wrap;
+  }
+  if (m.kind === 'no_key') {
+    wrap.innerHTML = '<div class="ai-bubble">⚠️ ' + esc(m.content) +
+      '</div><div class="ai-scope-actions"><button class="btn btn-o btn-sm" data-act="gocfg">🔑 去设置配置 Key</button></div>';
+    wrap.querySelector('[data-act="gocfg"]').addEventListener('click', () => {
+      st.tab = 'cfg'; save(); renderTabs();
+    });
     return wrap;
   }
   wrap.innerHTML = '<div class="ai-bubble">' + esc(m.content) + '</div>';

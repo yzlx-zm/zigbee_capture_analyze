@@ -13,10 +13,10 @@ window.sr = sr; window.setProg = setProg; window.doPI = doPI; window.doI = doI;
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
 import './topo.js?v=20260826a';  // 缓存破坏: 路由路径链折叠/展开全部, 改版递增
 import './import.js?v=20260825a';  // 缓存破坏: 报文改名 (锁定提示), 改版递增
-import './timeline.js?v=20260825af';  // 缓存破坏: 🔒仅限NWK安全未解密, 改版递增
+import './timeline.js?v=20260826a';  // U17: tlJumpFrame 暴露 (帧引用跳转), 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260825a';  // 缓存破坏: 报文改名 (设备跳转), 改版递增
-import './ai.js?v=20260826c';  // U17: 全局 AI 侧边栏 (清空按钮/兜底显示递增)
+import './ai.js?v=20260826d';  // U17: 阶段二范围确认卡+流式+帧引用, 改版递增
 
 // ── 初始路由 ──
 if (window.rt) window.rt();

@@ -307,6 +307,9 @@ reg('tl', function(){
 
   // APS Ack 配对跳转 (U5 后续): 本页有 → 直接定位 (过滤完全保持);
   // 过滤内其他页 → 翻页定位 (过滤保持); 过滤外 → 清除过滤重查定位
+  // U17 阶段二: AI 侧边栏帧引用跳转入口 (同作用域暴露, 尾部访问不到局部函数)
+  window.tlJumpFrame = tlJumpToFrame;
+
   function tlJumpToFrame(peerId){
     var tr=document.querySelector('#tltb tr.tl-row[data-pid="'+peerId+'"]');
     if(tr){ tlHighlightRow(tr); return; }
@@ -894,3 +897,4 @@ reg('tl', function(){
   // U5: 类型下拉页面加载即填充 (不依赖点查看; search() 内保留兜底)
   tlFillTypes();
 });
+

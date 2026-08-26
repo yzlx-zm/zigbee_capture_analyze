@@ -113,43 +113,86 @@ def _mcp_call(token: str, method: str, params: dict | None = None) -> dict | Non
     return None
 
 
+def _clean_title(raw_title: str) -> str:
+    """标题精简 (U17 完善 08-26, 用户实测反馈): 面包屑路径 `A > B > C` 只保留
+    最后一段 (过短则并入前段); 超长截断."""
+    segs = [s.strip() for s in re.split(r"[>|]", raw_title) if s.strip()]
+    if not segs:
+        return raw_title
+    t = segs[-1]
+    if len(t) < 15 and len(segs) > 1:
+        t = f"{segs[-2]} > {t}"
+    return t[:60] + "…" if len(t) > 60 else t
+
+
+def _clean_snippet(content: str) -> str:
+    """snippet 清洗 (U17 完善): 去 markdown 标题行 (title 已单独显示, 路径噪音
+    主要来自首行 # 面包屑) → 去 HTML 标签残留 → 去 markdown 图片/链接 → 去符号
+    → 压缩空白, 从正文段落截取."""
+    lines = [ln for ln in content.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    text = " ".join(lines)
+    text = re.sub(r"<[^>]+>", " ", text)                              # HTML 标签 (<figure>/<a href>)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)                 # markdown 图片
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)              # markdown 链接 → 文本
+    text = re.sub(r"[*_>`|]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:220]
+
+
+# Thread/OpenThread 文档 (ot-docs 域) — 用户问 Zigbee 时无关, 过滤 (U17 完善)
+_IRRELEVANT_URL = re.compile(r"ot-docs|thread-primer|thread-br|thread-commissioner")
+
+
+def _url_fingerprint(url: str) -> str:
+    """URL 指纹去重 (中英重复): 去掉语言段 (/en/ /zh-cn/ 等) 后相同视为同一文档."""
+    return re.sub(r"/(en|zh-cn|ja|ko|de|fr|es)/", "/", url)
+
+
 def _extract_results(raw_result: dict) -> list[dict]:
     """MCP 工具返回结构 (实测 2026-08-26): content = 15 个独立 markdown text item
     (无 URL), **source_url 在 structuredContent.results[]** → 转换为
-    [{title, snippet, url}]; snippet 截断 ~220 字符 (片段+链接渲染).
+    [{title, snippet, url}].
 
     双路径: structuredContent 优先, content[].text 兜底 (title 取 markdown 首行 #).
+    过滤: Thread 文档排除 + 语言变体去重 (保留先出现的); 最多 6 条.
     """
     out: list[dict] = []
+    seen_fp: set[str] = set()
+    seen_title: set[str] = set()   # 同标题多源 (docs.silabs.com + github 镜像) 去重
 
     def _fmt(rec: dict) -> dict | None:
         content = (rec.get("content") or "").strip()
-        if not content:
+        url = rec.get("source_url") or ""
+        if not content or not url:
+            return None
+        if _IRRELEVANT_URL.search(url):
+            return None
+        fp = _url_fingerprint(url)
+        if fp in seen_fp:
             return None
         m = re.match(r"#\s*(.+)$", content, re.M)
-        title = m.group(1).strip() if m else (rec.get("source_url") or "芯科文档")
-        # 去掉 markdown 语法噪音, 压缩空白
-        snippet = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", content)   # 图片
-        snippet = re.sub(r"[#*_>`]", " ", snippet)
-        snippet = re.sub(r"\s+", " ", snippet).strip()[:220]
-        return {"title": title, "snippet": snippet,
-                "url": rec.get("source_url") or ""}
+        title = _clean_title(m.group(1).strip() if m else url)
+        if title in seen_title:
+            return None  # 同一文档的官方站 + github 镜像, 保留先出现的
+        seen_fp.add(fp)
+        seen_title.add(title)
+        return {"title": title,
+                "snippet": _clean_snippet(content), "url": url}
 
     try:
         sc = raw_result.get("structuredContent") or {}
-        for rec in (sc.get("results") or [])[:8]:
+        for rec in (sc.get("results") or [])[:15]:
             item = _fmt(rec)
             if item:
                 out.append(item)
-        if out:
-            return out
-        for c in raw_result.get("content", [])[:8]:
-            item = _fmt({"content": c.get("text", "")})
-            if item:
-                out.append(item)
+        if not out:
+            for c in raw_result.get("content", [])[:8]:
+                item = _fmt({"content": c.get("text", "")})
+                if item:
+                    out.append(item)
     except Exception:
         pass
-    return out
+    return out[:6]
 
 
 def search_kb(query: str) -> dict:

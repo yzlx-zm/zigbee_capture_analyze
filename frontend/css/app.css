@@ -571,3 +571,12 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 
 /* ── U17: 历史 Tab 清空按钮栏 ── */
 .ai-hist-bar { display: flex; justify-content: flex-end; padding-bottom: 8px; }
+
+/* ── U17 阶段二: 范围确认卡 / 流式 / 帧引用 ── */
+.ai-scope-head { margin-bottom: 6px; }
+.ai-scope-summary { background: #f8fafc; border: 1px solid var(--c-border); border-radius: 0 0 8px 8px;
+  padding: 8px 10px; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+  color: var(--c-text-2); max-height: 200px; overflow-y: auto; }
+.ai-scope-actions { display: flex; gap: 6px; margin-top: 6px; }
+.ai-ref { color: var(--c-primary); font-weight: 600; text-decoration: none; border-bottom: 1px dashed var(--c-primary); }
+.ai-ref:hover { text-decoration: underline; }

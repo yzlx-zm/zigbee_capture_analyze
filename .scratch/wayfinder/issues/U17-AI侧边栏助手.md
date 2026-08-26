@@ -5,7 +5,7 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent | **Assignee:** U17-实现窗口 (2026-08-26) — 阶段一已完成, 阶段二待 key
+**Status:** ready-for-agent | **Assignee:** U17-实现窗口 (2026-08-26) — 阶段一+阶段二代码完成 (真流式待 key 实测)
 
 **Type:** task | **AFK** (② 依赖使用者 key, 界面先行)
 
@@ -115,3 +115,18 @@
 
 ### 阶段二待办 (未做)
 范围解析 (时间窗/PAN/节点/簇) → 取数摘要 (复用 export_ai_dataset) → LLM 兼容层 (Anthropic/OpenAI/DeepSeek 流式, ai_config.json key) → 帧引用跳转时间线。设置区 UI 已就绪, key 配置可直接用。
+
+
+## Resolution 追加 (2026-08-26, 阶段二: 对话式分析 — 代码完成, 真 LLM 流式待 key 实测)
+
+### A 检索质量优化 (用户实测反馈驱动)
+- `backend/ai_kb.py`: 标题精简 (面包屑只留末段, 过短并入前段, >60 截断); snippet 清洗 (去 markdown 标题行/HTML 标签/图片/符号, 从正文截取); 结果过滤 (排除 Thread/ot-docs 文档 + 语言变体去重 + 同标题多源去重); 上限 6 条
+- 实测: "parent end device" → 6 条干净结果 (标题 "Parents of End Device", 无 HTML 残留)
+
+### C 对话式分析 (阶段二)
+- `backend/ai_scope.py` — 范围解析 parse_scope: 时间窗 (10:00-10:30/至/到) + 相对时间 (最近 N 秒/分钟/小时) + 短地址 (0x838D, 排除广播) + PAN 0x1234; 无信号 → 继承上轮范围 (追问); 解析失败 → 引导重述不臆测; build_scope_summary: 范围内统计+关键事件 (pkt_type 兜底含加密 NWK 命令帧)+检测 verdict 精简 (l1/l2/l3/l6 detect, 异常降级)
+- `backend/ai_chat.py` — LLM 兼容层: anthropic (SDK) / openai / deepseek (OpenAI 兼容 base_url) 统一流式接口; key 解析: ai_config.json → 环境变量; 无 key → LLMError 可读提示; 系统提示 Zigbee 领域特化 (0x0B/0x0C/0x06 术语)
+- `backend/api/ai.py` — 流程: /ai/chat analyze 分支 → parse_scope → 返回范围确认卡 (type=scope + summary); /ai/analyze → 无 key 提示 (type=no_key) / 有 key SSE 流式 (data: {delta}, 结束 {done, refs}); 帧引用提取 (第 N 帧 → packet_id → 列表 id 映射); 范围继承 (prev_scope)
+- `frontend/js/ai.js` — 范围确认卡渲染 (范围+摘要+确认/换种说法) + SSE 流式渲染 (ReadableStream, 增量更新) + no_key 卡片 (去设置按钮) + 帧引用可点击 (ai-ref → hash=#tl + tlJumpFrame); `timeline.js` 暴露 window.tlJumpFrame (reg 回调作用域内, 报文页进入时生效)
+- 验证 (8721, CDP): 范围解析 (相对时间→时间窗) ✅ / 摘要含事件 ✅ / 追问继承 ✅ / 无 key → no_key 提示+跳设置 ✅ / 帧引用映射单测 ✅ / tlJumpFrame 报文页可用 ✅ / 检索清洗 ✅; **真 LLM 流式未实测 (无 key) — 诚实标注, 待用户配置 key 验证**
+- 修复: ai.py 装饰器被 Edit 误吞 (语法结构修复); from ..files → .files 路径; detect_intent 补相对时间/"看看"信号; timeline.js 暴露语句作用域错误 (模块链中断根因)
