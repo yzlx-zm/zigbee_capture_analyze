@@ -143,6 +143,9 @@ function send() {
       else pushMsg({ role: 'assistant', kind: 'error', content: resp.error || '检索失败' });
     } else if (resp && resp.type === 'analyze') {
       pushMsg({ role: 'assistant', kind: 'analyze', content: resp.message || '该问题属于抓包分析，将在阶段二支持。' });
+    } else if (resp && resp.detail) {
+      // 后端 FastAPI 错误结构 (如 404 旧后端无此接口): 显示实际原因, 不显示"未知响应"
+      pushMsg({ role: 'assistant', kind: 'error', content: '后端接口异常: ' + String(resp.detail).slice(0, 100) });
     } else {
       pushMsg({ role: 'assistant', kind: 'error', content: '未知响应' });
     }
@@ -202,7 +205,25 @@ function msgNode(m) {
 
 function renderHist() {
   histEl.innerHTML = '';
-  if (!st.sessions.length) { histEl.innerHTML = '<div class="ai-empty">暂无历史会话</div>'; return; }
+  // 清空全部 (用户需求 08-26: 重启后测试残留无法一键清)
+  const bar = document.createElement('div');
+  bar.className = 'ai-hist-bar';
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn btn-r btn-sm';
+  clearBtn.textContent = '🗑 清空全部会话';
+  clearBtn.addEventListener('click', () => {
+    if (!confirm('清空全部会话历史？此操作不可恢复。')) return;
+    st.sessions = [];
+    st.cur = null;
+    save();
+    renderHist(); render(); renderTabs();
+  });
+  bar.appendChild(clearBtn);
+  histEl.appendChild(bar);
+  if (!st.sessions.length) {
+    histEl.innerHTML += '<div class="ai-empty">暂无历史会话</div>';
+    return;
+  }
   st.sessions.forEach(s => {
     const d = document.createElement('div'); d.className = 'ai-hist-item';
     d.innerHTML = '<span class="ai-hist-t">' + esc(s.title) + '</span>' +

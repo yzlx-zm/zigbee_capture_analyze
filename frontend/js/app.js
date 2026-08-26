@@ -16,7 +16,7 @@ import './import.js?v=20260825a';  // 缓存破坏: 报文改名 (锁定提示),
 import './timeline.js?v=20260825af';  // 缓存破坏: 🔒仅限NWK安全未解密, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
 import './diag.js?v=20260825a';  // 缓存破坏: 报文改名 (设备跳转), 改版递增
-import './ai.js?v=20260826b';    // U17: 全局 AI 侧边栏 (知识检索先行; load()/class 修复递增)
+import './ai.js?v=20260826c';  // U17: 全局 AI 侧边栏 (清空按钮/兜底显示递增)
 
 // ── 初始路由 ──
 if (window.rt) window.rt();
