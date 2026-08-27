@@ -920,8 +920,14 @@ reg('tl', function(){
   document.getElementById('tl-pan').addEventListener('keydown',function(e){if(e.key==='Enter'){tlPage=1;search()}});
   document.getElementById('tl-node').addEventListener('keydown',function(e){if(e.key==='Enter'){tlPage=1;search()}});
 
-  // Clear time button — reset to capture start/end
+  // Clear filters button — S4 (2026-08-27 用户要求): ✕ 统一清除**所有**过滤条件
+  // (PAN/节点/类型/时间/未解密开关), 原只清时间过滤; 清除后自动重查
   document.getElementById('tl-tclear').addEventListener('click',function(){
+    document.getElementById('tl-pan').value='';
+    document.getElementById('tl-node').value='';
+    document.getElementById('tl-type').value='';
+    document.getElementById('tl-hide-undec').checked=false;
+    S.tlHideUndec=false;
     if(tlCaptureStart&&tlCaptureEnd){
       var csd=new Date(tlCaptureStart*1000);var ced=new Date(tlCaptureEnd*1000);
       document.getElementById('tl-h0').value=csd.getHours();document.getElementById('tl-m0').value=csd.getMinutes();document.getElementById('tl-s0').value=csd.getSeconds();
@@ -930,6 +936,7 @@ reg('tl', function(){
       document.getElementById('tl-h0').value='00';document.getElementById('tl-m0').value='00';document.getElementById('tl-s0').value='00';
       document.getElementById('tl-h1').value='00';document.getElementById('tl-m1').value='00';document.getElementById('tl-s1').value='00';
     }
+    tlPage=1; search();
   });
 
   // Search button
