@@ -152,7 +152,8 @@ def _behavior_of(aid: int, inf: dict | None, late_cut: float | None,
     return "unknown"
 
 
-def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
+def _parent_map(full: list[dict], t0: float | None, t1: float | None,
+                pan_int: int | None = None) -> dict:
     """U13: 协议级父链路证据 (单遍扫描, 窗内语义).
 
     - poll: MAC Data Request (mac_cmd_id=4) dst = 父节点 (芯科: SED 只向父 poll)
@@ -171,6 +172,8 @@ def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
             continue
         if t1 is not None and ts > t1:
             continue
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
         if p.get("mac_cmd_id") == 4:
             s, d = _short(p.get("mac_src")), _short(p.get("mac_dst"))
             if s is not None and d is not None:
@@ -182,14 +185,126 @@ def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
     return parents
 
 
+# ── S3-重构 (2026-08-27, 用户对齐: 上行链路为准构建拓扑) ──
+# 链路证据四来源, 上行优先:
+#   poll  MAC Data Request — src 的父 = dst (SED 只向父 poll, 铁证)
+#   assoc MAC AssocResp — dst 的父 = src (入网时刻)
+#   rr    Route Record — src→relays[0]→…→dst 全链下一跳 = 父 (上行实证)
+#   down  源路由帧 (nwk_relays 非空) — chain=[src]+relays+[dst],
+#         每个节点的父 = 链上前一个 (网关下行证据, 参与父子判定不上图)
+# 优先级 poll > assoc > rr > down; 同优先级取最近。
+_EVIDENCE_PRIO = {"poll": 0, "assoc": 1, "rr": 2, "down": 3}
+_EVIDENCE_WINDOW = 30.0  # 证据窗 (秒); 窗内无证据 → 顺延前 30s (用户对齐)
+
+
+def _link_evidence_parent(full: list[dict], t0: float | None, t1: float | None,
+                          pan_int: int | None = None) -> dict:
+    """四来源链路证据 → 每节点上行父 (证据窗 = [t0-30s, t1], 顺延前 30s).
+
+    返回 {aid: {parent, evidence, ts}} — 每节点最高优先级 + 最近证据。
+    用于节点 parent 字段 (U13 语义扩展: 原 poll/assoc 两来源 → 四来源).
+    """
+    ev: dict[int, tuple] = {}  # aid -> (priority, ts, parent, evidence)
+
+    def _short(v):
+        return v if isinstance(v, int) and topo.is_unicast(v) else None
+
+    def _put(aid: int, prio: int, ts: float, parent: int, evidence: str) -> None:
+        if aid == 0:
+            return  # 协调器是根, 无父
+        cur = ev.get(aid)
+        if cur is None or prio < cur[0] or (prio == cur[0] and ts > cur[1]):
+            ev[aid] = (prio, ts, parent, evidence)
+
+    lo = (t0 - _EVIDENCE_WINDOW) if t0 is not None else None  # 顺延前 30s
+    for p in full:
+        ts = p.get("ts", 0)
+        if lo is not None and ts < lo:
+            continue
+        if t1 is not None and ts > t1:
+            continue
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
+        if p.get("mac_cmd_id") == 4:  # poll
+            s, d = _short(p.get("mac_src")), _short(p.get("mac_dst"))
+            if s is not None and d is not None:
+                _put(s, _EVIDENCE_PRIO["poll"], ts, d, "poll")
+        elif p.get("mac_cmd_id") == 2:  # assoc
+            s, d = _short(p.get("mac_src")), _short(p.get("mac_dst"))
+            if s is not None and d is not None:
+                _put(d, _EVIDENCE_PRIO["assoc"], ts, s, "assoc")
+        elif p.get("nwk_cmd_id") == 5:  # rr 上行链
+            rr = p.get("route_record_relays") or {}
+            relays = list(rr.get("relays") or [])
+            src, dst = _short(p.get("nwk_src")), _short(p.get("nwk_dst"))
+            if src is None or dst is None:
+                continue
+            chain = [src] + relays + [dst]
+            for i in range(len(chain) - 1):
+                _put(chain[i], _EVIDENCE_PRIO["rr"], ts, chain[i + 1], "rr")
+        elif p.get("nwk_relays"):  # 源路由下行
+            relays = list(p.get("nwk_relays") or [])
+            s, d = _short(p.get("nwk_src")), _short(p.get("nwk_dst"))
+            if s is None or d is None or not relays:
+                continue
+            chain = [s] + relays + [d]
+            for i in range(1, len(chain)):  # 链上每节点父 = 前一个 (coord 本身跳过)
+                _put(chain[i], _EVIDENCE_PRIO["down"], ts, chain[i - 1], "down")
+    return {aid: {"parent": pr, "evidence": ev_name, "ts": ts}
+            for aid, (prio, ts, pr, ev_name) in ev.items()}
+
+
+def _online_map(full: list[dict], t0: float | None, t1: float | None,
+                pan_int: int | None = None, device_types: dict | None = None) -> dict:
+    """节点在线协议判定 (用户对齐: 有明确在线证据才正常渲染).
+
+    - 终端 (end_device): 窗内有 poll (Data Request, src=自己) → 在线
+    - 路由器/协调器/未知: 窗内有任何帧 (src/dst 含自己) → 在线
+    - 无时间窗 (全量) → 全在线 (都出现过)
+    返回 {aid: bool}。根因: 旧 inactive_nodes 基于事件集 (RR/Req/NS),
+    终端持续 poll 不算事件 → 窗内活跃却被灰显 (用户反馈问题大)。
+    """
+    if t0 is None and t1 is None:
+        return {}
+    online: dict[int, bool] = {}
+    seen_frame: dict[int, bool] = {}
+    polled: set[int] = set()
+    for p in full:
+        ts = p.get("ts", 0)
+        if t0 is not None and ts < t0:
+            continue
+        if t1 is not None and ts > t1:
+            continue
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
+        if p.get("mac_cmd_id") == 4:
+            s = p.get("mac_src")
+            if isinstance(s, int) and topo.is_unicast(s):
+                polled.add(s)
+        for aid in (p.get("nwk_src"), p.get("nwk_dst"),
+                    p.get("mac_src"), p.get("mac_dst")):
+            if isinstance(aid, int) and topo.is_unicast(aid):
+                seen_frame[aid] = True
+    for aid in seen_frame:
+        if (device_types or {}).get(aid) == "end_device":
+            online[aid] = aid in polled  # 终端: 必须有 poll 证据
+        else:
+            online[aid] = True            # 路由/未知: 任何帧即在线
+    return online
+
+
 def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
-                       max_gap: float = 60.0, pan_int: int | None = None) -> dict:
+                       max_gap: float = 30.0, pan_int: int | None = None) -> dict:
     """全图链路时刻分段 (U13 时刻游标重构, 2026-08-25): 单遍扫描每节点
-    RR 路径 / poll 父 的证据帧 → 分段 (签名变化或 >max_gap 间隔 → 新段).
-    返回 {aid: [ {kind, t0, t1, relays, dst, parent}, ... ]}
-    T 时刻节点链路状态 = 分段中 t0<=T 的最后一个段 (最近一次证据).
-    S3 (2026-08-27): 加 pan_int 过滤 — 多 PAN 聚合抓包时 RR/poll 证据分属不同
-    网络, 不过滤会串网 (曾与链路历史端点同样缺陷)."""
+    RR 路径 / poll 父 / assoc 父 / 源路由下行 的证据帧 → 分段
+    (签名变化或 >max_gap 间隔 → 新段).
+    返回 {aid: [ {kind, t0, t1, relays, dst, parent, evidence}, ... ]}
+    T 时刻节点链路状态 = 分段中 t0<=T 的最近一段, 且 T-段末 <= 证据窗+顺延
+    (前端 30s 窗语义, S3-重构 2026-08-27: 证据窗 30s + 顺延前 30s).
+
+    S3 变更: ①max_gap 默认 60→30 (与证据窗一致, 用户对齐)
+    ②加 assoc 父证据 ③加源路由下行证据 (nwk_relays, 仅作父子判定不上图)
+    ④段带 evidence 字段 (poll/assoc/rr/down)."""
     frames: dict[int, list] = {}
     for p in full:
         ts = p.get("ts", 0)
@@ -203,10 +318,21 @@ def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
             rr = p.get("route_record_relays") or {}
             frames.setdefault(p["nwk_src"], []).append(
                 (ts, "route", (p.get("nwk_dst"), tuple(rr.get("relays") or []))))
-        elif (p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None
-              and isinstance(p.get("mac_dst"), int)):
+        elif p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None \
+                and isinstance(p.get("mac_dst"), int):
             frames.setdefault(p["mac_src"], []).append(
-                (ts, "parent", ("parent", p["mac_dst"])))
+                (ts, "parent", ("parent", p["mac_dst"], "poll")))
+        elif p.get("mac_cmd_id") == 2 and p.get("mac_src") is not None \
+                and isinstance(p.get("mac_dst"), int):
+            frames.setdefault(p["mac_dst"], []).append(
+                (ts, "parent", ("parent", p["mac_src"], "assoc")))
+        elif p.get("nwk_relays") and isinstance(p.get("nwk_src"), int) \
+                and isinstance(p.get("nwk_dst"), int):
+            # 源路由下行: chain=[src]+relays+[dst], 每节点父 = 前一个 (下行证据)
+            chain = [p["nwk_src"]] + list(p.get("nwk_relays") or []) + [p["nwk_dst"]]
+            for i in range(1, len(chain)):
+                frames.setdefault(chain[i], []).append(
+                    (ts, "parent", ("parent", chain[i - 1], "down")))
     out: dict[int, list] = {}
     for aid, fl in frames.items():
         segs: list[dict] = []
@@ -225,6 +351,7 @@ def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
             "relays": list(s["sig"][1]) if s["kind"] == "route" else None,
             "dst": s["sig"][0] if s["kind"] == "route" else None,
             "parent": s["sig"][1] if s["kind"] == "parent" else None,
+            "evidence": s["sig"][2] if s["kind"] == "parent" else "rr",
         } for s in segs]
     return out
 
@@ -233,26 +360,16 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
                   t0: float | None, t1: float | None) -> None:
     """U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描).
     U13: 协议级父链路 (poll/assoc/RR 推断) + 下行 source-route 路径 (relay 反转).
+    S3-重构 (2026-08-27): 父证据四来源 (poll>assoc>rr>down, 证据窗+顺延 30s)
+    + online 协议判定 (终端 poll / 路由任意帧, 用户对齐).
     graph 与 events 两端点共用 — 拓扑页实际消费 events (2026-08-24 自审)."""
     full = get_full_packets()
     stats, _ls, _asym = _node_stats(pkts, pan_int)
     beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
-    parents = _parent_map(full if full else pkts, t0, t1)
-    # RR 推断: 无 poll/assoc 证据的节点, 用 RR relays 链推下一跳作链路参考
-    # (对 SED ≈ 父节点 — 其 RR 由父转发 append; 对 router/中继 = 转发下一跳, evidence=rr)
-    rr_parent: dict[int, int] = {}
-    for rp in graph.get("route_paths", []):
-        relays = rp.get("relays") or []
-        if not relays:
-            continue
-        chain = list(relays) + [rp["dst"]]
-        # 源节点 → relays[0]
-        if rp["src"] not in parents and rp["src"] not in rr_parent:
-            rr_parent[rp["src"]] = relays[0]
-        # 中继节点 → 链中下一个
-        for i, node in enumerate(relays):
-            if node not in parents and node not in rr_parent:
-                rr_parent[node] = chain[i + 1]
+    parents = _link_evidence_parent(full if full else pkts, t0, t1, pan_int)
+    # 在线判定 (协议证据): 终端须窗内有 poll; 路由/未知 = 窗内任意帧
+    dev_types = {nd["aid"]: nd.get("device_type", "unknown") for nd in graph.get("nodes", [])}
+    online = _online_map(full if full else pkts, t0, t1, pan_int, dev_types)
     # 下行 source-route: [dst] + reversed(relays) + [src] (芯科: concentrator 反转 relay 列表)
     downlink_map: dict[int, list[int]] = {}
     for rp in graph.get("route_paths", []):
@@ -268,14 +385,14 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
         nd["poll_interval"] = inf["poll_gap"] if inf else None
         nd["tx_count"] = inf["tx"] if inf else 0
         nd["rx_count"] = inf["rx"] if inf else 0
-        # U13: 父链路 (poll > assoc > rr 推断) + 下行路径
+        # S3: online 协议判定 — 有时间窗: 窗内无帧节点默认离线 (修复: 曾默认 True,
+        # 前 4s 窗 78 节点全在线实锤); 无时间窗: 全在线 (都出现过)
+        nd["online"] = online.get(aid, t0 is None and t1 is None)
+        # U13: 父链路 (四来源优先级) + 下行路径
         pe = parents.get(aid)
         if pe is not None:
             nd["parent"] = pe["parent"]
             nd["parent_evidence"] = pe["evidence"]
-        elif aid in rr_parent:
-            nd["parent"] = rr_parent[aid]
-            nd["parent_evidence"] = "rr"
         nd["downlink"] = downlink_map.get(aid)
 
 
@@ -348,27 +465,29 @@ async def topology_from_events(pan: str = Query(default=""),
                                 t0=time_start, t1=time_end,
                                 link_status_tables=ls_tables,
                                 asymmetric_links=asym)
-    _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为状态
-    # U13 时刻游标重构 (2026-08-25): 全图链路时刻分段 — 前端拖动游标纯本地过滤
-    _full_pkts = get_full_packets()
-    graph["link_snapshots"] = _all_link_segments(_full_pkts if _full_pkts else pkts,
-                                                 time_start, time_end, pan_int=pan_int)
-    # ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 — 窗口切换节点不跳变 (用户反馈:
-    # 30s 窗一批节点, 下个窗另一批, 不连贯)。窗内时返回全量拓扑节点中窗内
-    # 无活动的集合 (inactive_nodes), 前端灰度显示; 无过滤时不返回
-    if time_start is not None or time_end is not None:
-        try:
-            full_graph = rev.derive_topology(timeline, nodes, pan=pan_int,
-                                             t0=None, t1=None)
-            _enrich_nodes(full_graph, pkts, pan_int, None, None)
-            active_aids = {nd["aid"] for nd in graph.get("nodes", [])}
-            graph["inactive_nodes"] = [
-                {"aid": nd["aid"], "device_type": nd.get("device_type", "unknown"),
-                 "seen": nd.get("seen", 0)}
-                for nd in full_graph.get("nodes", []) if nd["aid"] not in active_aids
-            ]
-        except Exception:
-            graph["inactive_nodes"] = []
+    _full_pkts = get_full_packets() or pkts
+    # ══ S3-重构 (2026-08-27, 用户对齐: 拓扑绘制原理重梳理) ══
+    # ① 节点全量: 时间窗切换节点不消失 (曾窗内事件集 → 下个窗消失/灰显, 用户反馈问题大)
+    #    全量节点 = 全量事件节点 ∪ 链路证据帧节点 (poll/assoc/源路由 的参与节点)
+    full_graph = rev.derive_topology(timeline, nodes, pan=pan_int)
+    node_aids = {nd["aid"] for nd in full_graph["nodes"]}
+    ev_nodes = _link_evidence_parent(_full_pkts, None, None, pan_int)
+    for aid in ev_nodes:
+        if aid in node_aids:
+            continue
+        n = nodes.get(aid, {})
+        full_graph["nodes"].append({
+            "aid": aid, "label": f"0x{aid:04X}", "seen": n.get("seen", 0),
+            "pan": pan_int if pan_int is not None else n.get("pan"),
+            "is_coord": aid == 0, "depth": -1, "parent": None, "children": [],
+            "coord_traffic": 0, "type_list": n.get("type_list", [])[:10],
+            "device_type": n.get("device_type", "unknown"),
+        })
+    graph["nodes"] = full_graph["nodes"]
+    _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为 + S3 online/父证据
+    # ② 链路时刻分段 (30s 窗 + assoc/down 证据): 前端拖动游标纯本地过滤
+    graph["link_snapshots"] = _all_link_segments(_full_pkts, time_start, time_end,
+                                                 pan_int=pan_int)
     _cache_events = graph
     _cache_events_key = key
     return graph

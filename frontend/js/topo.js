@@ -7,7 +7,8 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let silentHidden = false, neighborHidden = false, focusAid = null;
+let silentHidden = false, focusAid = null;
+let slideMode = false;  // S3-重构: 时刻模式 (拖动游标, 30s 证据窗) vs 全貌模式 (最近证据)
 let curT = null;   // U13 时刻游标 (当前时刻, 边按此过滤)   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
@@ -38,7 +39,6 @@ reg('topo', function(){
     +'<button class="btn btn-o btn-s" id="tfit">⊞ 适应</button>'
     +'<button class="btn btn-o btn-s" id="tlay" title="切换布局">📐 层次</button>'
     +'<button class="btn btn-o btn-s" id="tshow-all" title="显示/隐藏静默节点">👁 静默节点</button>'
-    +'<button class="btn btn-o btn-s" id="tnb-toggle" title="显示/隐藏邻居边">📡 邻居边</button>'
     +'<button class="btn btn-o btn-s" id="thl-clear" title="清除高亮">🔆 清除高亮</button>'
     +'<span class="toolbar-sep">|</span>'
     +'<button class="btn btn-o btn-s" id="tlegend" title="显示/隐藏图例">📖 图例</button>'
@@ -52,8 +52,7 @@ reg('topo', function(){
       +'<div class="lp-title mt-1">链路</div>'
       +'<div class="lp-row"><span class="edge-demo traffic"></span> 数据流 (通信)</div>'
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
-      +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网证据)</div>'
-      +'<div class="lp-row"><span class="edge-demo neighbor"></span> 邻居关系 (Link Status)</div>'
+      +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网/下行证据)</div>'
       +'<div class="lp-title mt-1">状态</div>'
       +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
       +'<div class="lp-row"><span class="dot hl"></span> 高亮节点</div>'
@@ -137,6 +136,7 @@ reg('topo', function(){
     // (S.topoT0/T1 不清) → 图仍是窗内视图; 退出 = 恢复全量视图
     var slEl=document.getElementById('tsl'); if(slEl)slEl.value=500;
     curT=sliderToTs(500);
+    slideMode=false;  // S3-重构: 退出聚焦恢复全貌模式
     updateTimeLabel();
     reloadTopo();
   }
@@ -281,6 +281,8 @@ reg('topo', function(){
       // ⚠️ U13-B (2026-08-25): 密集模式 (>40 节点) 单行 label — 双行 (地址+型号)
       // 高度超过列间距, 文字压到下方节点; 型号移入 tooltip (已有)
       var dense=ns.length>40;
+      // S3-重构: online=false = 窗内无在线证据 (终端无 poll / 路由无帧) → 灰显
+      var online=n.online!==false;
       cyNodes.push({
         data:{id:''+aid,
           label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model&&!dense?'\n'+model:''),
@@ -292,21 +294,14 @@ reg('topo', function(){
           // ⚠️ 字段名不能用 parent — Cytoscape data.parent 是复合节点保留字段
           // (2026-08-25 自审: 曾导致网关框住全部子设备), 改名 link_parent/link_ev
           link_parent:n.parent, link_ev:n.parent_evidence||'',
-          downlink:n.downlink||null},
-        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')):'offpath'
+          downlink:n.downlink||null,
+          inactive:!online},
+        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')+(online?'':' inactive')):(online?'offpath':'offpath inactive')
       });
     }
-    // ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 (后端 inactive_nodes, 窗口切换不跳变)
-    var inact=d.inactive_nodes||[];
-    for(var ik=0;ik<inact.length;ik++){var ino=inact[ik];
-      if(focusSet&&!focusSet[ino.aid])continue;  // 聚焦: 窗外灰度也只留链路链上的
-      cyNodes.push({
-        data:{id:'in-'+ino.aid, label:'0x'+ino.aid.toString(16).toUpperCase().padStart(4,'0'),
-              aid:ino.aid, device_type:ino.device_type||'unknown', seen:ino.seen||0,
-              on_path:false, inactive:true},
-        classes:'inactive'
-      });
-    }
+    // ⚠️ S3-重构 (2026-08-27, 用户对齐): 节点全量返回 (后端 nodes 含所有出现过节点),
+    // 在线状态协议判定 (online 字段) — 窗内无在线证据的节点灰显, 不消失不跳变
+    // (曾 U13-A3 inactive_nodes: 基于事件集粗判, 终端持续 poll 却被灰显 — 用户反馈问题大)
 
     // ── 边: 数据流量 → 灰色细线背景 ──
     var cyEdges=[];
@@ -329,9 +324,18 @@ reg('topo', function(){
     var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
     var snaps=d.link_snapshots||{};
     var lsKeys={};
+    // ⚠️ S3-重构 (2026-08-27, 用户对齐: 默认全貌 + 游标时刻):
+    //   全貌模式 (slideMode=false) = 每节点最近证据, 无窗限制 (链路现状图)
+    //   时刻模式 (拖动游标) = 30s 证据窗 + 顺延前 30s:
+    //     分段末帧距 curT 超过 60s (30 窗 + 30 顺延) → 证据过旧不算
     function snapAt(segs){
       var best=null;
-      for(var si=0;si<segs.length;si++){if(segs[si].t0<=curT)best=segs[si];else break;}
+      for(var si=0;si<segs.length;si++){
+        var s=segs[si];
+        if(s.t0>curT)break;
+        if(slideMode&&curT-s.t1>60)continue;
+        best=s;
+      }
       return best;
     }
     for(var aidS in snaps){
@@ -358,28 +362,8 @@ reg('topo', function(){
       }
     }
 
-    // ── 边: 邻居关系 (Link Status) — 物理层 (C2) ──
-    // 只画无 traffic 边的邻居对; two-way (out_cost>0) 点线, one-way 虚线+箭头; 密度保护 (>8 邻居不画, tooltip 显示数量)
-    var denseNbs={};
-    for(var nai in nbt){ if(Object.keys(nbt[nai]||{}).length>8) denseNbs[nai]=true; }
-    var nbPairs={};
-    for(var nai in nbt){
-      for(var nbi in (nbt[nai]||{})){
-        if(denseNbs[nai]||denseNbs[nbi]) continue;
-        var na2=parseInt(nai), nb2=parseInt(nbi);
-        if(!cyNodeIds[''+na2]||!cyNodeIds[''+nb2]) continue;
-        var pk2=Math.min(na2,nb2)+'-'+Math.max(na2,nb2);
-        if(nbPairs[pk2]||trafficSeen[pk2]) continue;   // 与 traffic 边去重
-        nbPairs[pk2]=true;
-        var ninfo=nbt[nai][nbi];
-        var twoWay=(ninfo.out_cost||0)>0;   // MCP: two-way = 非零出站成本
-        cyEdges.push({
-          data:{id:'nb-'+pk2, source:''+na2, target:''+nb2, edge_type:'neighbor',
-                in_cost:ninfo.in_cost, out_cost:ninfo.out_cost, last_seen:ninfo.last_seen_ts, count:ninfo.count},
-          classes:'neighbor-edge'+(twoWay?'':' one-way')
-        });
-      }
-    }
+    // ⚠️ S3-重构 (2026-08-27, 用户对齐): Link Status 邻居关系不再画在拓扑图 —
+    // 节点多时混乱; 邻居信息保留底部 📡 邻居面板 + 节点 tooltip LS 邻居数
 
     // 保存用户缩放状态
     var userZoom=null, userPan=null;
@@ -440,10 +424,8 @@ reg('topo', function(){
         // 高亮/淡出
         {selector:'edge.highlight', style:{'opacity':1,'width':5}},
         {selector:'edge.faded', style:{'opacity':0.04}},
-        // 邻居边 (C2): 物理层 — two-way 点线 / one-way 虚线+箭头 (方向=有出站成本侧)
-        {selector:'edge.neighbor-edge', style:{'line-style':'dotted','line-color':'#64748b','width':1.5,'opacity':0.6}},
-        {selector:'edge.neighbor-edge.one-way', style:{'line-style':'dashed','target-arrow-shape':'triangle','target-arrow-color':'#64748b','arrow-scale':0.6,'opacity':0.45}},
-        // U13: 协议级父链路 — 天蓝点线 + 箭头指向父 (poll/Assoc/RR 证据, tooltip 标注类型)
+        // ⚠️ S3-重构: 邻居边 CSS 移除 (Link Status 不上图)
+        // U13: 协议级父链路 — 天蓝点线 + 箭头指向父 (poll/Assoc/RR/下行 证据, tooltip 标注类型)
         {selector:'edge.parent-edge', style:{'line-style':'dotted','line-color':'#0ea5e9','width':2,
           'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
@@ -460,8 +442,8 @@ reg('topo', function(){
       document.getElementById('cy-graph').appendChild(tooltip);
 
       cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;
-        // U13-A3: 窗外灰度节点 tooltip
-        if(d.inactive){tooltip.innerHTML='<b>'+d.label+'</b>\n窗外节点 (当前时间窗无链路活动)';tooltip.style.display='block';updateTooltipPos(e);return;}
+        // S3-重构: 无在线证据节点 tooltip (终端窗内无 poll / 路由窗内无帧)
+        if(d.inactive){tooltip.innerHTML='<b>'+d.label+'</b>\n当前时间窗无在线证据 (终端无 poll / 路由无帧)';tooltip.style.display='block';updateTooltipPos(e);return;}
         // U14-4: tooltip 增强 — EUI64/厂商型号/行为状态/poll 间隔/帧量收/发/LS 邻居数
         var tName={coordinator:'协调器',router:'路由器',end_device:'终端设备',unknown:'未知'}[d.device_type]||d.device_type;
         var bName={active:'活跃',sleeping:'休眠',rejoining:'重连中',offline:'离线',unknown:'未知'}[d.behavior]||'未知';
@@ -474,7 +456,7 @@ reg('topo', function(){
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
         // U13: 父链路 (协议级证据) + 下行 source-route
         if(d.link_parent!=null){
-          var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.parent_evidence]||d.parent_evidence;
+          var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.parent_evidence]||d.parent_evidence;
           h+='\n父链路: 0x'+Number(d.link_parent).toString(16).toUpperCase().padStart(4,'0')+' ('+evN+')';
         }
         if(d.downlink&&d.downlink.length){
@@ -484,8 +466,7 @@ reg('topo', function(){
         tooltip.innerHTML=h;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
     cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();
-      if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN;}
-      else if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}
+      if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN;}
       else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}
       // ⚠️ S3 修复 (2026-08-27): U13 时刻游标重构后 route 边不再带 path_idx/hop
       // (边来自 link_snapshots 分段, 非 route_paths 行), 原 else 分支渲染 #NaN — 独立分支
@@ -570,7 +551,6 @@ reg('topo', function(){
       document.getElementById('tlay').textContent=curLayout===1?'🔄 力导':'▦ 固定列';
     })();
     applySilentHidden();   // 数据刷新后恢复静默节点隐藏状态
-    applyNeighborHidden(); // 数据刷新后恢复邻居边隐藏状态
   }
 
   // ═══ 布局引擎 ═══
@@ -607,6 +587,9 @@ reg('topo', function(){
       // left: off-path均分多列(~12节点/列)
       var offAll=[]; cy.nodes().forEach(function(n){var d=nodeDepth[n.data('aid')];if(d==null)d=99;if(d<99&&!n.data('on_path'))offAll.push(n);});
       // C3: off-path 节点按邻居连通分量分组 (物理层聚类), 组内连续排布
+      // ⚠️ S3 修复 (2026-08-27): nbt 是 renderGraph 局部变量, runLayout 作用域无定义
+      // (4688 小包 offAll 空未触发; 中继 78 节点切换布局 ReferenceError 实测)
+      var nbt=topoNbt||{};
       var offGroups=[], offSeen={};
       for(var oi=0;oi<offAll.length;oi++){
         var on=offAll[oi]; if(offSeen[on.id()]) continue;
@@ -928,8 +911,12 @@ reg('topo', function(){
               }
             });
           }
+          // S3-重构: parent 段标注证据类型 (poll/assoc/down/rr)
+          var evLabel=s.kind==='parent'
+            ?('父链路 ('+({poll:'poll轮询',assoc:'入网关联',down:'下行源路由'}[s.evidence]||'路由下一跳')+'):')
+            :'上行路径: ';
           document.getElementById('hist-detail').innerHTML='<b>'+fmtTsH(s.t0)+' ~ '+fmtTsH(s.t1)+'</b> '
-            +(s.kind==='route'?'上行路径: ':'父链路: ')+'<span class="mono">'+s.path_str+'</span>'
+            +evLabel+'<span class="mono">'+s.path_str+'</span>'
             +(s.kind==='route'&&s.relays.length?' <span class="t-10 text-dim">'+((s.t1-s.t0)+'s 稳定')+'</span>':'');
         });
       });
@@ -1029,6 +1016,7 @@ reg('topo', function(){
     var fb=document.getElementById('focus-bar');if(fb)fb.style.display='none';
     var slR=document.getElementById('tsl');if(slR)slR.value=500;
     curT=sliderToTs(500);
+    slideMode=false;  // S3-重构: 重置恢复全貌模式
     updateTimeLabel();
     loadData('',function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} try{clearHighlight();}catch(e){}});
   });
@@ -1045,18 +1033,6 @@ reg('topo', function(){
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
   });
   document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
-
-  // ═══ 邻居边显示/隐藏 (tnb-toggle, C2 开关) ═══
-  function applyNeighborHidden(){
-    if(!cy) return;
-    cy.edges('[edge_type="neighbor"]').forEach(function(e){e.style('display',neighborHidden?'none':'element');});
-  }
-  document.getElementById('tnb-toggle').addEventListener('click',function(){
-    if(!cy) return;
-    neighborHidden=!neighborHidden;
-    applyNeighborHidden();
-    this.classList.toggle('on',neighborHidden);
-  });
 
   // ═══ 静默节点显示/隐藏 (tshow-all, U7 修复死控件) — 静默 = 孤立节点 (degree 0, 非路径) ═══
   function applySilentHidden(){
@@ -1089,6 +1065,7 @@ reg('topo', function(){
 
   // ⚠️ U13 时刻游标 (2026-08-25 重构): 滑块 = 时刻, 拖动实时本地重渲染 (不请求后端)
   window.onTimeSlide=function(){
+    slideMode=true;  // S3-重构: 用户拖动 = 时刻视图 (30s 证据窗, 默认恢复全貌)
     var v=parseInt(document.getElementById('tsl').value);
     curT=sliderToTs(v);
     updateTimeLabel();
