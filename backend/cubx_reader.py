@@ -453,11 +453,12 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
         "zcl_cmd_id": None, "zcl_cmd_name": None,
         "sec_level": None, "sec_key": None, "sec_key_label": None,
         "sec_frame_counter": None, "sec_mic": None,
-        "sec_key_type": None,        # 安全头 key_type (0=Data/Link, 1=NWK, 2=Transport, 3=Load, 4=Verify)
+        "sec_key_type": None,        # 安全头 key_type (0=Link, 1=NWK, 2=Transport, 3=Load — aux control bits3-4)
+        "sec_extended_nonce": None,    # Aux header extended nonce (control bit5)
         "decrypt_note": None,        # 解密失败原因: missing_key / mic_fail / parse_error (成功=None)
         "nwk_radius": None, "nwk_src64": None, "nwk_dst64": None,
         "nwk_security": False, "nwk_fcf": None, "nwk_flags": None,
-        "nwk_discover_route": None, "nwk_proto_version": None,
+        "nwk_discover_route": None, "nwk_proto_version": None, "nwk_frametype": None,
         "nwk_relay_count": None, "nwk_relay_index": None, "nwk_relays": None,
         "mac_fcs_ok": True, "mac_frame_type": 1,
         "mac_cmd_id": None,          # MAC 命令帧 ID (1=AssocReq, 2=AssocResp, 4=DataReq, 7=BeaconReq...)
@@ -562,6 +563,7 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
     result["nwk_fcf"] = nwk_bytes[:2].hex() if len(nwk_bytes) >= 2 else None
     result["nwk_flags"] = _h(getattr(nwk, "flags", None))
     result["nwk_discover_route"] = _h(getattr(nwk, "discover_route", None))
+    result["nwk_frametype"] = _h(getattr(nwk, "frametype", None))  # S4: scapy 独立字段 (0=Data, 1=Command)
     result["nwk_proto_version"] = _h(getattr(nwk, "proto_version", None))
     result["nwk_relay_count"] = _h(getattr(nwk, "relay_count", None))
     result["nwk_relay_index"] = _h(getattr(nwk, "relay_index", None))
@@ -592,9 +594,13 @@ def _raw_to_dict(raw: bytes, packet_id: int, timestamp: float,
             sec_bytes = bytes(sec)
             if len(sec_bytes) >= 4:
                 result["sec_mic"] = sec_bytes[-4:].hex()
-            # P4: key_type (aux header control bits1-2; 素材实证 08-10: 中继包安全帧
-            # 99.98% 为 key_type=0 — 设备唯一 TC link key 加密)
-            result["sec_key_type"] = (sec_bytes[0] >> 1) & 0x03 if sec_bytes else None
+            # S4 (2026-08-27 用户逐帧核对): key_type 位修正 — NWK Aux Header control
+            # 官方定义 (Zigbee spec 3.6.4.1): bits0-2=sec level, bits3-4=key type,
+            # bit5=extended nonce。原实现用 bits1-2 (P4 遗留) — 素材帧 control=0x00
+            # 两种偏移结果相同 (0), 用户 Ubiqua 帧 control=0x28 实证 bits3-4=1 (Network
+            # Key) — 修正为官方偏移; 顺带解析 extended_nonce (bit5)
+            result["sec_key_type"] = (sec_bytes[0] >> 3) & 0x03 if sec_bytes else None
+            result["sec_extended_nonce"] = (sec_bytes[0] >> 5) & 0x01 if sec_bytes else None
         try:
             plaintext, key_label, key_value = _decrypt_nwk(nwk, network_keys, link_keys)
             plain_valid = True

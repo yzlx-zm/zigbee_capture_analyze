@@ -454,6 +454,36 @@ reg('tl', function(){
         var fct=nwk['zbee_nwk.fcf_tree']||{};
         var secEnabled=fct['zbee_nwk.security']==='1';
         nwkFields.push(['Security', secEnabled?'Enabled':'Disabled']);
+        // S4 (2026-08-27 用户要求对齐 Ubiqua): FCF 完整值 + 位分解 + 源路由中继列表
+        if(fct['zbee_nwk.fcf']){
+          nwkFields.push(['Frame Control', fct['zbee_nwk.fcf']]);
+          var fcfRows=[
+            ['Frame Type', fct['zbee_nwk.frame_type']],
+            ['Protocol Version', fct['zbee_nwk.protocol_version']],
+            ['Route Discovery', fct['zbee_nwk.discover_route']],
+            ['Multicast', fct['zbee_nwk.multicast']],
+            ['Security Enabled', fct['zbee_nwk.security_enabled']],
+            ['Source Route', fct['zbee_nwk.source_route']],
+            ['Dest IEEE Addr', fct['zbee_nwk.dst_ieee']],
+            ['Src IEEE Addr', fct['zbee_nwk.src_ieee']],
+          ];
+          for(var fi=0;fi<fcfRows.length;fi++){
+            if(fcfRows[fi][1]!=null)nwkFields.push(fcfRows[fi]);
+          }
+        }
+        if(fct['zbee_nwk.relay_count']){
+          var rcount=parseInt(fct['zbee_nwk.relay_count']);
+          var rrow='Relay List ('+rcount+')';
+          var rvals=[];
+          for(var rk2 in fct){
+            if(rk2.indexOf('zbee_nwk.relay_')===0&&rk2!=='zbee_nwk.relay_count'&&rk2!=='zbee_nwk.relay_index'){
+              rvals.push(fct[rk2]);
+            }
+          }
+          nwkFields.push(['Relay Count', String(rcount)]);
+          nwkFields.push(['Relay Index', fct['zbee_nwk.relay_index']||'0']);
+          nwkFields.push([rrow, rvals.join(' → ')]);
+        }
         html+=_tlLayer('NWK', '#2563eb', nwkFields);
         // Security header — always show if tshark parsed it
         // S1 (2026-08-26): cubx 路径 fallback 构造把安全头放在层树顶层
@@ -462,13 +492,19 @@ reg('tl', function(){
         var sec=layers['ZigBee Security Header']||nwk['ZigBee Security Header']||{};
         if(Object.keys(sec).length>0&&sec['zbee.sec.field']){
           var klabel=sec['zbee.sec.decryption_key']||(sec['zbee.sec.key']?'Key matched':'');
-          html+=_tlLayer('Security', '#dc2626', [
+          // S4 (2026-08-27 用户要求对齐 Ubiqua): Aux header 分解 — Key Type
+          // (bits3-4) / Extended Nonce (bit5) / Source EUI64
+          var secRows=[
             ['Level', _tlSecLevel(sec)],
+            ['Key Type', sec['zbee.sec.key_type']||'?'],
+            ['Extended Nonce', sec['zbee.sec.extended_nonce']||'?'],
             ['Frame Counter', sec['zbee.sec.counter']||'?'],
             ['Key Seq#', sec['zbee.sec.key_seqno']||'?'],
+            ['Source EUI64', sec['zbee.sec.source_eui64']||'?'],
             ['MIC', sec['zbee.sec.mic']||'?'],
             ['Key', klabel||'None'],
-          ]);
+          ];
+          html+=_tlLayer('Security', '#dc2626', secRows);
         }
         // NWK command-specific details
         var cmdVal=null;

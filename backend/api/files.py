@@ -958,7 +958,9 @@ def _packet_summary_short(p: dict) -> str:
         parts.append(p["aps_cmd_name"])
     if p.get("zcl_cmd_name"):
         # 08-25 用户反馈: 摘要去掉簇 ID 与方向 (方向可从 NWK Src/Dst 推断, 簇 ID 详情面板有)
-        parts.append(f"ZCL {p['zcl_cmd_name']}")
+        # S4 (2026-08-27 用户要求): 摘要带簇名 — "On/Off Report Attributes"
+        # 比 "ZCL Report Attributes" 清晰 (全局命令名 + 所在簇)
+        parts.append(f"{p.get('aps_cluster_name') or 'ZCL'} {p['zcl_cmd_name']}")
     if p.get("mac_cmd_id") is not None:
         mc = p["mac_cmd_id"]
         # 加密 MAC 命令帧 cmd_id 是密文首字节 (>9 垃圾值, P1 同类) → 不显示假名字
@@ -1035,7 +1037,41 @@ def _fallback_layers(p: dict) -> dict:
             nwk["zbee_nwk.radius"] = str(p["nwk_radius"])
         if p.get("nwk_seq") is not None:
             nwk["zbee_nwk.seqno"] = str(p["nwk_seq"])
-        nwk["zbee_nwk.fcf_tree"] = {"zbee_nwk.security": "1" if p.get("nwk_security") else "0"}
+        # S4 (2026-08-27 用户要求对齐 Ubiqua): FCF 完整值 + 位分解 + 源路由中继列表
+        # ⚠️ 位语义: scapy ZigbeeNWK 独立字段 (frametype/proto_version/discover_route)
+        # + flags 8 位 FlagsField ['multicast','security','source_route','extended_dst',
+        # 'extended_src',...] — 位序与官方 NWK FCF 高字节 bit6-10 对齐 (源码级核实)
+        fcf_tree: dict = {"zbee_nwk.security": "1" if p.get("nwk_security") else "0"}
+        nwk_fcf = p.get("nwk_fcf")
+        if nwk_fcf:
+            try:
+                fcf_int = int.from_bytes(bytes.fromhex(nwk_fcf)[:2], "little")
+                fcf_tree["zbee_nwk.fcf"] = f"0x{fcf_int:04X}"
+                ft = p.get("nwk_frametype")
+                fcf_tree["zbee_nwk.frame_type"] = (
+                    "Data" if ft == 0 else "Command" if ft == 1 else
+                    "Inter-PAN" if ft == 3 else f"0x{ft:02X}")
+                fcf_tree["zbee_nwk.protocol_version"] = str(p.get("nwk_proto_version") or "?")
+                dr = p.get("nwk_discover_route")
+                fcf_tree["zbee_nwk.discover_route"] = (
+                    "Enable" if dr in (1, 2) else "Suppressed" if dr == 0 else str(dr))
+                flags = p.get("nwk_flags")
+                if flags is not None:
+                    fcf_tree["zbee_nwk.multicast"] = "Yes" if flags & 0x01 else "No"
+                    fcf_tree["zbee_nwk.security_enabled"] = "Yes" if (flags >> 1) & 0x01 else "No"
+                    fcf_tree["zbee_nwk.source_route"] = "Yes" if (flags >> 2) & 0x01 else "No"
+                    fcf_tree["zbee_nwk.dst_ieee"] = "Yes" if (flags >> 3) & 0x01 else "No"
+                    fcf_tree["zbee_nwk.src_ieee"] = "Yes" if (flags >> 4) & 0x01 else "No"
+            except (ValueError, TypeError):
+                pass
+        # 源路由中继列表 (Source Route Sub-Frame: relay count/index/list)
+        relays = p.get("nwk_relays")
+        if relays:
+            fcf_tree["zbee_nwk.relay_count"] = str(len(relays))
+            fcf_tree["zbee_nwk.relay_index"] = str(p.get("nwk_relay_index", 0))
+            for _ri, _r in enumerate(relays):
+                fcf_tree[f"zbee_nwk.relay_{_ri}"] = f"0x{_r:04X}"
+        nwk["zbee_nwk.fcf_tree"] = fcf_tree
         # NWK 命令 → "Command Frame: <名>" 子树 (前端 isNwkCmd 检测 + 命令明细渲染)
         cmd_id = p.get("nwk_cmd_id")
         cmd_name = NWK_COMMAND_NAMES.get(cmd_id) if cmd_id is not None else None
@@ -1046,11 +1082,23 @@ def _fallback_layers(p: dict) -> dict:
         layers["zbee_nwk"] = nwk
 
     # ── Security Header (NWK 安全帧) ──
+    # S4 (2026-08-27 用户要求对齐 Ubiqua): 补 Aux header 分解 —
+    # key_type (control bits3-4) / extended_nonce (bit5) / source EUI64
     sec_fields: dict = {}
     if p.get("sec_level") is not None:
         sec_fields["zbee.sec.sec_level"] = str(p["sec_level"])
+    if p.get("sec_key_type") is not None:
+        kt = p["sec_key_type"]
+        sec_fields["zbee.sec.key_type"] = {
+            0: "0x00 (设备唯一 TC Link Key)", 1: "0x01 (Network Key)",
+            2: "0x02 (Key Transport)", 3: "0x03 (Key Load)",
+        }.get(kt, f"0x{kt:02X}")
+    if p.get("sec_extended_nonce") is not None:
+        sec_fields["zbee.sec.extended_nonce"] = "Yes" if p["sec_extended_nonce"] else "No"
     if p.get("sec_frame_counter") is not None:
         sec_fields["zbee.sec.counter"] = str(p["sec_frame_counter"])
+    if p.get("nwk_src64"):
+        sec_fields["zbee.sec.source_eui64"] = p["nwk_src64"]  # Aux header 源 IEEE 地址
     if p.get("sec_mic"):
         sec_fields["zbee.sec.mic"] = p["sec_mic"]
     if p.get("sec_key_label"):
