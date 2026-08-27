@@ -489,6 +489,26 @@ CMD_PAYLOAD_SCHEMAS: dict[int, dict[int, dict[str, list[_Field]]]] = {
         0x00: {"C→S": [{"name": "PINCode", "type": "zstr", "note": "空载荷 = 无 PIN"}]},
         0x01: {"C→S": [{"name": "PINCode", "type": "zstr", "note": "空载荷 = 无 PIN"}]},
         0x02: {"C→S": [{"name": "PINCode", "type": "zstr", "note": "空载荷 = 无 PIN"}]},
+        # S4 (2026-08-27 用户要求对齐 Ubiqua): Operation Event Notification 字段级
+        # 结构 (ZCL spec 7.2.2.5): [Source:1][Code:1][UserID:2 LE][PIN:zstr][LocalTime:4 LE]
+        # 枚举值官方依据: ZCL spec 7.2; Ubiqua 实证 (source 0x02=Manual, code 0x02=Unlock)
+        0x20: {"S→C": [
+            {"name": "Operation Event Source", "type": "u8", "enum": {
+                0x00: "Keypad", 0x01: "RF", 0x02: "Manual", 0x03: "RFID",
+                0x04: "Indoor", 0x05: "Outdoor", 0x06: "Indoor Door",
+                0x07: "Outdoor Door", 0x08: "Auto"}},
+            {"name": "Operation Event Code", "type": "u8", "enum": {
+                0x00: "Unknown or MS Code", 0x01: "Lock", 0x02: "Unlock",
+                0x03: "Non-access User Event", 0x04: "Locked with invalid PIN/ID",
+                0x05: "Locked using Keypad", 0x06: "Keypad Locked",
+                0x07: "Keypad Unlocked", 0x08: "Unlocked using Keypad",
+                0x09: "Unlocked using RFID", 0x0A: "Unlocked with invalid PIN/ID",
+                0x0B: "Unlocked using Indoor Door Handle",
+                0x0C: "Unlocked using Outdoor Door Handle"}},
+            {"name": "User ID", "type": "u16", "note": "0 = 无关联用户"},
+            {"name": "PIN", "type": "zstr", "note": "空 = 无 PIN"},
+            {"name": "Local Time", "type": "u32", "note": "UTC 秒 (ZigBee Local Time)"},
+        ]},
     },
     # Window Covering (0x0102) — spec §8.4
     0x0102: {
@@ -630,6 +650,22 @@ def _schema_for(cluster_id: int, cmd_id: int, direction: str) -> list[_Field] | 
     if direction in by_dir:
         return by_dir[direction]
     return by_dir.get("*")
+
+
+def _norm_direction(direction: str | None) -> str:
+    """方向归一化 — S4 (2026-08-27 用户要求对齐 Ubiqua 时发现):
+    schema 键用 "C→S"/"S→C", 但 cubx_reader/tshark 传全称 "Client→Server"/
+    "Server→Client" → _schema_for 永远不命中 → 所有簇特定 schema 载荷解析
+    静默退化为字节偏移兜底 (隐藏 bug, Door Lock 0x20 示例帧实锤)."""
+    if direction is None:
+        return "C→S"
+    if direction in ("C→S", "S→C"):
+        return direction
+    if direction.startswith("Client"):
+        return "C→S"
+    if direction.startswith("Server"):
+        return "S→C"
+    return direction
 
 
 def _parse_attr_value(data_type: int, buf: bytes, off: int) -> tuple[str, int]:
@@ -813,7 +849,7 @@ def parse_zcl_command_payload(cluster_id: int | None, cmd_id: int | None,
                 r = None
             if r is not None:
                 return r
-        schema = _schema_for(cluster_id, cmd_id, direction or "C→S")
+        schema = _schema_for(cluster_id, cmd_id, _norm_direction(direction))
         parser = f"{get_cluster_name(cluster_id) or f'0x{cluster_id:02X}'}"
     else:
         schema = None
