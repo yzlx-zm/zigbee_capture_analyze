@@ -487,6 +487,9 @@ reg('topo', function(){
       if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN;}
       else if(d.edge_type==='neighbor'){tooltip.innerHTML='<b>邻居关系</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n入向cost:'+d.in_cost+' 出向cost:'+(d.out_cost||'未知')+(d.last_seen?'\n最近:'+fmtTs(d.last_seen)+' · '+d.count+'帧':'');}
       else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}
+      // ⚠️ S3 修复 (2026-08-27): U13 时刻游标重构后 route 边不再带 path_idx/hop
+      // (边来自 link_snapshots 分段, 非 route_paths 行), 原 else 分支渲染 #NaN — 独立分支
+      else if(d.edge_type==='route'){tooltip.innerHTML='<b>路由路径 (时刻链路)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n当前时刻该设备的上行路径跳';}
       else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};
       tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
@@ -562,7 +565,9 @@ reg('topo', function(){
       cy.layout({name:'preset',positions:pos,fit:true,padding:40}).run();
       if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}  // 恢复用户缩放
       document.getElementById('off-label').style.display='block';
-      document.getElementById('tlay').textContent='▦ 固定列';
+      // ⚠️ S3 修复: 按实际布局状态显示按钮文本 (小网络 <10 节点默认力导,
+      // 曾无条件写 '▦ 固定列' → 显示与实际布局不一致)
+      document.getElementById('tlay').textContent=curLayout===1?'🔄 力导':'▦ 固定列';
     })();
     applySilentHidden();   // 数据刷新后恢复静默节点隐藏状态
     applyNeighborHidden(); // 数据刷新后恢复邻居边隐藏状态
@@ -589,7 +594,7 @@ reg('topo', function(){
 
     if(curLayout===0){  // fixed column
       // off-path节点换琥珀色+连线换可见色 (inactive 窗外节点跳过, 保持灰度)
-      cy.nodes().forEach(function(n){if(n.data('inactive'))return;n.style('display','element');var d=nd[n.data('aid')];if(d==null)d=99;
+      cy.nodes().forEach(function(n){if(n.data('inactive'))return;n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;
         var isOnPath=n.data('on_path')===true; // 严格true才算路径节点
         if(!isOnPath){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
           n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
@@ -628,7 +633,8 @@ reg('topo', function(){
       // depth>=99 compact grid far right
       var d99=cols[99]||[]; for(var oi=0;oi<d99.length;oi++){posMap[d99[oi].id()]={x:rColX+100+(oi%15)*28,y:-200+Math.floor(oi/15)*24};}
       cy.layout({name:'preset',positions:posMap,fit:true,padding:40}).run();
-      if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}
+      // ⚠️ S3 修复: 删除引用 renderGraph 局部变量 userZoom/userPan 的失效行
+      // (切换布局后 fit 全图, 无需保留缩放)
       document.getElementById('off-label').style.display='block';
       document.getElementById('tlay').textContent='▦ 固定列';
     }else{
@@ -820,10 +826,20 @@ reg('topo', function(){
     });
 
     // ── 路径行 ↔ 图联动: hover 高亮图上对应路径 (U7 优化) ──
+    // ⚠️ S3 修复 (2026-08-27): U13 时刻游标重构后 route 边来自 link_snapshots 分段,
+    // 不再带 path_idx (按 path_idx 匹配永不命中) — 改为按路径链节点对匹配
     function highlightPathOnGraph(idx){
       if(!cy) return;
       cy.elements().removeClass('path-hl');
-      cy.edges('[edge_type="route"]').forEach(function(e){ if(e.data('path_idx')===idx) e.addClass('path-hl'); });
+      var rp=(S.topo||topoData).route_paths&&(S.topo||topoData).route_paths[idx];
+      if(!rp) return;
+      var chain=[rp.src].concat(rp.relays||[]).concat([rp.dst]);
+      cy.edges('[edge_type="route"]').forEach(function(e){
+        var a=parseInt(e.data('source')),b=parseInt(e.data('target'));
+        for(var j=0;j<chain.length-1;j++){
+          if((a===chain[j]&&b===chain[j+1])||(a===chain[j+1]&&b===chain[j])){e.addClass('path-hl');break;}
+        }
+      });
     }
     function clearPathHighlight(){ if(cy) cy.elements().removeClass('path-hl'); }
     document.querySelectorAll('#bp-routes .path-row[data-pidx]').forEach(function(row){
@@ -868,6 +884,8 @@ reg('topo', function(){
     var sel=document.getElementById('hist-sel');
     if(histAid!=null&&candidates.some(function(n){return n.aid===histAid;}))sel.value=''+histAid;
     sel.addEventListener('change',function(){histAid=parseInt(this.value);loadHist();});
+    // ⚠️ S3 修复: 首次打开 histAid=null → 请求 aid=null → 422 假象 "0 段链路证据"
+    if(histAid==null)histAid=parseInt(sel.value);
     if(sel.value)loadHist();
   }
   function loadHist(){
@@ -1004,7 +1022,7 @@ reg('topo', function(){
   });
   document.getElementById('trst').addEventListener('click',function(){
     document.getElementById('tpan').value='';document.getElementById('taddr').value='';
-    S.topoPan=null;S.topoAddr=null;hlNode=null;
+    S.topoPan=null;S.topoAddr=null;S.topoT0=null;S.topoT1=null;hlNode=null;  // ⚠️ S3: 时间窗状态一并清 (残留影响后续跳时间线带旧窗)
     // ⚠️ U13-B 修复 (用户反馈 08-25): 重置必须退出聚焦模式 + 恢复全部时间窗,
     // 否则 focusAid 残留 → 重置后仍只显示聚焦链路链节点
     focusAid=null;
@@ -1055,65 +1073,19 @@ reg('topo', function(){
     this.title=silentHidden?'显示静默节点':'隐藏静默节点';
   });
 
-  // ═══ 时间滑块 (单滑块 = 窗口中心) ═══
+  // ═══ 时间滑块 (时刻游标, U13 2026-08-25 重构: 单滑块 = 时刻, 无窗口档位) ═══
+  // ⚠️ S3 清理 (2026-08-27): 删除 twin-size 档位时代死代码
+  // (getWinSize/getTimeWindow/updateTimeScale/applyTimeFilter/showPreviewMask/
+  //  hidePreviewMask/stepWindow/setWindowFromSize — twin-size 元素已删, 调用即 TypeError)
   function fmtTs(ts){var d=new Date(ts*1000);return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');}
   function sliderToTs(val){return tsStart+(tsEnd-tsStart)*(val/1000);}
   function tsToSlider(ts){return Math.round((ts-tsStart)/(tsEnd-tsStart)*1000);}
-
-  function getWinSize(){var ws=parseInt(document.getElementById('twin-size').value);if(ws>=9000)return null;return ws;}
-
-  function getTimeWindow(){
-    var ws=getWinSize();
-    if(ws==null||tCenter==null) return {t0:null,t1:null};  // 全部
-    var half=ws/2;
-    var t0=Math.max(tsStart,tCenter-half);
-    var t1=Math.min(tsEnd,t0+ws);
-    if(t1>=tsEnd){t1=tsEnd;t0=Math.max(tsStart,t1-ws);}
-    return {t0:t0,t1:t1};
-  }
 
   function updateTimeLabel(){
     // U13 时刻游标: 显示当前时刻
     var el=document.getElementById('ttime-label');
     if(el&&curT!=null) el.textContent=fmtTs(curT);
   }
-
-  // ── 时间刻度条: 总时长 + 当前窗口位置 (U7) ──
-  function updateTimeScale(tw){
-    var win=document.getElementById('ts-window'); if(!win) return;
-    var t0=document.getElementById('ts-t0'), t1=document.getElementById('ts-t1');
-    if(t0&&tsStart!=null){t0.textContent=fmtTs(tsStart);t1.textContent=fmtTs(tsEnd);}
-    var total=(tsEnd-tsStart)||1;
-    if(!tw) tw=getTimeWindow();
-    if(tw.t0==null){win.style.left='0%';win.style.width='100%';}
-    else{
-      win.style.left=Math.max(0,((tw.t0-tsStart)/total*100))+'%';
-      win.style.width=Math.min(100,((tw.t1-tw.t0)/total*100))+'%';
-    }
-  }
-
-  function applyTimeFilter(){
-    var tw=getTimeWindow();
-    S.topoT0=tw.t0; S.topoT1=tw.t1;  // 存全局状态
-    updateTimeLabel();
-    clearTimeout(tSliderTO);
-    tSliderTO=setTimeout(function(){
-      var pan=S.topoPan||'';
-      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} if(S.topoAddr&&cy){try{var a=parseInt(S.topoAddr,16);highlightNode(a);}catch(e){}} },tw.t0,tw.t1);
-    },300);
-  }
-
-  // ── 滑块预览遮罩 (D1) ──
-  function showPreviewMask(){
-    var g=document.getElementById('cy-graph'); if(!g) return;
-    var m=document.getElementById('time-mask');
-    if(!m){m=document.createElement('div');m.id='time-mask';m.className='time-mask';g.appendChild(m);}
-    var tw=getTimeWindow();
-    if(tw.t0==null){m.style.display='none';return;}
-    m.style.display='block';
-    m.textContent='⏱ 预览: '+fmtTs(tw.t0)+' ~ '+fmtTs(tw.t1);
-  }
-  function hidePreviewMask(){var m=document.getElementById('time-mask');if(m)m.style.display='none';}
 
   // ⚠️ U13 时刻游标 (2026-08-25 重构): 滑块 = 时刻, 拖动实时本地重渲染 (不请求后端)
   window.onTimeSlide=function(){
@@ -1127,42 +1099,6 @@ reg('topo', function(){
     clearTimeout(tSliderTO);
     if(S.topo) renderGraph(S.topo);
   };
-
-  function stepWindow(dir){
-    var ws=getWinSize();
-    if(ws==null) ws=120;
-    if(tCenter==null) tCenter=tsStart+ws/2;
-    var shift=dir*Math.max(5,ws/4);
-    tCenter=Math.max(tsStart+ws/2,Math.min(tsEnd-ws/2,tCenter+shift));
-    document.getElementById('tsl').value=tsToSlider(tCenter);
-    applyTimeFilter();
-    // 边界指示
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  }
-
-  function setWindowFromSize(){
-    var ws=getWinSize();
-    var sl=document.getElementById('tsl');
-    if(ws==null){
-      tCenter=null; sl.value=500; sl.disabled=true;
-      updateTimeLabel();
-      var pan=S.topoPan||'';
-      loadData(pan,function(d){try{renderGraph(d);}catch(e){} try{renderRoutePaths(d);}catch(e){} if(S.topoAddr&&cy){try{var a=parseInt(S.topoAddr,16);highlightNode(a);}catch(e){}} });
-      return;
-    }
-    sl.disabled=false;
-    if(tCenter==null) tCenter=tsStart+ws/2;
-    tCenter=Math.max(tsStart+ws/2,Math.min(tsEnd-ws/2,tCenter));
-    sl.value=tsToSlider(tCenter);
-    applyTimeFilter();
-  }
-
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  // ⚠️ 2026-08-25 时刻游标重构: tstep 按钮已删, 绑定曾致 null 异常中断初始化
-  // ⚠️ 2026-08-25 时刻游标重构: twin-size 控件已删, 此绑定曾致 null 异常中断初始化
 
 
   // S.topoT0/T1 → 绝对时间戳: 兼容数字 (拓扑滑块) / "HH:MM:SS" 字符串 (时间线保存)

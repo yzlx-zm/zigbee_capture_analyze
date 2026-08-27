@@ -16,6 +16,8 @@ _events_packet_count: int = 0  # 用于检测 packets 是否变化
 _cache_ls_tables: dict | None = None  # Link Status 邻居表缓存
 _cache_ls_key: tuple | None = None    # 邻居表缓存键 (包数, pan, t0, t1)
 _cache_asym: list | None = None       # 不对称链路缓存
+_cache_events: dict | None = None     # S3 (2026-08-27): events 端点整体缓存 (O(full)×4 重算)
+_cache_events_key: tuple | None = None  # 缓存键 (pkts 数, full 数, pan, t0, t1)
 
 
 def _build_phase3_supplements(pkts: list[dict], pan: int | None,
@@ -181,17 +183,21 @@ def _parent_map(full: list[dict], t0: float | None, t1: float | None) -> dict:
 
 
 def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
-                       max_gap: float = 60.0) -> dict:
+                       max_gap: float = 60.0, pan_int: int | None = None) -> dict:
     """全图链路时刻分段 (U13 时刻游标重构, 2026-08-25): 单遍扫描每节点
     RR 路径 / poll 父 的证据帧 → 分段 (签名变化或 >max_gap 间隔 → 新段).
     返回 {aid: [ {kind, t0, t1, relays, dst, parent}, ... ]}
-    T 时刻节点链路状态 = 分段中 t0<=T 的最后一个段 (最近一次证据)."""
+    T 时刻节点链路状态 = 分段中 t0<=T 的最后一个段 (最近一次证据).
+    S3 (2026-08-27): 加 pan_int 过滤 — 多 PAN 聚合抓包时 RR/poll 证据分属不同
+    网络, 不过滤会串网 (曾与链路历史端点同样缺陷)."""
     frames: dict[int, list] = {}
     for p in full:
         ts = p.get("ts", 0)
         if t0 is not None and ts < t0:
             continue
         if t1 is not None and ts > t1:
+            continue
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
             continue
         if p.get("nwk_cmd_id") == 5 and p.get("nwk_src") is not None:
             rr = p.get("route_record_relays") or {}
@@ -286,7 +292,7 @@ async def link_history(aid: int, pan: str = Query(default=""),
     full = get_full_packets() or pkts
     pan_int = int(pan, 16) if pan else None
 
-    segmap = _all_link_segments(full, time_start, time_end)
+    segmap = _all_link_segments(full, time_start, time_end, pan_int=pan_int)
     segs = segmap.get(aid, [])
     if not segs:
         return {"aid": aid, "segments": [], "error": "无链路证据帧 (该节点无 RR/poll)"}
@@ -299,7 +305,9 @@ async def link_history(aid: int, pan: str = Query(default=""),
         else:
             out.append({"t0": s["t0"], "t1": s["t1"], "kind": "parent",
                         "path_str": f"父: 0x{s['parent']:04X}", "parent": s["parent"]})
-
+    # ⚠️ S3 修复 (2026-08-27): 原缺 return → 端点恒返回 null → 前端 TypeError "加载失败";
+    # 补 return 时契约 = {aid, segments} (前端 d.segments 取用) — 不能返回裸数组
+    return {"aid": aid, "segments": out}
 
 
 @router.get("/topology/graph")
@@ -327,6 +335,13 @@ async def topology_from_events(pan: str = Query(default=""),
     if not pkts:
         return {"nodes": [], "edges": [], "coord": None}
     pan_int = int(pan, 16) if pan else None
+    # ⚠️ S3 (2026-08-27): 整体缓存 — 滑块拖动/时间窗切换每次请求都全量重算
+    # (_node_stats/_behavior_map/_parent_map/_all_link_segments 均 O(full)),
+    # 大包 (179 万帧) 时每个请求数秒; 键含包数/全量数/PAN/时间窗
+    global _cache_events, _cache_events_key
+    key = (len(pkts), len(get_full_packets() or pkts), pan_int, time_start, time_end)
+    if _cache_events is not None and key == _cache_events_key:
+        return _cache_events
     timeline = _ensure_events_timeline()
     ls_tables, asym = _build_phase3_supplements(pkts, pan_int, time_start, time_end)
     graph = rev.derive_topology(timeline, nodes, pan=pan_int,
@@ -336,7 +351,8 @@ async def topology_from_events(pan: str = Query(default=""),
     _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为状态
     # U13 时刻游标重构 (2026-08-25): 全图链路时刻分段 — 前端拖动游标纯本地过滤
     _full_pkts = get_full_packets()
-    graph["link_snapshots"] = _all_link_segments(_full_pkts if _full_pkts else pkts, time_start, time_end)
+    graph["link_snapshots"] = _all_link_segments(_full_pkts if _full_pkts else pkts,
+                                                 time_start, time_end, pan_int=pan_int)
     # ⚠️ U13-A3 (2026-08-25): 窗外节点灰度保留 — 窗口切换节点不跳变 (用户反馈:
     # 30s 窗一批节点, 下个窗另一批, 不连贯)。窗内时返回全量拓扑节点中窗内
     # 无活动的集合 (inactive_nodes), 前端灰度显示; 无过滤时不返回
@@ -353,6 +369,8 @@ async def topology_from_events(pan: str = Query(default=""),
             ]
         except Exception:
             graph["inactive_nodes"] = []
+    _cache_events = graph
+    _cache_events_key = key
     return graph
 
 
