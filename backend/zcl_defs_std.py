@@ -99,6 +99,19 @@ CLUSTER_COMMANDS_STD: dict[int, dict[int, str]] = {
         1: 'Read Handshake Param / Read Handshake Param Response',
         2: 'Write Handshake Param',
     },
+    # Over the Air Bootloading (0x0019) [ota.xml]
+    0x0019: {
+        0: 'Image Notify',
+        1: 'Query Next Image Request',
+        2: 'Query Next Image Response',
+        3: 'Image Block Request',
+        4: 'Image Page Request',
+        5: 'Image Block Response',
+        6: 'Upgrade End Request',
+        7: 'Upgrade End Response',
+        8: 'Query Specific File Request',
+        9: 'Query Specific File Response',
+    },
     # Power Profile (0x001A) [ha.xml]
     0x001A: {
         0: 'Power Profile Request / Power Profile Notification',
@@ -1161,6 +1174,106 @@ CMD_PAYLOAD_SCHEMAS_STD: dict[int, dict[int, dict[str, list]]] = {
             "C→S": [
                 {"name": 'partitioned Cluster Id', "type": 'bytes:4'},
                 {"name": 'write Attribute Records', "type": 'bytes:4'},
+            ],
+        },
+    },
+    # Over the Air Bootloading (0x0019) [ota.xml]
+    0x0019: {
+        0: {
+            "S→C": [
+                {"name": 'payload Type', "type": 'u8'},
+                {"name": 'query Jitter', "type": 'u8'},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'new File Version', "type": 'u32'},
+            ],
+        },
+        1: {
+            "C→S": [
+                {"name": 'field Control', "type": 'u8'},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'current File Version', "type": 'u32'},
+                {"name": 'hardware Version', "type": 'u16'},
+            ],
+        },
+        2: {
+            "S→C": [
+                {"name": 'status', "type": 'u8', "enum": {0: 'SUCCESS', 1: 'FAILURE', 126: 'NOT_AUTHORIZED', 128: 'MALFORMED_COMMAND', 129: 'UNSUP_COMMAND', 130: 'UNSUP_GENERAL_COMMAND', 131: 'UNSUP_MANUF_CLUSTER_COMMAND', 132: 'UNSUP_MANUF_GENERAL_COMMAND', 133: 'INVALID_FIELD', 134: 'UNSUPPORTED_ATTRIBUTE', 135: 'INVALID_VALUE', 136: 'READ_ONLY', 137: 'INSUFFICIENT_SPACE', 138: 'DUPLICATE_EXISTS', 139: 'NOT_FOUND', 140: 'UNREPORTABLE_ATTRIBUTE', 141: 'INVALID_DATA_TYPE', 142: 'INVALID_SELECTOR', 143: 'WRITE_ONLY', 144: 'INCONSISTENT_STARTUP_STATE', 145: 'DEFINED_OUT_OF_BAND', 147: 'ACTION_DENIED', 148: 'TIMEOUT', 149: 'ABORT', 150: 'INVALID_IMAGE', 151: 'WAIT_FOR_DATA', 152: 'NO_IMAGE_AVAILABLE', 153: 'REQUIRE_MORE_IMAGE', 154: 'NOTIFICATION_PENDING', 192: 'HARDWARE_FAILURE', 193: 'SOFTWARE_FAILURE', 195: 'UNSUPPORTED_CLUSTER', 196: 'LIMIT_REACHED'}},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'image Size', "type": 'u32'},
+            ],
+        },
+        3: {
+            "C→S": [
+                {"name": 'field Control', "type": 'u8'},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'file Offset', "type": 'u32'},
+                {"name": 'max Data Size', "type": 'u8'},
+                {"name": 'request Node Address', "type": 'bytes:4'},
+            ],
+        },
+        4: {
+            "C→S": [
+                {"name": 'field Control', "type": 'u8'},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'file Offset', "type": 'u32'},
+                {"name": 'max Data Size', "type": 'u8'},
+                {"name": 'page Size', "type": 'u16'},
+                {"name": 'response Spacing', "type": 'u16'},
+                {"name": 'request Node Address', "type": 'bytes:4'},
+            ],
+        },
+        5: {
+            "S→C": [
+                {"name": 'status', "type": 'u8', "enum": {0: 'SUCCESS', 1: 'FAILURE', 126: 'NOT_AUTHORIZED', 128: 'MALFORMED_COMMAND', 129: 'UNSUP_COMMAND', 130: 'UNSUP_GENERAL_COMMAND', 131: 'UNSUP_MANUF_CLUSTER_COMMAND', 132: 'UNSUP_MANUF_GENERAL_COMMAND', 133: 'INVALID_FIELD', 134: 'UNSUPPORTED_ATTRIBUTE', 135: 'INVALID_VALUE', 136: 'READ_ONLY', 137: 'INSUFFICIENT_SPACE', 138: 'DUPLICATE_EXISTS', 139: 'NOT_FOUND', 140: 'UNREPORTABLE_ATTRIBUTE', 141: 'INVALID_DATA_TYPE', 142: 'INVALID_SELECTOR', 143: 'WRITE_ONLY', 144: 'INCONSISTENT_STARTUP_STATE', 145: 'DEFINED_OUT_OF_BAND', 147: 'ACTION_DENIED', 148: 'TIMEOUT', 149: 'ABORT', 150: 'INVALID_IMAGE', 151: 'WAIT_FOR_DATA', 152: 'NO_IMAGE_AVAILABLE', 153: 'REQUIRE_MORE_IMAGE', 154: 'NOTIFICATION_PENDING', 192: 'HARDWARE_FAILURE', 193: 'SOFTWARE_FAILURE', 195: 'UNSUPPORTED_CLUSTER', 196: 'LIMIT_REACHED'}},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'file Offset', "type": 'u32'},
+                {"name": 'data Size', "type": 'u8'},
+                {"name": 'image Data', "type": 'u8'},
+            ],
+        },
+        6: {
+            "C→S": [
+                {"name": 'status', "type": 'u8', "enum": {0: 'SUCCESS', 1: 'FAILURE', 126: 'NOT_AUTHORIZED', 128: 'MALFORMED_COMMAND', 129: 'UNSUP_COMMAND', 130: 'UNSUP_GENERAL_COMMAND', 131: 'UNSUP_MANUF_CLUSTER_COMMAND', 132: 'UNSUP_MANUF_GENERAL_COMMAND', 133: 'INVALID_FIELD', 134: 'UNSUPPORTED_ATTRIBUTE', 135: 'INVALID_VALUE', 136: 'READ_ONLY', 137: 'INSUFFICIENT_SPACE', 138: 'DUPLICATE_EXISTS', 139: 'NOT_FOUND', 140: 'UNREPORTABLE_ATTRIBUTE', 141: 'INVALID_DATA_TYPE', 142: 'INVALID_SELECTOR', 143: 'WRITE_ONLY', 144: 'INCONSISTENT_STARTUP_STATE', 145: 'DEFINED_OUT_OF_BAND', 147: 'ACTION_DENIED', 148: 'TIMEOUT', 149: 'ABORT', 150: 'INVALID_IMAGE', 151: 'WAIT_FOR_DATA', 152: 'NO_IMAGE_AVAILABLE', 153: 'REQUIRE_MORE_IMAGE', 154: 'NOTIFICATION_PENDING', 192: 'HARDWARE_FAILURE', 193: 'SOFTWARE_FAILURE', 195: 'UNSUPPORTED_CLUSTER', 196: 'LIMIT_REACHED'}},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+            ],
+        },
+        7: {
+            "S→C": [
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'current Time', "type": 'bytes:4'},
+                {"name": 'upgrade Time', "type": 'bytes:4'},
+            ],
+        },
+        8: {
+            "C→S": [
+                {"name": 'request Node Address', "type": 'bytes:4'},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'current Zigbee Stack Version', "type": 'u16'},
+            ],
+        },
+        9: {
+            "S→C": [
+                {"name": 'status', "type": 'u8', "enum": {0: 'SUCCESS', 1: 'FAILURE', 126: 'NOT_AUTHORIZED', 128: 'MALFORMED_COMMAND', 129: 'UNSUP_COMMAND', 130: 'UNSUP_GENERAL_COMMAND', 131: 'UNSUP_MANUF_CLUSTER_COMMAND', 132: 'UNSUP_MANUF_GENERAL_COMMAND', 133: 'INVALID_FIELD', 134: 'UNSUPPORTED_ATTRIBUTE', 135: 'INVALID_VALUE', 136: 'READ_ONLY', 137: 'INSUFFICIENT_SPACE', 138: 'DUPLICATE_EXISTS', 139: 'NOT_FOUND', 140: 'UNREPORTABLE_ATTRIBUTE', 141: 'INVALID_DATA_TYPE', 142: 'INVALID_SELECTOR', 143: 'WRITE_ONLY', 144: 'INCONSISTENT_STARTUP_STATE', 145: 'DEFINED_OUT_OF_BAND', 147: 'ACTION_DENIED', 148: 'TIMEOUT', 149: 'ABORT', 150: 'INVALID_IMAGE', 151: 'WAIT_FOR_DATA', 152: 'NO_IMAGE_AVAILABLE', 153: 'REQUIRE_MORE_IMAGE', 154: 'NOTIFICATION_PENDING', 192: 'HARDWARE_FAILURE', 193: 'SOFTWARE_FAILURE', 195: 'UNSUPPORTED_CLUSTER', 196: 'LIMIT_REACHED'}},
+                {"name": 'manufacturer Id', "type": 'u16'},
+                {"name": 'image Type', "type": 'u16'},
+                {"name": 'file Version', "type": 'u32'},
+                {"name": 'image Size', "type": 'u32'},
             ],
         },
     },
@@ -4619,6 +4732,22 @@ CLUSTER_ATTRIBUTES_STD: dict[int, dict[int, str]] = {
         7: 'number of send retries',
         8: 'sender timeout',
         9: 'receiver timeout',
+    },
+    # Over the Air Bootloading (0x0019) [ota.xml]
+    0x0019: {
+        0: 'OTA Upgrade Server ID',
+        1: 'Offset (address) into the file',
+        2: 'OTA Current File Version',
+        3: 'OTA Current ZigBee Stack Version',
+        4: 'OTA Downloaded File Version',
+        5: 'OTA Downloaded ZigBee Stack Version',
+        6: 'OTA Upgrade Status',
+        7: 'Manufacturer ID',
+        8: 'Image Type ID',
+        9: 'Minimum Block Request Period',
+        10: 'Image Stamp',
+        11: 'Upgrade Activation Policy',
+        12: 'Upgrade Timeout Policy',
     },
     # Power Profile (0x001A) [ha.xml]
     0x001A: {

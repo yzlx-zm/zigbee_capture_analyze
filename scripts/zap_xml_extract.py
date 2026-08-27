@@ -36,6 +36,7 @@ CLUSTER_FILES = [
     "wwah-silabs.xml", "ami.xml", "cba.xml", "hc.xml",
     "lo.xml", "ta.xml", "relay-control.xml", "sleeping-mesh.xml",
     "zigbee-direct.xml", "sample-extensions.xml", "silabs.xml",
+    "ota.xml",  # S4 (2026-08-27 用户帧 805 OTA 实锤): OTA Upgrade 簇 (0x0019) 缺失
 ]
 
 # ZAP 类型 → 本工具 schema 类型
