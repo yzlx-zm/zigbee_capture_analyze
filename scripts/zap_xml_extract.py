@@ -7,6 +7,7 @@ Zigbee Cluster Library spec 一致, 机器可读 — 替代人工逐个簇核对
 输出: backend/zcl_defs_std.py — 含:
   CLUSTER_COMMANDS_STD: {cluster_code: {cmd_code: "命令名"}}   (全部簇命令)
   CMD_PAYLOAD_SCHEMAS_STD: {cluster: {cmd: {方向: [字段]}}}    (字段级载荷)
+  CLUSTER_ATTRIBUTES_STD: {cluster_code: {attr_code: "属性名"}} (属性 ID → 名, Read Attributes 显示用)
   ENUMS_STD: {枚举类型名: {value: "item 名"}}                  (枚举表)
 
 类型映射 (ZAP → 本工具 schema 类型):
@@ -81,7 +82,17 @@ def parse_clusters(xml: str, enums: dict) -> dict:
         if not code_m or not name_m:
             continue
         code = int(code_m.group(1), 16)
-        clusters[code] = {"name": name_m.group(1).strip(), "cmds": {}}
+        clusters[code] = {"name": name_m.group(1).strip(), "cmds": {}, "attrs": {}}
+        # 属性定义 (Read Attributes 属性 ID → 名, 对齐 Ubiqua 显示)
+        for am in re.finditer(r'<attribute\b([^>]*)>([^<]*)</attribute>', body):
+            aa = dict(re.findall(r'(\w+)="([^"]*)"', am.group(1)))
+            try:
+                acode = int(aa["code"], 16)
+            except (KeyError, ValueError):
+                continue
+            aname = am.group(2).strip() or _camel_to_words(aa.get("define", ""))
+            if acode not in clusters[code]["attrs"]:
+                clusters[code]["attrs"][acode] = aname
         for cm in re.finditer(
                 r'<command\b([^>]*)>(.*?)</command>', body, re.S):
             attrs, cbody = cm.group(1), cm.group(2)
@@ -164,9 +175,11 @@ def main() -> None:
                 clusters[code] = c
                 src_map[code] = fn
             else:
-                # 同簇多文件 (silabs 扩展) — 合并命令 (已有优先)
+                # 同簇多文件 (silabs 扩展) — 合并命令/属性 (已有优先)
                 for cc, cmd in c["cmds"].items():
                     clusters[code]["cmds"].setdefault(cc, cmd)
+                for ac, an in c["attrs"].items():
+                    clusters[code]["attrs"].setdefault(ac, an)
 
     # ── 生成 Python 数据文件 ──
     lines = []
@@ -212,6 +225,18 @@ def main() -> None:
                     lines.append(f'                {{{", ".join(parts)}}},')
                 lines.append('            ],')
             lines.append('        },')
+        lines.append('    },')
+    lines.append('}')
+    lines.append('')
+    lines.append('CLUSTER_ATTRIBUTES_STD: dict[int, dict[int, str]] = {')
+    for code in sorted(clusters):
+        attrs = clusters[code]["attrs"]
+        if not attrs:
+            continue
+        lines.append(f'    # {clusters[code]["name"]} (0x{code:04X}) [{src_map[code]}]')
+        lines.append(f'    0x{code:04X}: {{')
+        for ac in sorted(attrs):
+            lines.append(f'        {ac}: {attrs[ac]!r},')
         lines.append('    },')
     lines.append('}')
     lines.append('')

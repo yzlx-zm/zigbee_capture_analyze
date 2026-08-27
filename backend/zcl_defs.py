@@ -1,7 +1,8 @@
 """ZCL (Zigbee Cluster Library) 定义 — Cluster / Command / Attribute 名称映射"""
 from __future__ import annotations
 
-from .zcl_defs_std import CLUSTER_COMMANDS_STD, CMD_PAYLOAD_SCHEMAS_STD  # noqa: E402  (S4: ZAP XML 生成, scripts/zap_xml_extract.py)
+from .zcl_defs_std import (CLUSTER_COMMANDS_STD, CMD_PAYLOAD_SCHEMAS_STD,
+                            CLUSTER_ATTRIBUTES_STD)  # noqa: E402  (S4: ZAP XML 生成, scripts/zap_xml_extract.py)
 # ── Cluster 名称 ──
 CLUSTER_NAMES: dict[int, str] = {
     0x0000: "Basic",
@@ -184,21 +185,6 @@ _ZCL_STATUS_NAMES: dict[int, str] = {
     0xC3: "UNSUPPORTED_CLUSTER",
 }
 
-_ATTR_NAMES: dict[int, dict[int, str]] = {
-    0x0000: {0x0000: "ZCLVersion", 0x0001: "ApplicationVersion", 0x0002: "StackVersion",
-             0x0004: "ManufacturerName", 0x0005: "ModelIdentifier", 0x0006: "DateCode",
-             0x0007: "PowerSource", 0x0010: "LocationDescription"},
-    0x0006: {0x0000: "OnOff"},
-    0x0008: {0x0000: "CurrentLevel", 0x0011: "OnOffTransitionTime", 0x0012: "OnLevel",
-             0x0013: "OnTransitionTime", 0x0014: "OffTransitionTime"},
-    0x0300: {0x0000: "CurrentHue", 0x0001: "CurrentSaturation", 0x0002: "RemainingTime",
-             0x0003: "CurrentX", 0x0004: "CurrentY", 0x0007: "ColorTemperatureMireds",
-             0x0008: "ColorMode", 0x000F: "ColorCapabilities"},
-    0x0102: {0x0000: "WindowCoveringType", 0x0001: "PhysicalClosedLimitLift",
-             0x0003: "CurrentPositionLift", 0x0008: "CurrentPositionTilt",
-             0x0010: "ConfigStatus", 0x001A: "CurrentPositionLiftPercentage",
-             0x001B: "CurrentPositionTiltPercentage"},
-}
 
 # ── 标准控制簇命令载荷 schema (cluster → cmd → 方向 → [字段]) ──
 # 方向: "C→S" = Client→Server (命令), "S→C" = Server→Client (响应);
@@ -211,16 +197,16 @@ CMD_PAYLOAD_SCHEMAS: dict[int, dict[int, dict[str, list[_Field]]]] = CMD_PAYLOAD
 # ── 全局命令载荷 schema (frame type=0, ZCL spec 2.4.2) ──
 GLOBAL_PAYLOAD_SCHEMAS: dict[int, list[_Field]] = {
     0x00: [{"name": "AttributeList", "type": "repeat",
-            "repeat": [{"name": "AttributeID", "type": "u16"}]}],
+            "repeat": [{"name": "AttributeID", "type": "attr_id"}]}],
     0x01: [{"name": "AttributeRecords", "type": "attr_records_rsp"}],
     0x02: [{"name": "AttributeRecords", "type": "attr_records"}],
     0x03: [{"name": "AttributeRecords", "type": "attr_records"}],
     0x04: [{"name": "AttributeStatusRecords", "type": "repeat",
-            "repeat": [{"name": "AttributeID", "type": "u16"},
+            "repeat": [{"name": "AttributeID", "type": "attr_id"},
                        {"name": "Status", "type": "u8"}]}],
     0x05: [{"name": "AttributeRecords", "type": "attr_records"}],
     0x06: [{"name": "Direction", "type": "u8", "enum": {0: "上报配置 (带 delta)", 1: "默认值配置 (带 value)"}},
-           {"name": "AttributeID", "type": "u16"},
+           {"name": "AttributeID", "type": "attr_id"},
            {"name": "DataType", "type": "u8"},
            {"name": "MinimumInterval", "type": "u16"},
            {"name": "MaximumInterval", "type": "u16"},
@@ -228,10 +214,10 @@ GLOBAL_PAYLOAD_SCHEMAS: dict[int, list[_Field]] = {
     0x07: [{"name": "StatusRecords", "type": "repeat",
             "repeat": [{"name": "Status", "type": "u8"},
                        {"name": "Direction", "type": "u8"},
-                       {"name": "AttributeID", "type": "u16"}]}],
+                       {"name": "AttributeID", "type": "attr_id"}]}],
     0x08: [{"name": "Records", "type": "repeat",
             "repeat": [{"name": "Direction", "type": "u8"},
-                       {"name": "AttributeID", "type": "u16"}]}],
+                       {"name": "AttributeID", "type": "attr_id"}]}],
     0x09: [{"name": "ReadReportingConfigRecords", "type": "raw",
             "note": "[status][direction][attr_id][data_type][...] 变长结构"}],
     0x0A: [{"name": "AttributeReports", "type": "attr_records"}],
@@ -266,6 +252,14 @@ def _schema_for(cluster_id: int, cmd_id: int, direction: str) -> list[_Field] | 
     if direction in by_dir:
         return by_dir[direction]
     return by_dir.get("*")
+
+
+def get_attribute_name(cluster_id: int | None, attr_id: int) -> str | None:
+    """属性 ID → 属性名 (S4 2026-08-27: ZAP XML 生成表; Read Attributes 载荷显示用).
+    未收录簇/未知 ID → None (前端显示原始 ID)."""
+    if cluster_id is not None and cluster_id in CLUSTER_ATTRIBUTES_STD:
+        return CLUSTER_ATTRIBUTES_STD[cluster_id].get(attr_id)
+    return None
 
 
 def _norm_direction(direction: str | None) -> str:
@@ -330,7 +324,7 @@ def _parse_attr_records(buf: bytes, off: int, with_status: bool,
             if st != 0:
                 # 非成功状态: 记录后无 data_type/value (0x86=属性不支持 素材实证:
                 # Read Attr Rsp [attr 0xFFC0][0x86] 曾按值解析错位)
-                nm = _ATTR_NAMES.get(cluster_id or 0, {}).get(attr_id, "")
+                nm = get_attribute_name(cluster_id, attr_id) or ""
                 fields.append({"field": f"attr 0x{attr_id:04X}{(' ' + nm) if nm else ''}",
                                "value": f"status 0x{st:02X}",
                                "note": _ZCL_STATUS_NAMES.get(st, "非成功状态")})
@@ -342,7 +336,7 @@ def _parse_attr_records(buf: bytes, off: int, with_status: bool,
         if consumed <= 0:
             break
         off += consumed
-        nm = _ATTR_NAMES.get(cluster_id or 0, {}).get(attr_id, "")
+        nm = get_attribute_name(cluster_id, attr_id) or ""
         fields.append({"field": f"attr 0x{attr_id:04X}{(' ' + nm) if nm else ''}",
                        "value": val,
                        "note": DATA_TYPE_NAMES.get(data_type, f"type 0x{data_type:02X}")})
@@ -374,6 +368,14 @@ def _parse_schema_fields(schema: list[_Field], payload: bytes,
             en = fd.get("enum")
             txt = f"{en.get(v, '')} ({v})" if en and v in en else _fmt_int(v, n * 2)
             fields.append({"field": fname, "value": txt, "note": fd.get("note", "")})
+        elif ftype == "attr_id":
+            # S4 (2026-08-27 用户要求): 属性 ID 显示属性名 (ZAP XML 生成表, 对齐
+            # Ubiqua "Attribute ID: [0x0004] Manufacturer Name"); 未知簇/ID 显示原始值
+            if off + 2 > len(payload): break
+            v = int.from_bytes(payload[off:off + 2], "little"); off += 2
+            an = get_attribute_name(cluster_id, v)
+            txt = f"{an} ({v})" if an else _fmt_int(v, 4)
+            fields.append({"field": fname, "value": txt, "note": fd.get("note", "")})
         elif ftype == "zstr":
             if off + 1 > len(payload): break
             s_len = payload[off]; off += 1
@@ -396,7 +398,8 @@ def _parse_schema_fields(schema: list[_Field], payload: bytes,
                 fields.append({"field": fname, "value": rem.hex(), "note": fd.get("note", "")})
             off = len(payload)
         elif ftype == "repeat":
-            item_fields, new_off = _parse_repeat(fd.get("repeat", []), payload, off)
+            item_fields, new_off = _parse_repeat(fd.get("repeat", []), payload, off,
+                                                 cluster_id=cluster_id)
             if not item_fields:
                 break  # 首轮即失败 → 上层兜底
             fields.append({"field": fname, "value": f"{len(item_fields)} 项", "note": ""})
@@ -417,7 +420,8 @@ def _parse_schema_fields(schema: list[_Field], payload: bytes,
     return fields, off
 
 
-def _parse_repeat(item_schema: list[_Field], payload: bytes, off: int) -> tuple[list[dict], int]:
+def _parse_repeat(item_schema: list[_Field], payload: bytes, off: int,
+                  cluster_id: int | None = None) -> tuple[list[dict], int]:
     """repeat 结构: 循环解析 item_schema 直到字节耗尽或首轮越界."""
     fields: list[dict] = []
     idx = 1
@@ -434,6 +438,14 @@ def _parse_repeat(item_schema: list[_Field], payload: bytes, off: int) -> tuple[
                 if off + 2 > len(payload): return fields, off
                 v = int.from_bytes(payload[off:off + 2], "little"); off += 2
                 fields.append({"field": f"#{idx} {fd.get('name', '')}", "value": _fmt_int(v, 4),
+                               "note": fd.get("note", "")})
+            elif ftype == "attr_id":
+                # S4 (2026-08-27): 属性 ID → 属性名 (ZAP XML 生成表, 对齐 Ubiqua)
+                if off + 2 > len(payload): return fields, off
+                v = int.from_bytes(payload[off:off + 2], "little"); off += 2
+                an = get_attribute_name(cluster_id, v)
+                fields.append({"field": f"#{idx} {fd.get('name', '')}",
+                               "value": f"{an} ({v})" if an else _fmt_int(v, 4),
                                "note": fd.get("note", "")})
             else:
                 return fields, off  # repeat 内仅支持定长字段
