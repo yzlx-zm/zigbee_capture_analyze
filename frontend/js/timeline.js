@@ -255,6 +255,13 @@ reg('tl', function(){
           for(var ri=0;ri<pathRelays.length;ri++)pathNodes.push('0x'+pathRelays[ri].toString(16).toUpperCase().padStart(4,'0'));
           if(typeof p.nwk_dst==='number')pathNodes.push('0x'+p.nwk_dst.toString(16).toUpperCase().padStart(4,'0'));
           pathStr='<span class="tl-path" title="路径: '+pathNodes.join(' → ')+'">'+pathNodes.join('→')+'</span>';
+        }else if(typeof p.nwk_src==='number'&&typeof p.nwk_dst==='number'){
+          // S4 (2026-08-27 用户要求): NWK 帧无中继 (直连) 也显示完整 Src→Dst —
+          // 原 "—" 对时序分析无信息量; tooltip 注明直连
+          pathStr='<span class="tl-path" title="直连 (无中继): 0x'+p.nwk_src.toString(16).toUpperCase().padStart(4,'0')
+            +' → 0x'+p.nwk_dst.toString(16).toUpperCase().padStart(4,'0')+'">'
+            +'0x'+p.nwk_src.toString(16).toUpperCase().padStart(4,'0')
+            +'→0x'+p.nwk_dst.toString(16).toUpperCase().padStart(4,'0')+'</span>';
         }else if(typeof p.nwk_src!=='number'&&typeof p.mac_src==='number'){
           var macPath='0x'+p.mac_src.toString(16).toUpperCase().padStart(4,'0')
             +'→0x'+(typeof p.mac_dst==='number'?p.mac_dst.toString(16).toUpperCase().padStart(4,'0'):'????');
