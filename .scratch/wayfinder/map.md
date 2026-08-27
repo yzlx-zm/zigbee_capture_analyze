@@ -138,6 +138,18 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   ("Write Attributes" 实为 GP Proxy Commissioning Mode, 官方 SDK command-id.h
   依据 → zcl_defs 补 GP 表 + 前端 frame_type 守卫不猜) — 帧96 标题
   "ZCL GP Proxy Commissioning Mode" ✓, poll FCF 0x8863 ✓, 回归 3 套全过
+- [S3 拓扑页稳定化](issues/S3-拓扑页稳定化.md) — 打包前稳定化第 3 站 (用户指定
+  下一站): **P1×5 清零** (①runLayout 固定列 nd ReferenceError — 布局二次切换
+  崩溃, CDP 异常实测 ②link-history 端点缺 return — 恒 null → 前端 TypeError
+  "加载失败"; 补契约 {aid,segments} 非裸数组 ③histAid=null → aid=null 422
+  假象 "0 段链路证据" ④route 边 (U13 时刻游标) tooltip "#NaN 第NaN跳" ⑤路径行
+  hover 高亮按 path_idx 匹配永不命中 — 改路径链匹配) + **P2×6** (死代码 8 函数
+  清理 twin-size 已删 / trst 清 S.topoT0/T1 / 小网络按钮文本与实际布局不一致 /
+  _all_link_segments PAN 过滤 (多 PAN 证据串网) / events 整体缓存 (O(full)×4,
+  键=包数/PAN/t0/t1, 同窗 0.26→0.20s) / runLayout 缩放失效行删除);
+  素材实证: 中继包 838D 链路历史 2 段 (poll 父 0x1885 + RR 路径) 与 U13 一致,
+  U14 行为状态复现 (rejoining/offline/poll 0.245s); 提交 cc88866;
+  回归 zcl_fcf 12/12 + p1 15/15 + p2 4/4 + parser_verify passed; CDP 12/12 (0 异常)
 
 ## Not yet specified
 
