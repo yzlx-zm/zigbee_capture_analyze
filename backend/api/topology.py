@@ -364,12 +364,15 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
     + online 协议判定 (终端 poll / 路由任意帧, 用户对齐).
     graph 与 events 两端点共用 — 拓扑页实际消费 events (2026-08-24 自审)."""
     full = get_full_packets()
-    stats, _ls, _asym = _node_stats(pkts, pan_int)
+    # ⚠️ S3 修复 (用户 4 问): 证据/在线/统计判定用**实际生效 PAN** — 请求 pan=None 时
+    # derive 自动选主 PAN (graph.main_pan), 证据不过滤会混入其他 PAN (C638 实锤)
+    effective_pan = pan_int if pan_int is not None else graph.get("main_pan")
+    stats, _ls, _asym = _node_stats(pkts, effective_pan)
     beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
-    parents = _link_evidence_parent(full if full else pkts, t0, t1, pan_int)
+    parents = _link_evidence_parent(full if full else pkts, t0, t1, effective_pan)
     # 在线判定 (协议证据): 终端须窗内有 poll; 路由/未知 = 窗内任意帧
     dev_types = {nd["aid"]: nd.get("device_type", "unknown") for nd in graph.get("nodes", [])}
-    online = _online_map(full if full else pkts, t0, t1, pan_int, dev_types)
+    online = _online_map(full if full else pkts, t0, t1, effective_pan, dev_types)
     # 下行 source-route: [dst] + reversed(relays) + [src] (芯科: concentrator 反转 relay 列表)
     downlink_map: dict[int, list[int]] = {}
     for rp in graph.get("route_paths", []):
@@ -408,6 +411,14 @@ async def link_history(aid: int, pan: str = Query(default=""),
     pkts = get_packets()
     full = get_full_packets() or pkts
     pan_int = int(pan, 16) if pan else None
+    # ⚠️ S3 修复 (用户 4 问): 无 pan 参数时与 derive_topology 同口径 —
+    # 自动用主 PAN (曾不过滤 → 多 PAN 素材链路历史串网)
+    if pan_int is None:
+        try:
+            _g = rev.derive_topology(_ensure_events_timeline(), get_nodes(), pan=None)
+            pan_int = _g.get("main_pan")
+        except Exception:
+            pan_int = None
 
     segmap = _all_link_segments(full, time_start, time_end, pan_int=pan_int)
     segs = segmap.get(aid, [])
@@ -470,15 +481,26 @@ async def topology_from_events(pan: str = Query(default=""),
     # ① 节点全量: 时间窗切换节点不消失 (曾窗内事件集 → 下个窗消失/灰显, 用户反馈问题大)
     #    全量节点 = 全量事件节点 ∪ 链路证据帧节点 (poll/assoc/源路由 的参与节点)
     full_graph = rev.derive_topology(timeline, nodes, pan=pan_int)
+    # ⚠️ S3 修复 (2026-08-27, 用户 4 问): 节点合并必须用 derive **实际生效的 PAN**
+    # (graph["main_pan"] = 主 PAN 或请求 PAN) — 曾传请求 pan_int=None → 不过滤 →
+    # 其他 PAN 的证据节点全混入主 PAN 拓扑 (C638 pan=0xC3D3 ≠ 0x580C 实锤,
+    # 用户反馈"很多黄色节点都不是同一个 panid")
+    effective_pan = full_graph.get("main_pan")
     node_aids = {nd["aid"] for nd in full_graph["nodes"]}
-    ev_nodes = _link_evidence_parent(_full_pkts, None, None, pan_int)
+    ev_nodes = _link_evidence_parent(_full_pkts, None, None, effective_pan)
+    # ⚠️ S3 修复 (用户 4 问): 每个 PAN 的协调器 0x0000 强制入节点集 —
+    # 曾源路由下行链头 0 被 _put 的 aid==0 守卫跳过 → 无路由事件网络
+    # (C3D3: 60 节点全 down 证据) 缺协调器根, 用户问题 1 实锤
+    ev_nodes = dict(ev_nodes)
+    if effective_pan is not None:
+        ev_nodes[0] = {"parent": None, "evidence": None, "ts": None}
     for aid in ev_nodes:
         if aid in node_aids:
             continue
         n = nodes.get(aid, {})
         full_graph["nodes"].append({
             "aid": aid, "label": f"0x{aid:04X}", "seen": n.get("seen", 0),
-            "pan": pan_int if pan_int is not None else n.get("pan"),
+            "pan": effective_pan if effective_pan is not None else n.get("pan"),
             "is_coord": aid == 0, "depth": -1, "parent": None, "children": [],
             "coord_traffic": 0, "type_list": n.get("type_list", [])[:10],
             "device_type": n.get("device_type", "unknown"),
@@ -487,7 +509,7 @@ async def topology_from_events(pan: str = Query(default=""),
     _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为 + S3 online/父证据
     # ② 链路时刻分段 (30s 窗 + assoc/down 证据): 前端拖动游标纯本地过滤
     graph["link_snapshots"] = _all_link_segments(_full_pkts, time_start, time_end,
-                                                 pan_int=pan_int)
+                                                 pan_int=graph.get("main_pan"))
     _cache_events = graph
     _cache_events_key = key
     return graph

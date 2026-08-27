@@ -14,21 +14,20 @@ await send('Page.enable');await send('Runtime.enable');
 await send('Page.navigate',{url:TARGET});
 await sleep(9000);
 
-// 1. 加载 + 节点全量
+// 1. 加载 + 节点全量 (S3-4问修复后: 主 PAN 0x580C = 10 节点, 异 PAN 节点全排除)
 const loadInfo = await ev(`(function(){
   return {canvas:!!document.querySelector('#cy-graph canvas'),
           tinfo:document.getElementById('tinfo')?.textContent||'NO',
           hasNbBtn:!!document.getElementById('tnb-toggle')};})()`);
-check('加载 (节点全量)', loadInfo.canvas && loadInfo.tinfo.includes('78 节点'), JSON.stringify(loadInfo));
+check('加载 (主PAN 10 节点)', loadInfo.canvas && loadInfo.tinfo.includes('10 节点'), JSON.stringify(loadInfo));
 check('邻居边按钮已移除', loadInfo.hasNbBtn===false, '');
 
-// 2. 时间窗过滤 → offline 灰显 (通过 loadData 带参 — 模拟跳转: 前端用 S.topoT0 契约,
-// 直接调用页面内 window 层不可达, 用 fetch 验证后端 + 页面内手动渲染)
+// 2. 时间窗过滤 → offline 灰显 (前 4s 窗: 10 节点 3 离线)
 const winData = await ev(`(async function(){
   var r=await fetch('/api/topology/events?time_start=1780364526&time_end=1780364535');
   var d=await r.json();
   return {nodes:d.nodes.length, off:d.nodes.filter(n=>!n.online).length};})()`);
-check('时间窗后端 online 判定 (前4s 52 离线)', winData.nodes===78 && winData.off===52, JSON.stringify(winData));
+check('时间窗后端 online 判定 (前4s 3 离线)', winData.nodes===10 && winData.off===3, JSON.stringify(winData));
 
 // 3. 时刻游标拖动 (slideMode → 30s 窗)
 await ev(`(function(){var sl=document.getElementById('tsl');sl.value=300;onTimeSlide();return 1;})()`);
