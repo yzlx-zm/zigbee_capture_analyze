@@ -223,12 +223,13 @@ reg('tl', function(){
         // U16-3 摘要列 (2026-08-25): 类型列改后端 summary 简述 (如 "ZCL On/Off C→S 0x0006" /
         // "Leave rejoin"), 长文本截断 hover 全显; 事件徽章 (U5) 保留在摘要后
         // U16-6 层级着色 (2026-08-25): 摘要文字+底色按 layer (ZCL绿/APS紫/NWK蓝/MAC DataReq红/其他灰)
-        var lyCls='tl-ly-other';
-        if(p.layer==='zcl')lyCls='tl-ly-zcl';
-        else if(p.layer==='aps')lyCls='tl-ly-aps';
-        else if(p.layer==='nwk')lyCls='tl-ly-nwk';
-        else if(p.layer==='mac_dreq')lyCls='tl-ly-macdreq';
-        else if(p.layer==='mac')lyCls='tl-ly-mac';
+        // S4 (2026-08-27 用户需求): 整行文字着色 — 摘要列文字色 + 行级类 (CSS .tl-row-* 整行 td 着色)
+        var lyCls='tl-ly-other', lyRow='tl-row-other';
+        if(p.layer==='zcl'){lyCls='tl-ly-zcl';lyRow='tl-row-zcl';}
+        else if(p.layer==='aps'){lyCls='tl-ly-aps';lyRow='tl-row-aps';}
+        else if(p.layer==='nwk'){lyCls='tl-ly-nwk';lyRow='tl-row-nwk';}
+        else if(p.layer==='mac_dreq'){lyCls='tl-ly-macdreq';lyRow='tl-row-macdreq';}
+        else if(p.layer==='mac'){lyCls='tl-ly-mac';lyRow='tl-row-mac';}
         var typeDisp=p.summary
           ? '<span class="tl-summary '+lyCls+'" title="'+p.summary+'">'+p.summary+'</span>'
           : p.pkt_type;
@@ -263,7 +264,7 @@ reg('tl', function(){
         // U16-4: decIcon (✅/🔒/📡) 原在状态列, 随列删除移到摘要列前
         // U16-5: APS Ctr 列 (请求/ack 帧 counter 肉眼对应)
         var apsCtr=typeof p.aps_counter==='number'?String(p.aps_counter):'—';
-        h+='<tr data-pid="'+p.id+'" class="tl-row"><td>'+(p.packet_id!=null?p.packet_id:'-')+'</td><td>'+ts+'</td><td>'+decIcon+typeDisp+evBadge+'</td><td>'+pathStr+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+apsCtr+'</td></tr>';}
+        h+='<tr data-pid="'+p.id+'" class="tl-row '+lyRow+'"><td>'+(p.packet_id!=null?p.packet_id:'-')+'</td><td>'+ts+'</td><td>'+decIcon+typeDisp+evBadge+'</td><td>'+pathStr+'</td><td>'+ns+'</td><td>'+nd+'</td><td>'+apsCtr+'</td></tr>';}
       document.getElementById('tltb').innerHTML=h||'<tr><td colspan="7" class="tl-empty-row">无匹配数据'+(ctx?' — 条件: '+ctx:'')+'<br><span class="t-10">提示: 尝试放宽过滤条件（清空节点或 PAN 再查）</span></td></tr>';
       // Click-to-select handler
       document.querySelectorAll('#tltb tr.tl-row').forEach(function(tr){
