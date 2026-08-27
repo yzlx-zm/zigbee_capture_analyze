@@ -602,7 +602,9 @@ def _extract_nodes_from_packets(packets: list[dict], full_packets: list[dict] | 
 
     for p in packets:
         pan = p["pan_src"] or p["pan_dst"]
-        for addr in (p["mac_src"], p["mac_dst"], p["nwk_src"], p["nwk_dst"]):
+        # S4 (2026-08-27): .get — pcap 全量化后 _packets 含纯 MAC 帧 (poll/Beacon/
+        # Ack), tshark 输出无 nwk_src/nwk_dst 键 (cubx 有默认 None) → 直接索引 KeyError
+        for addr in (p.get("mac_src"), p.get("mac_dst"), p.get("nwk_src"), p.get("nwk_dst")):
             if addr is None or addr > 0xFFF7:
                 continue
             if addr not in nodes:
@@ -744,7 +746,7 @@ async def packet_summary(addr: str = "", pan: str = "",
     matched = []
     for p in _packets:
         if addr_int is not None:
-            if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
+            if p.get("nwk_src") != addr_int and p.get("nwk_dst") != addr_int and p.get("mac_src") != addr_int and p.get("mac_dst") != addr_int:
                 continue
         if pan_int is not None:
             if p["pan_src"] != pan_int and p["pan_dst"] != pan_int:
@@ -767,7 +769,7 @@ async def packet_summary(addr: str = "", pan: str = "",
             if p.get("nwk_src") == addr_int and p.get("nwk_dst") and p["nwk_dst"] < 0xFFF0:
                 peer = p["nwk_dst"]
             elif p.get("nwk_dst") == addr_int and p.get("nwk_src") and p["nwk_src"] < 0xFFF0:
-                peer = p["nwk_src"]
+                peer = p.get("nwk_src")
             if peer is not None:
                 peers[peer] = peers.get(peer, 0) + 1
         top_peers = sorted(peers.items(), key=lambda x: -x[1])[:5]
@@ -834,7 +836,7 @@ async def packet_list(addr: str = "", pan: str = "",
     matched: list[tuple[int, dict]] = []
     for idx, p in enumerate(_packets):
         if addr_int is not None:
-            if p["nwk_src"] != addr_int and p["nwk_dst"] != addr_int and p["mac_src"] != addr_int and p["mac_dst"] != addr_int:
+            if p.get("nwk_src") != addr_int and p.get("nwk_dst") != addr_int and p.get("mac_src") != addr_int and p.get("mac_dst") != addr_int:
                 continue
         if pan_int is not None:
             if p["pan_src"] != pan_int and p["pan_dst"] != pan_int:

@@ -455,17 +455,28 @@ reg('tl', function(){
         var secEnabled=fct['zbee_nwk.security']==='1';
         nwkFields.push(['Security', secEnabled?'Enabled':'Disabled']);
         // S4 (2026-08-27 用户要求对齐 Ubiqua): FCF 完整值 + 位分解 + 源路由中继列表
+        // ⚠️ 字段名双路径兼容: cubx fallback (protocol_version/discover_route/
+        // security_enabled/source_route/dst_ieee/src_ieee, Yes/No) vs tshark 原生
+        // (proto_version/discovery/security/src_route/ext_dst/ext_src, 1/0)
+        function _fct(f, keys){
+          for(var ki=0;ki<keys.length;ki++){
+            var v=f[keys[ki]];
+            if(v!=null)return v;
+          }
+          return null;
+        }
         if(fct['zbee_nwk.fcf']){
           nwkFields.push(['Frame Control', fct['zbee_nwk.fcf']]);
+          function _yn(v){return v===null?null:(String(v)==='1'||String(v)==='Yes'?'Yes':String(v)==='0'||String(v)==='No'?'No':v);}
           var fcfRows=[
-            ['Frame Type', fct['zbee_nwk.frame_type']],
-            ['Protocol Version', fct['zbee_nwk.protocol_version']],
-            ['Route Discovery', fct['zbee_nwk.discover_route']],
-            ['Multicast', fct['zbee_nwk.multicast']],
-            ['Security Enabled', fct['zbee_nwk.security_enabled']],
-            ['Source Route', fct['zbee_nwk.source_route']],
-            ['Dest IEEE Addr', fct['zbee_nwk.dst_ieee']],
-            ['Src IEEE Addr', fct['zbee_nwk.src_ieee']],
+            ['Frame Type', _fct(fct,['zbee_nwk.frame_type'])],
+            ['Protocol Version', _fct(fct,['zbee_nwk.protocol_version','zbee_nwk.proto_version'])],
+            ['Route Discovery', _fct(fct,['zbee_nwk.discover_route','zbee_nwk.discovery'])],
+            ['Multicast', _yn(_fct(fct,['zbee_nwk.multicast']))],
+            ['Security Enabled', _yn(_fct(fct,['zbee_nwk.security_enabled','zbee_nwk.security']))],
+            ['Source Route', _yn(_fct(fct,['zbee_nwk.source_route','zbee_nwk.src_route']))],
+            ['Dest IEEE Addr', _yn(_fct(fct,['zbee_nwk.dst_ieee','zbee_nwk.ext_dst']))],
+            ['Src IEEE Addr', _yn(_fct(fct,['zbee_nwk.src_ieee','zbee_nwk.ext_src']))],
           ];
           for(var fi=0;fi<fcfRows.length;fi++){
             if(fcfRows[fi][1]!=null)nwkFields.push(fcfRows[fi]);
