@@ -352,6 +352,11 @@ reg('import',function(){
     btn.textContent='清除中...';btn.disabled=true;setProg('清除中...');
     fetch('/api/import/clear',{method:'DELETE'}).then(r=>r.json()).then(function(){
       S.topo=null;S.pkts=0;S.nodes=0;S.verifyPassed=null;sb('就绪');setProg('');
+      // S4 (2026-08-27 用户需求): 清除数据时同步重置报文页/拓扑页过滤 —
+      // 旧 PAN/节点/时间/类型条件在新数据下会误导 (空结果或无关过滤), 一并清空
+      S.tlPan='';S.tlNode='';S.tlTs0H='';S.tlTs0M='';S.tlTs0S='';
+      S.tlTs1H='';S.tlTs1M='';S.tlTs1S='';S.tlType='';S.tlHasSearched=false;
+      S.topoAddr=null;S.topoT0=null;S.topoT1=null;S.topoPan=null;
       // sr() 曾设置 style.display='block' (inline), 类无法覆盖 — 必须用 style 隐藏
       try{document.getElementById('sout').style.display='none';}catch(e){}
       if(window._loadKeyPanel)window._loadKeyPanel();  // 密钥命中统计清零
