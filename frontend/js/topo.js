@@ -471,9 +471,23 @@ reg('topo', function(){
         if(slideMode&&curT-s.t1>60){stale=s;continue;}
         best=s;
       }
-      if(best)return {state:'cur',seg:best};
+      if(best)return {state:'cur',seg:best,staleSeg:stale};
       if(stale)return {state:'stale',seg:stale};
       return {state:'none'};
+    }
+    // ⚠️ S3 修复 (2026-08-28, 60A4 右上角实锤): cur 段边不可达 (父/链节点不在
+    // 渲染集, 如 down 父被过滤) → 降级画 stale 历史段残影边, 避免节点孤立
+    function segDrawable(s, aidN){
+      if(!s)return false;
+      if(s.kind==='parent')return !!cyNodeIds[''+s.parent];
+      if(s.kind==='route'){
+        var _ch=[aidN].concat(s.relays||[]).concat([s.dst]);
+        for(var _ci=0;_ci<_ch.length-1;_ci++){
+          if(!cyNodeIds[''+_ch[_ci]]||!cyNodeIds[''+_ch[_ci+1]])return false;
+        }
+        return true;
+      }
+      return false;
     }
     for(var aidS in snaps){
       var st=snapState(snaps[aidS]);
@@ -482,6 +496,9 @@ reg('topo', function(){
       var aidN=parseInt(aidS);
       if(!cyNodeIds[''+aidN])continue;
       var isStale=st.state==='stale';
+      if(!isStale&&!segDrawable(seg,aidN)&&segDrawable(st.staleSeg,aidN)){
+        seg=st.staleSeg; isStale=true;  // 回退历史段 (残影边)
+      }
       if(seg.kind==='route'){
         var chain=[aidN].concat(seg.relays||[]).concat([seg.dst]);
         for(var jj=0;jj<chain.length-1;jj++){

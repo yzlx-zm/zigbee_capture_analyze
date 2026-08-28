@@ -316,8 +316,19 @@ def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
             continue
         if p.get("nwk_cmd_id") == 5 and p.get("nwk_src") is not None:
             rr = p.get("route_record_relays") or {}
-            frames.setdefault(p["nwk_src"], []).append(
-                (ts, "route", (p.get("nwk_dst"), tuple(rr.get("relays") or []))))
+            relays = list(rr.get("relays") or [])
+            src, dst = p["nwk_src"], p.get("nwk_dst")
+            if src is not None and dst is not None:
+                # ⚠️ S3 修复 (2026-08-28, 聚焦拖动无效果实锤): RR 中继节点也建
+                # rr 父段 — 曾只给 src 建 route 段 → 中继节点 (0x0071) 有父证据
+                # 但无链路分段 → 聚焦模式无链路边 → 拖动游标完全无效果
+                chain = [src] + relays + [dst]
+                for _i in range(len(chain) - 1):
+                    if chain[_i] != 0:  # 协调器无父
+                        frames.setdefault(chain[_i], []).append(
+                            (ts, "parent", ("parent", chain[_i + 1], "rr")))
+                frames.setdefault(src, []).append(
+                    (ts, "route", (dst, tuple(relays))))  # src 全链彩色可视化
         elif p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None \
                 and isinstance(p.get("mac_dst"), int):
             frames.setdefault(p["mac_src"], []).append(
@@ -515,13 +526,29 @@ async def topology_from_events(pan: str = Query(default=""),
     for _aid, _info in ev_nodes.items():
         if _info.get("evidence") in ("poll", "assoc", "rr"):
             member_aids.add(_aid)
+    # ⚠️ S3 修复 (2026-08-28, 用户实测: 60A4/4FB2 等落右上角): 成员集 =
+    # 事件节点 ∪ 成员证据节点; 再**补父** — 成员节点的父 (down 推断) 若在
+    # 报文中出现过 (哪怕单帧) 但被成员过滤排除 → 补入 (链路完整性;
+    # 纯 relay 引用 0 帧的父不补, 0x778A/0xFE0D/0xB5D2 诚实缺失)
+    member_set: set[int] = set(node_aids)
+    for _aid, _info in ev_nodes.items():
+        if _aid == 0:
+            continue
+        if _aid not in seen_aids:
+            continue
+        if _aid in member_aids or seen_cnt.get(_aid, 0) >= 2:
+            member_set.add(_aid)
+    for _aid in list(member_set):
+        _info = ev_nodes.get(_aid)
+        if _info and _info.get("parent") is not None:
+            _p = _info["parent"]
+            if _p not in member_set and _p in seen_aids:
+                member_set.add(_p)  # 补父 (报文可见但非成员 → 链路边端点)
     for aid in ev_nodes:
         if aid in node_aids:
             continue
-        if aid != 0 and aid not in seen_aids:
-            continue  # 报文无此地址 → 不产生幽灵节点 (仅协调器根豁免)
-        if aid != 0 and aid not in member_aids and seen_cnt.get(aid, 0) < 2:
-            continue  # 非成员证据 + 单帧 → 不算成员 (7E34/E6C6 实锤)
+        if aid not in member_set:
+            continue
         n = nodes.get(aid, {})
         full_graph["nodes"].append({
             "aid": aid, "label": f"0x{aid:04X}", "seen": n.get("seen", 0),
