@@ -599,6 +599,29 @@ def _pan_int(pan: str) -> int | None:
         return None
 
 
+@router.get("/diag/pans")
+async def diag_pans():
+    """诊断页 PAN 下拉列表 — 全量包统计 (含 beacon-only 网络).
+
+    2026-08-29 用户反馈: events.pans 只统计路由事件帧的 PAN (route_events
+    pan_counts), beacon-only 网络 (中继包 0xC3D3/0xF1A2 等) 缺失 → 下拉
+    只有主网络+全部两个选项; 这里按全量帧 pan_src/pan_dst/mac_beacon_pan
+    统计, 抓包里出现过的所有 PAN 都在列表中.
+    """
+    pkts = get_full_packets() or get_packets()
+    if not pkts:
+        return {"pans": [], "main_pan": None}
+    counts: dict[int, int] = {}
+    for p in pkts:
+        for pan in (p.get("pan_src"), p.get("pan_dst"), p.get("mac_beacon_pan")):
+            if pan is not None:
+                counts[pan] = counts.get(pan, 0) + 1
+    main_pan = max(counts, key=counts.get) if counts else None
+    pans = [{"pan": k, "count": v, "label": f"0x{k:04X}"}
+            for k, v in sorted(counts.items(), key=lambda x: -x[1])]
+    return {"pans": pans, "main_pan": main_pan}
+
+
 def _diag_pkts(pan: str) -> list[dict]:
     """pan 参数 → 过滤后的包列表 (None 语义: 前端不传 = 全部)."""
     full = get_full_packets()

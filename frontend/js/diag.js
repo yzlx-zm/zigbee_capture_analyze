@@ -526,26 +526,33 @@ reg('diag', function () {
     });
     renderOffline(diagPan);
   }
-  window.__diagPanChange = function (v) { diagPan = v; loadDiag(); };
+  window.__diagPanChange = function (v) {
+    diagPan = v;
+    var sel = document.getElementById('diag-pan');
+    if (sel) sel.value = v;  // ⚠️ 同步 select (loadDiag 会从 select 读值, 曾覆盖回旧 PAN)
+    loadDiag();
+  };
   window.__diagRerun = function () { loadDiag(); };
-  // PAN 列表初始化 (复用拓扑 events 端点: pans 全量 + main_pan 主网络)
+  // PAN 列表初始化 — 2026-08-29 用户反馈改版: 用 /api/diag/pans (全量包统计,
+  // 含 beacon-only 网络; events.pans 只含路由事件网络, 曾导致下拉只有 2 个选项)
   // ⚠️ 修复 (2026-08-28 CDP 实测): 首次进入 rt() 已清空 mc, select 尚不存在 —
   // 曾直接 return 导致 loadDiag 永不执行, 页面恒空白; 先 renderH 渲染 header 再填选项
-  A.get('/api/topology/events').then(function (d) {
+  A.get('/api/diag/pans').then(function (d) {
     var sel = document.getElementById('diag-pan');
     if (!sel) { renderH(); sel = document.getElementById('diag-pan'); }
     if (!sel) { loadDiag(); return; }
-    var pans = d.pans || [];
+    var pans = (d.pans || []).map(function (p) { return p.pan; });
     var main = d.main_pan;
     var html = '<option value="">全部 PAN</option>';
     if (main != null && pans.indexOf(main) !== -1) {
       html += '<option value="' + main.toString(16).toUpperCase() + '">主网络 0x'
         + main.toString(16).toUpperCase().padStart(4, '0') + '</option>';
     }
-    (pans || []).forEach(function (p) {
-      if (main != null && p === main) return;
-      html += '<option value="' + p.toString(16).toUpperCase() + '">0x'
-        + p.toString(16).toUpperCase().padStart(4, '0') + '</option>';
+    (d.pans || []).forEach(function (p) {
+      if (main != null && p.pan === main) return;
+      html += '<option value="' + p.pan.toString(16).toUpperCase() + '">0x'
+        + p.pan.toString(16).toUpperCase().padStart(4, '0')
+        + ' <span class="text-dim">(' + p.count + ' 帧)</span></option>';
     });
     panOptions = html;  // ⚠️ 存模块变量: renderH 重建 select 时复用 (曾重置为加载中)
     sel.innerHTML = html;
