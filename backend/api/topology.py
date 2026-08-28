@@ -494,9 +494,23 @@ async def topology_from_events(pan: str = Query(default=""),
     ev_nodes = dict(ev_nodes)
     if effective_pan is not None:
         ev_nodes[0] = {"parent": None, "evidence": None, "ts": None}
+    # ⚠️ S3 修复 (2026-08-28, 用户实测): 节点必须报文中实际出现过 —
+    # 曾下行源路由 relay 链"被提及"的地址直接入拓扑 (test2 C368/50A4
+    # seen=0, 报文 0 帧, 用户质疑"报文里过滤都没有, 咋来的")
+    seen_aids: set[int] = set()
+    for _p in _full_pkts:
+        if effective_pan is not None and (_p.get("pan_src") != effective_pan
+                                          and _p.get("pan_dst") != effective_pan):
+            continue
+        for _k in ("nwk_src", "nwk_dst", "mac_src", "mac_dst"):
+            _v = _p.get(_k)
+            if isinstance(_v, int) and topo.is_unicast(_v):
+                seen_aids.add(_v)
     for aid in ev_nodes:
         if aid in node_aids:
             continue
+        if aid != 0 and aid not in seen_aids:
+            continue  # 报文无此地址 → 不产生幽灵节点 (仅协调器根豁免)
         n = nodes.get(aid, {})
         full_graph["nodes"].append({
             "aid": aid, "label": f"0x{aid:04X}", "seen": n.get("seen", 0),
@@ -505,7 +519,10 @@ async def topology_from_events(pan: str = Query(default=""),
             "coord_traffic": 0, "type_list": n.get("type_list", [])[:10],
             "device_type": n.get("device_type", "unknown"),
         })
-    graph["nodes"] = full_graph["nodes"]
+    # ⚠️ S3 统一幽灵过滤: 事件节点 (RR relays 等"被提及"地址) 也须报文中出现
+    # (0xa3d4 实锤: RR relay 链地址, 报文 0 帧, 曾入拓扑)
+    graph["nodes"] = [nd for nd in full_graph["nodes"]
+                      if nd["aid"] == 0 or nd["aid"] in seen_aids]
     _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为 + S3 online/父证据
     # ② 链路时刻分段 (30s 窗 + assoc/down 证据): 前端拖动游标纯本地过滤
     graph["link_snapshots"] = _all_link_segments(_full_pkts, time_start, time_end,
