@@ -53,9 +53,9 @@ def _fmt_addr(v) -> str | None:
 EVIDENCE_MAX = 15   # 每检测器证据帧上限 (展示截断, 总数单独统计)
 
 
-def _ev(ts, pid, type_, detail) -> dict:
-    """证据条目: 时间 + 帧号 + 类型 + 关键字段."""
-    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+def _ev(ts, pid, type_, detail, idx=None) -> dict:
+    """证据条目: 时间 + 帧号 + 类型 + 关键字段 + 列表索引 (S2: 前端跳报文页用)."""
+    return {"ts": round(ts, 3), "packet_id": pid, "id": idx, "type": type_, "detail": detail}
 
 
 def _cut(items: list) -> tuple[list, int]:
@@ -90,6 +90,7 @@ def detect_l1_1(packets: list[dict]) -> dict:
         delays = [round((b["ts"] - rt) * 1000, 1) for b in resp]
         results.append({
             "packet_id": req.get("packet_id"),
+            "id": req.get("_idx"),
             "ts": rt,
             "response_count": len(resp),
             "delays_ms": delays,
@@ -156,9 +157,10 @@ def detect_l1_1(packets: list[dict]) -> dict:
 
     # 证据表 (人工复核)
     evidence = [_ev(r["ts"], r["packet_id"], "Beacon Request",
-                    "命中" if r["hit"] else f"无响应 ({r['response_count']} 个 Beacon)") for r in results]
+                    "命中" if r["hit"] else f"无响应 ({r['response_count']} 个 Beacon)",
+                    r.get("id")) for r in results]
     evidence += [_ev(p["ts"], p.get("packet_id"), "Beacon",
-                     f"PAN 0x{p['mac_beacon_pan']:04X}") for p in beacons]
+                     f"PAN 0x{p['mac_beacon_pan']:04X}", p.get("_idx")) for p in beacons]
     evidence, evidence_total = _cut(evidence)
 
     return {
@@ -174,7 +176,7 @@ def detect_l1_1(packets: list[dict]) -> dict:
         "max_consecutive_miss": max_consecutive_miss,
         "beacon_count": len(beacons),
         "delay_summary_ms": delay_summary,
-        "requests": results,
+        # S2: requests 明细字段前端未用, 已删 (API 膨胀, 大包 evidence 全部返回)
     }
 
 
@@ -196,7 +198,7 @@ def detect_l1_2(packets: list[dict]) -> dict:
     resp_details = []
     for r in resps:
         pl = r.get("mac_cmd_payload") or b""
-        detail = {"packet_id": r.get("packet_id"), "ts": r["ts"],
+        detail = {"packet_id": r.get("packet_id"), "id": r.get("_idx"), "ts": r["ts"],
                   "src64": r.get("mac_src64"), "dst64": r.get("mac_dst64")}
         if len(pl) >= 3:
             detail["short_addr"] = int.from_bytes(pl[0:2], "little")
@@ -213,6 +215,7 @@ def detect_l1_2(packets: list[dict]) -> dict:
         statuses = [d.get("status") for d in matched if "status" in d]
         flow = {
             "packet_id": req.get("packet_id"),
+            "id": req.get("_idx"),
             "ts": rt,
             "device": _fmt_addr(src64),
             "response_count": len(matched),
@@ -270,11 +273,11 @@ def detect_l1_2(packets: list[dict]) -> dict:
     evidence = []
     for f in flows:
         evidence.append(_ev(f["ts"], f["packet_id"], "AssocReq",
-                            f"{f['device']} → {f['result']}"))
+                            f"{f['device']} → {f['result']}", f.get("id")))
         for r in f["responses"]:
             st = f"status=0x{r['status']:02X}" if "status" in r else "?"
             evidence.append(_ev(r["ts"], r["packet_id"], "AssocResp",
-                                f"{st} → 0x{r.get('short_addr', 0):04X}"))
+                                f"{st} → 0x{r.get('short_addr', 0):04X}", r.get("id")))
     evidence, evidence_total = _cut(evidence)
 
     return {
@@ -289,7 +292,7 @@ def detect_l1_2(packets: list[dict]) -> dict:
         "success_count": len(successes),
         "no_response_count": len(no_resp),
         "rejected_count": len(rejected),
-        "flows": flows,
+        # S2: flows 明细字段前端未用, 已删 (API 膨胀)
     }
 
 
@@ -421,7 +424,7 @@ def _append_key_evidence(evidence: list, dev: int, ev: dict) -> None:
             nsrc = _addr4(p.get("nwk_src"))
             ndst = _addr4(p.get("nwk_dst"))
             evidence.append(_ev(p["ts"], p.get("packet_id"), label,
-                                f"0x{dev:04X}: {nsrc} → {ndst}"))
+                                f"0x{dev:04X}: {nsrc} → {ndst}", p.get("_idx")))
 
 
 def _judge_l1_3_device(dev: int, ev: dict) -> dict:
@@ -559,6 +562,7 @@ def detect_l1_4(packets: list[dict]) -> dict:
         if p.get("aps_cmd_id") == APS_CMD_REMOVE_DEVICE:
             remove_events.append({
                 "packet_id": p.get("packet_id"),
+                "id": p.get("_idx"),
                 "ts": p["ts"],
                 "nwk_src": p.get("nwk_src"),
                 "nwk_dst": p.get("nwk_dst"),
@@ -572,6 +576,7 @@ def detect_l1_4(packets: list[dict]) -> dict:
         if p.get("aps_cluster") == ZDP_MGMT_LEAVE_REQ and p.get("nwk_src") == 0x0000:
             mgmt_leave_events.append({
                 "packet_id": p.get("packet_id"),
+                "id": p.get("_idx"),
                 "ts": p["ts"],
                 "nwk_dst": p.get("nwk_dst"),
             })
@@ -639,15 +644,17 @@ def detect_l1_4(packets: list[dict]) -> dict:
     for r in remove_events:
         evidence.append(_ev(r["ts"], r["packet_id"], "Remove Device(0x07)",
                             f"{_addr4(r['nwk_src'])} → {_addr4(r['nwk_dst'])}"
-                            + (f" target={r['target_eui64']}" if r["target_eui64"] else "")))
+                            + (f" target={r['target_eui64']}" if r["target_eui64"] else ""),
+                            r.get("id")))
     for m in mgmt_leave_events:
         evidence.append(_ev(m["ts"], m["packet_id"], "Mgmt Leave Req(0x0034)",
-                            f"TC → {_addr4(m['nwk_dst'])}"))
+                            f"TC → {_addr4(m['nwk_dst'])}", m.get("id")))
     for d in hits:
         dev = d["device"]
         for p in d.get("_leave_frames") or []:
             evidence.append(_ev(p["ts"], p.get("packet_id"), "广播 Leave",
-                                f"0x{dev:04X} → 广播 (rejoin={p.get('nwk_leave_rejoin')})"))
+                                f"0x{dev:04X} → 广播 (rejoin={p.get('nwk_leave_rejoin')})",
+                                p.get("_idx")))
         d.pop("_leave_frames", None)  # 帧对象含 bytes, 不进 API 响应
     evidence, evidence_total = _cut(evidence)
 
@@ -756,6 +763,8 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict],
 
 def detect(packets: list[dict]) -> dict:
     """运行全部 L1 检测 → 汇总报告."""
+    for _i, _p in enumerate(packets):
+        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
     return {
         "l1_1": detect_l1_1(packets),
         "l1_2": detect_l1_2(packets),

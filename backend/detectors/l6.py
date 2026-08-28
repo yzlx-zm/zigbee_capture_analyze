@@ -20,8 +20,8 @@ INDIRECT_TIMEOUT_S = 7.68           # EMBER_INDIRECT_TRANSMISSION_TIMEOUT 默认
 EVIDENCE_MAX = 15
 
 
-def _ev(ts, pid, type_, detail) -> dict:
-    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+def _ev(ts, pid, type_, detail, idx=None) -> dict:
+    return {"ts": round(ts, 3), "packet_id": pid, "id": idx, "type": type_, "detail": detail}
 
 
 def _cut(items: list) -> tuple[list, int]:
@@ -120,7 +120,8 @@ def detect_l6_3(packets: list[dict], l3_result: dict | None = None) -> dict:
         for p in expiry[:2]:
             if p.get("nwk_status_target") == tgt:
                 evidence.append(_ev(p["ts"], p.get("packet_id"), "Network Status 0x06",
-                                    f"{_addr4(p.get('nwk_src'))} → {_addr4(tgt)} (间接消息过期)"))
+                                    f"{_addr4(p.get('nwk_src'))} → {_addr4(tgt)} (间接消息过期)",
+                                    p.get("_idx")))
                 break
 
     # 汇总
@@ -159,6 +160,8 @@ def detect_l6_3(packets: list[dict], l3_result: dict | None = None) -> dict:
 
 def detect(packets: list[dict], l3_result: dict | None = None) -> dict:
     """运行全部 L6 检测 → 汇总报告."""
+    for _i, _p in enumerate(packets):
+        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
     return {
         "l6_3": detect_l6_3(packets, l3_result),
     }

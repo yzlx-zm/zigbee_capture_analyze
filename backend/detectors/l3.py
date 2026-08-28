@@ -13,8 +13,8 @@ from collections import defaultdict
 EVIDENCE_MAX = 15
 
 
-def _ev(ts, pid, type_, detail) -> dict:
-    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+def _ev(ts, pid, type_, detail, idx=None) -> dict:
+    return {"ts": round(ts, 3), "packet_id": pid, "id": idx, "type": type_, "detail": detail}
 
 
 def _cut(items: list) -> tuple[list, int]:
@@ -176,7 +176,8 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                     for p in frames[:3]:
                         evidence.append(_ev(
                             p["ts"], p.get("packet_id"), "Network Status",
-                            f"code=0x{code:02X} {_addr4(p.get('nwk_src'))} → target={_addr4(tg)}"))
+                            f"code=0x{code:02X} {_addr4(p.get('nwk_src'))} → target={_addr4(tg)}",
+                            p.get("_idx")))
         elif t["hits"]:
             # 全部单轮 → 瞬态 (健康)
             n = sum(h["count"] for h in t["hits"])
@@ -303,8 +304,7 @@ def detect_l3_5(packets: list[dict], l1_result: dict | None = None) -> dict:
                                        if c == NS_CODE_MANY_TO_ONE_ROUTE_FAILURE for _ in v),
         "self_heal": self_heal,
         "network_status_codes": {f"0x{c:02X}": n for c, n in sorted(ns_codes.items())},
-        "network_status_src": {f"0x{c:02X}": sorted({_addr4(s) for s in srcs})
-                               for c, srcs in sorted(ns_by_code_src.items())},
+        # S2: network_status_src 明细前端未用, 已删 (API 膨胀)
         "devices": results,
     }
 
@@ -433,13 +433,16 @@ def detect_l3_1(packets: list[dict]) -> dict:
             "count": 0, "retries": [], "cross": {"route_error": 0, "indirect_expiry": 0, "leave": 0},
             "clusters": defaultdict(int), "first_ts": p.get("ts", 0.0), "last_ts": p.get("ts", 0.0),
             "first_pid": None, "last_pid": None,
+            "first_id": None, "last_id": None,  # S2: 证据帧列表索引
         })
         agg["count"] += 1
         agg["first_ts"] = min(agg["first_ts"], p.get("ts", 0.0))
         agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
         if agg["first_pid"] is None:
             agg["first_pid"] = p.get("packet_id")
+            agg["first_id"] = p.get("_idx")
         agg["last_pid"] = p.get("packet_id")
+        agg["last_id"] = p.get("_idx")
         agg["clusters"][p.get("aps_cluster_name") or "?"] += 1
         agg["retries"].append(retry_cnt.get((p.get("nwk_src"), p.get("aps_counter")), 1))
         cs = _cross_signals(packets, p.get("ts", 0.0))
@@ -480,8 +483,9 @@ def detect_l3_1(packets: list[dict]) -> dict:
             "summary": summary,
         })
         # 证据帧: 设备级首末帧的真实帧号 (人工复核定位用)
-        for ts, pid in ((agg["first_ts"], agg["first_pid"]), (agg["last_ts"], agg["last_pid"])):
-            evidence.append(_ev(ts, pid, "L3-1", summary))
+        for ts, pid, idx in ((agg["first_ts"], agg["first_pid"], agg["first_id"]),
+                             (agg["last_ts"], agg["last_pid"], agg["last_id"])):
+            evidence.append(_ev(ts, pid, "L3-1", summary, idx))
 
     ev, ev_total = _cut(evidence)
     if results:
@@ -533,7 +537,7 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
       素材实证 (2026-08-10): 三素材无 R1/R2 正例 (待素材); G32 BE5A↔协调器
       对称 in=1/out=1 ×187/40min 负例不误报
     """
-    # 1. 收集 (sender, neighbor) -> [(in_cost, out_cost, ts, packet_id)]
+    # 1. 收集 (sender, neighbor) -> [(in_cost, out_cost, ts, packet_id, idx)]
     rep: dict[tuple, list] = defaultdict(list)
     for p in packets:
         if p.get("nwk_cmd_id") == 8 and p.get("link_status_neighbors"):
@@ -543,7 +547,7 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
             for nb in p["link_status_neighbors"]:
                 key = (src, nb["addr"])
                 rep[key].append((nb["in_cost"], nb["out_cost"],
-                                 p.get("ts", 0.0), p.get("packet_id")))
+                                 p.get("ts", 0.0), p.get("packet_id"), p.get("_idx")))
 
     asym_links: list[dict] = []
     oneway_links: list[dict] = []
@@ -567,7 +571,8 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
                 "a": a, "b": b,
                 "a_in": a_in, "b_in": b_in, "diff": abs(a_in - b_in),
                 "reports": (len(ra), len(rb)),
-                "evidence": (ra[-1][3], rb[-1][3]), "ts": ra[-1][2],
+                "evidence": (ra[-1][3], rb[-1][3]), "ev_idx": (ra[-1][4], rb[-1][4]),
+                "ts": ra[-1][2],
             })
 
     # 3. R2: 持续 one-way (全程 out=0)
@@ -590,7 +595,7 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
             "a": a, "b": b,
             "in_cost": costs[-1][0], "out_cost": 0,
             "reports": len(costs),
-            "evidence": costs[-1][3], "ts": costs[-1][2],
+            "evidence": costs[-1][3], "ev_idx": costs[-1][4], "ts": costs[-1][2],
         })
 
     # 4. R3: 方向性失败交叉 (自审 2026-08-10 补实现 — 文档 v1.0 第 4 层规则, 初版代码缺失)
@@ -607,14 +612,16 @@ def detect_l3_9(packets: list[dict], l3_5_result: dict | None = None) -> dict:
     # 5. 结论
     evidence = []
     for ln in asym_links:
-        for pid in ln["evidence"]:
+        for pid, idx in zip(ln["evidence"], ln.get("ev_idx") or (None, None)):
             evidence.append(_ev(
                 ln["ts"], pid, "Link Status",
-                f"不对称: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['a_in']} vs {_addr4(ln['b'])}→{_addr4(ln['a'])} in={ln['b_in']} (差{ln['diff']})"))
+                f"不对称: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['a_in']} vs {_addr4(ln['b'])}→{_addr4(ln['a'])} in={ln['b_in']} (差{ln['diff']})",
+                idx))
     for ln in oneway_links:
         evidence.append(_ev(
             ln["ts"], ln["evidence"], "Link Status",
-            f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告全程 out=0)"))
+            f"one-way: {_addr4(ln['a'])}→{_addr4(ln['b'])} in={ln['in_cost']} out=0 (×{ln['reports']} 报告全程 out=0)",
+            ln.get("ev_idx")))
 
     ev, ev_total = _cut(evidence)
     r3_txt = ""
@@ -694,12 +701,18 @@ def detect_l3_2(packets: list[dict]) -> dict:
         # 响应者=设备 → 设备拒绝协调器下行命令
         if dev == 0x0000:
             direction = "coordinator_reject"
+            # ⚠️ S2 归因修复 (2026-08-28, 群控包 1234 帧实锤): 协调器是响应者, 不是问题设备 —
+            # 真正发起方 = 被响应方 (Default Response 的 nwk_dst, 如群控 16 锁 0x20 通知被网关拒);
+            # 原聚合到 0x0000 导致卡片 "0x0000 命令送达但未执行 ×1234" 无意义
+            dev = p.get("nwk_dst")
+            if dev is None or dev == 0x0000:
+                continue
         else:
             direction = "downlink" if p.get("nwk_dst") == 0x0000 else "uplink"
         agg = dev_map.setdefault(dev, {
             "device": dev, "direction": direction,
             "count": 0, "status": {}, "clusters": {}, "first_ts": p.get("ts", 0.0),
-            "last_ts": p.get("ts", 0.0), "first_pid": None,
+            "last_ts": p.get("ts", 0.0), "first_pid": None, "first_id": None,
         })
         agg["count"] += 1
         s = p.get("zcl_status")
@@ -709,6 +722,7 @@ def detect_l3_2(packets: list[dict]) -> dict:
         agg["last_ts"] = max(agg["last_ts"], p.get("ts", 0.0))
         if agg["first_pid"] is None:
             agg["first_pid"] = p.get("packet_id")
+            agg["first_id"] = p.get("_idx")
 
     # 3. 判定
     results = []
@@ -740,7 +754,7 @@ def detect_l3_2(packets: list[dict]) -> dict:
             "error_count": agg["count"], "status": agg["status"],
             "clusters": agg["clusters"], "summary": summary,
         })
-        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-2", summary))
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-2", summary, agg.get("first_id")))
 
     ev, ev_total = _cut(evidence)
     if results:
@@ -825,6 +839,7 @@ def detect_l3_3(packets: list[dict]) -> dict:
                 agg = lag_dev.setdefault(dev, {
                     "device": dev, "lag_count": 0, "max_gap_s": 0.0,
                     "clusters": {}, "first_ts": t, "first_pid": w.get("packet_id"),
+                    "first_id": w.get("_idx"),
                 })
                 agg["lag_count"] += 1
                 agg["max_gap_s"] = max(agg["max_gap_s"], gap)
@@ -845,7 +860,7 @@ def detect_l3_3(packets: list[dict]) -> dict:
                         "confidence": "中", "lag_count": agg["lag_count"],
                         "max_gap_s": round(agg["max_gap_s"], 1),
                         "clusters": agg["clusters"], "summary": summary})
-        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-3", summary))
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-3", summary, agg.get("first_id")))
 
     ev, ev_total = _cut(evidence)
     if results:
@@ -943,7 +958,7 @@ def detect_l3_11(packets: list[dict]) -> dict:
             "cmd_id": cid, "cmd_name": p.get("zcl_cmd_name"),
             "counters": set(), "frames": 0,
             "first_ts": p.get("ts", 0.0), "last_ts": p.get("ts", 0.0),
-            "first_pid": p.get("packet_id"),
+            "first_pid": p.get("packet_id"), "first_id": p.get("_idx"),
         })
         agg["counters"].add(p.get("aps_counter"))
         agg["frames"] += 1
@@ -974,7 +989,7 @@ def detect_l3_11(packets: list[dict]) -> dict:
                         "confidence": conf, "cmd_id": cid, "cmd_name": name,
                         "cluster": cl, "rounds": n_rounds, "frames": agg["frames"],
                         "interval_s": per, "summary": summary})
-        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-11", summary))
+        evidence.append(_ev(agg["first_ts"], agg["first_pid"], "L3-11", summary, agg.get("first_id")))
 
     ev, ev_total = _cut(evidence)
     if results:
@@ -1000,6 +1015,8 @@ def detect_l3_11(packets: list[dict]) -> dict:
 
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
     """运行全部 L3 检测 → 汇总报告."""
+    for _i, _p in enumerate(packets):
+        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
     l3_5 = detect_l3_5(packets, l1_result)
     return {
         "l3_5": l3_5,

@@ -30,8 +30,8 @@ MAX_MISSED_POLLS = 3
 EVIDENCE_MAX = 15
 
 
-def _ev(ts, pid, type_, detail) -> dict:
-    return {"ts": round(ts, 3), "packet_id": pid, "type": type_, "detail": detail}
+def _ev(ts, pid, type_, detail, idx=None) -> dict:
+    return {"ts": round(ts, 3), "packet_id": pid, "id": idx, "type": type_, "detail": detail}
 
 
 def _cut(items: list) -> tuple[list, int]:
@@ -80,7 +80,7 @@ def detect_l2_1(packets: list[dict]) -> dict:
             for p in polls:
                 if p.get("mac_src") == src:
                     evidence.append(_ev(p["ts"], p.get("packet_id"), "DataRequest",
-                                        f"{_addr4(src)} → 父节点"))
+                                        f"{_addr4(src)} → 父节点", p.get("_idx")))
                     break
 
     # ── R2a: 设备自发 rejoin=1 Leave ≥2 轮 ──
@@ -98,7 +98,7 @@ def detect_l2_1(packets: list[dict]) -> dict:
             device_hits[dev].append("R2a")
             for p in lv[:2]:
                 evidence.append(_ev(p["ts"], p.get("packet_id"), "Leave(rejoin=1)",
-                                    f"{_addr4(dev)} → 广播 (自发)"))
+                                    f"{_addr4(dev)} → 广播 (自发)", p.get("_idx")))
 
     # ── R2b: TC→同设备 rejoin=1 Leave ≥2 轮 (素材实证形态) ──
     tc_leave: dict[int, list] = defaultdict(list)
@@ -115,7 +115,7 @@ def detect_l2_1(packets: list[dict]) -> dict:
             device_hits[dev].append("R2b")
             for p in lv[:2]:
                 evidence.append(_ev(p["ts"], p.get("packet_id"), "Leave(rejoin=1)",
-                                    f"TC → {_addr4(dev)} (被要求重入)"))
+                                    f"TC → {_addr4(dev)} (被要求重入)", p.get("_idx")))
 
     # ── R3: poll 无 ACK [v1.0: ACK 提取待增强, 规则就位] ──
     r3_note = None
@@ -218,17 +218,21 @@ def detect_l2_6(packets: list[dict]) -> dict:
 
     # ── 数据收集 ──
     polls: dict[int, list[float]] = defaultdict(list)   # 设备 → poll 时间序列
+    last_poll_pkt: dict[int, dict] = {}                 # S2: 设备 → 最后 poll 包 (证据帧跳转)
     leaves: set[int] = set()                            # 发过 Leave 的设备
     ls_seq: dict[int, list[tuple]] = defaultdict(list)  # LS 发送者 → [(ts, 邻居集合)] (时间序)
+    ls_pkt: dict[int, list[dict]] = defaultdict(list)   # S2: LS 发送者 → 对应包 (证据帧跳转)
     last_act: dict[int, float] = defaultdict(float)
     for p in packets:
         ts = p.get("ts", 0.0)
         if p.get("mac_cmd_id") == MAC_DATA_REQUEST and p.get("mac_src") is not None:
             polls[p["mac_src"]].append(ts)
+            last_poll_pkt[p["mac_src"]] = p
         if p.get("nwk_cmd_id") == NWK_CMD_LEAVE and p.get("nwk_src") is not None:
             leaves.add(p["nwk_src"])
         if p.get("nwk_cmd_id") == 8 and p.get("link_status_neighbors") and p.get("nwk_src") is not None:
             ls_seq[p["nwk_src"]].append((ts, {nb["addr"] for nb in p["link_status_neighbors"]}))
+            ls_pkt[p["nwk_src"]].append(p)
         for a in (p.get("nwk_src"), p.get("nwk_dst"), p.get("mac_src")):
             if a is not None and a < 0xFFF0:
                 last_act[a] = max(last_act[a], ts)
@@ -263,7 +267,9 @@ def detect_l2_6(packets: list[dict]) -> dict:
                         "poll_count": len(seq), "poll_median_s": round(med, 1),
                         "edge_uncertain": bool(edge), "left_leave": dev in leaves,
                         "summary": summary + ("; " + left if left else "") + ("; " + edge if edge else "")})
-        evidence.append(_ev(seq[-1], None, "L2-6", f"最后 poll: {hex(dev)}"))
+        last_p = last_poll_pkt.get(dev, {})
+        evidence.append(_ev(seq[-1], last_p.get("packet_id"), "L2-6",
+                            f"最后 poll: {hex(dev)}", last_p.get("_idx")))
 
     # ── R2: LS 邻居条目消失 (路由器失联候选) ──
     for sender, seq in ls_seq.items():
@@ -295,8 +301,10 @@ def detect_l2_6(packets: list[dict]) -> dict:
                                 "reporter": sender, "ls_gone": gone,
                                 "edge_uncertain": bool(edge), "left_leave": b in leaves,
                                 "summary": summary + ("; " + left if left else "") + ("; " + edge if edge else "")})
-                evidence.append(_ev(seq[last_idx][0], None, "L2-6",
-                                    f"邻居消失: {hex(sender)} 不再报告 {hex(b)}"))
+                last_p = ls_pkt.get(sender, [None])[last_idx] or {}
+                evidence.append(_ev(seq[last_idx][0], last_p.get("packet_id"), "L2-6",
+                                    f"邻居消失: {hex(sender)} 不再报告 {hex(b)}",
+                                    last_p.get("_idx")))
 
     # ── 结论 ──
     hits = [r for r in results if r["verdict"] == "L2-6_HIT"]
@@ -327,6 +335,8 @@ def detect_l2_6(packets: list[dict]) -> dict:
 
 def detect(packets: list[dict]) -> dict:
     """运行全部 L2 检测 → 汇总报告."""
+    for _i, _p in enumerate(packets):
+        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
     return {
         "l2_1": detect_l2_1(packets),
         "l2_6": detect_l2_6(packets),

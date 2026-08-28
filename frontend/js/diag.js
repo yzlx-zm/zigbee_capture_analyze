@@ -29,12 +29,20 @@ function l1Card(scenario, title, verdict, confidence, bodyHtml, conclusion, evid
 }
 
 // 证据表 (人工复核: 帧号/时间/类型/关键字段), 可折叠
+// S2 (2026-08-28): 帧号可点击 → 报文页定位 (tlJumpFrame 契约, 与 AI 侧边栏帧引用同机制)
+function evJumpHtml(e) {
+  var txt = (e.packet_id != null ? e.packet_id : '—');
+  if (e.id == null) return '<span class="mono" style="font-family:monospace;font-size:10px">' + txt + '</span>';
+  return '<a class="ev-jump mono" href="#tl" title="报文页查看该帧" '
+    + 'onclick="event.stopPropagation();setTimeout(function(){window.tlJumpFrame&&window.tlJumpFrame(' + e.id + ')},300)">'
+    + txt + '</a>';
+}
 function evTable(evidence, evTotal) {
   if (!evidence || !evidence.length) return '';
   var rows = (evidence || []).map(function (e) {
     // 2026-08-12 用户反馈: 绝对时间戳 13 位挤在一起 — 改时钟时间 (fmtTs, 与时间线一致)
     return '<tr><td class="mono" style="font-family:monospace;font-size:10px">' + (e.ts != null ? fmtTs(e.ts) : '—') + '</td>'
-      + '<td class="mono" style="font-family:monospace;font-size:10px">' + (e.packet_id != null ? e.packet_id : '—') + '</td>'
+      + '<td>' + evJumpHtml(e) + '</td>'
       + '<td style="font-size:10px">' + (e.type || '') + '</td>'
       + '<td class="text-dim" style="font-size:10px;color:#64748b">' + (e.detail || '') + '</td></tr>';
   }).join('');
@@ -92,10 +100,9 @@ var PLAIN_TITLES = {
   'L3-11': '命令反复重发',
   'L3-9': '链路质量不对称',
   'L6-3': 'SED 消息收不到',
+  'L6-S3': 'SED 消息收不到',  // S2: 事件链卡用检测器场景号 L6-S3 (曾显示原文编号)
   'OFF': '设备离网',
 };
-var PLAIN_VERDICT = { 'L1-1': 'L1-1', 'L1-2': 'L1-2', 'L1-3': 'L1-3', 'L1-4': 'L1-4', 'L3-5': 'L3-5', 'OFF': 'OFF' };
-
 // ── 白话化 (2026-08-10, 用户反馈: "L1-3" 等编号对外人难懂) ──
 // 编号保留为小角标 (研发/文档追溯), 主表述用 PLAIN_TITLES 白话;
 // verdict 也显示白话 ("密钥分发或验证出问题" 而非 "L1-3_HIT"), 规则码进 title 提示。
@@ -107,13 +114,18 @@ function verdictText(scenario, verdict) {
   if (verdict && verdict.indexOf(hitPrefixOf(scenario) + '_HIT') === 0) {
     return PLAIN_TITLES[scenario] || verdict;
   }
+  // S2 兜底 (2026-08-28): 非标准 verdict 变体 (L1-2_POSSIBLE_NO_RESPONSE) →
+  // 白话前缀 "疑似" — 曾直接显示原始英文串 (白话化原则违反, 用户可读性 bug)
+  if (verdict && verdict.indexOf('_POSSIBLE_') !== -1) {
+    return '疑似' + (PLAIN_TITLES[scenario] || scenario);
+  }
   return verdict || '—';
 }
 
 // 覆盖范围提示 (2026-08-10 U8-3): 防"未发现明显问题"误信 —
-// 检测体系 8 大类 55 场景, 本页仅覆盖 8 个检测场景 + 离线总览, 其余 47 个未检测
-var COVERAGE_NOTE = '⚠️ 覆盖范围: 本页仅检测 8/55 场景 (L1-1/2/3/4 · L2-1 · L3-1/5 · L6-3 · 离线总览), '
-  + '其余 47 个场景未检测 — "未发现明显问题"≠"网络没问题"';
+// 检测体系 8 大类 55 场景; ⚠️ S2 (2026-08-28): 写死 "8/55" 已过时 (检测器增至 13 场景),
+// 改为按实际完成检测数动态统计 (渐进渲染时数字如实增长)
+var SCENARIO_TOTAL = 55;  // taxonomy 场景总数 (ADR-0001, 框架只允许增量扩展)
 
 function summaryCard(checks) {
   // checks: [{scenario, verdict, conclusion}]
@@ -142,25 +154,29 @@ function summaryCard(checks) {
         + ')，未排除问题的存在。</p>';
     }
     // 无 HIT 时显示覆盖提示 (有问题时页面已醒目, 提示冗余)
-    h += '<p class="text-dim" style="font-size:11px;color:#64748b;margin:6px 0 0">' + COVERAGE_NOTE + '</p>';
+    var covered = Object.keys(checks).length;
+    h += '<p class="text-dim" style="font-size:11px;color:#64748b;margin:6px 0 0">'
+      + '⚠️ 覆盖范围: 本页已检测 ' + covered + '/' + SCENARIO_TOTAL + ' 场景, 其余 '
+      + (SCENARIO_TOTAL - covered) + ' 个未检测 — "未发现明显问题"≠"网络没问题"</p>';
   }
   h += '</div>';
   return h;
 }
 
 reg('diag', function () {
-  hitDevices = {};  // 重置事件链登记 (页面可重复进入)
   document.getElementById('mc').style.padding = '16px';
   // ⚠️ 2026-08-05 修复: 摘要区被 innerHTML 重建覆盖 (先填旧 DOM 再整体重渲)
   // 改用注释占位 + 统一渲染; 2026-08-06 摘要独立渲染:
   // 各检测完成即写入 checks, renderH() 动态生成 — 不再依赖最内层回调 (L6 失败曾致摘要丢失)
   // 2026-08-10 修复 (用户反馈: L2/L3 被移动到最下方): 模块完成存 sections slot,
   // renderH 按注册表顺序拼接 — 渐进渲染保留, 但顺序固定, 不再受响应完成顺序影响
-  var headerHtml = '<div class="card"><h3>🩺 网络诊断</h3>'
-    + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p></div>';
+  // S2 (2026-08-28): 网络(PAN)选择器 + 重新诊断按钮 — 多 PAN 素材串网修复的交互端;
+  // 加载逻辑抽为 loadDiag() 供切换 PAN/重跑复用
   var sections = {};       // 模块 key → section html (完成即存)
   var offlineHtml = '';    // 离线区 (独立请求)
   var checks = {};
+  var diagPan = '';        // 当前 PAN 选择 ('' = 全部)
+  var panOptions = '<option value="">加载中...</option>';  // PAN 选项 (renderH 重建 select 复用)
   function renderH() {
     var summaryHtml = Object.keys(checks).length ? summaryCard(Object.keys(checks).map(function (k) { return checks[k]; })) : '';
     // 跨卡片事件链 (2026-08-10 U8-2): 同设备 ≥2 项检测命中 → 提示可能同一问题链
@@ -182,7 +198,19 @@ reg('diag', function () {
     }
     // 按注册表顺序拼接 section (未完成模块留空, 完成即渐进出现)
     var bodyHtml = MODULES.map(function (m) { return sections[m.key] || ''; }).join('');
+    var headerHtml = '<div class="card"><h3>🩺 网络诊断</h3>'
+      + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p>'
+      + '<div class="mt-1">网络(PAN): <select id="diag-pan" class="mono" style="font-size:12px" '
+      + 'onchange="window.__diagPanChange(this.value)">'
+      + panOptions + '</select> '
+      + '<button id="diag-rerun" class="btn-s" onclick="window.__diagRerun()">⟳ 重新诊断</button>'
+      + '<span class="text-dim" style="font-size:11px;margin-left:8px">默认当前网络 (主 PAN), 可切换其他网络</span>'
+      + '</div></div>';
+    // ⚠️ S2: renderH 重建 innerHTML 会重置 select — 保存/恢复当前选择
+    var prevPan = document.getElementById('diag-pan') ? document.getElementById('diag-pan').value : diagPan;
     document.getElementById('mc').innerHTML = headerHtml + summaryHtml + bodyHtml + offlineHtml;
+    var sel = document.getElementById('diag-pan');
+    if (sel && sel.options.length) { sel.value = prevPan || diagPan; }
   }
 
   // ── 检测器注册表 (2026-08-10 U8-1: 四层嵌套 → 数据驱动) ──
@@ -249,7 +277,9 @@ reg('diag', function () {
             + (l4.remove_events || []).map(function (r) {
                 var dd = r.nwk_dst != null ? '0x' + r.nwk_dst.toString(16).toUpperCase().padStart(4, '0') : '0x?';
                 var ss = r.nwk_src != null ? '0x' + r.nwk_src.toString(16).toUpperCase().padStart(4, '0') : '0x?';
-                return '<div class="dev mono">' + dd + ' ← ' + ss
+                // S2: 时间 + 帧号可跳报文页 (人工复核定位)
+                return '<div class="dev mono" style="font-size:11px">' + fmtTs(r.ts) + ' '
+                  + evJumpHtml(r) + ' ' + dd + ' ← ' + ss
                   + (r.target_eui64 ? ' → ' + r.target_eui64 : '') + '</div>';
               }).join('')
             + '</div>' : '')
@@ -262,7 +292,7 @@ reg('diag', function () {
             + '</div>' : '');
 
         return '<div class="card l1-sec">'
-          + '<h3>🔍 L1 入网检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<h3>🔍 L1 入网检测</h3>'  // S2: 去内部流程术语 (白话化原则)
           + '<div class="l1-cards">'
           + l1Card('L1-1', '发现失败', l1.verdict, l1.confidence, b1, l1.conclusion, l1.evidence, l1.evidence_total)
           + l1Card('L1-2', 'Association', l2.verdict, l2.confidence, b2, l2.conclusion, l2.evidence, l2.evidence_total)
@@ -306,7 +336,7 @@ reg('diag', function () {
               }).join('')
             + '</div>' : '');
         return '<div class="card l1-sec">'
-          + '<h3>📡 L2 在线维持检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<h3>📡 L2 在线维持检测</h3>'  // S2: 去内部流程术语 (白话化原则)
           + '<div class="l1-cards">'
           + l1Card('L2-1', '终端频繁离线', l21.verdict, l21.confidence, b2x, l21.conclusion, l21.evidence, l21.evidence_total)
           + l1Card('L2-6', '设备静默失联', l26.verdict, l26.confidence, b26, l26.conclusion, l26.evidence, l26.evidence_total)
@@ -432,7 +462,7 @@ reg('diag', function () {
               }).join('')
             + '</div>' : '');
         return '<div class="card l1-sec">'
-          + '<h3>🔧 L3 运营期检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<h3>🔧 L3 运营期检测</h3>'  // S2: 去内部流程术语 (白话化原则)
           + '<div class="l1-cards">'
           + l1Card('L3-1', '发送命令无 APS Ack', l31.verdict, l31.confidence, b31, l31.conclusion, l31.evidence, l31.evidence_total)
           + l1Card('L3-2', '命令送达但未执行', l32.verdict, l32.confidence, b32, l32.conclusion, l32.evidence, l32.evidence_total)
@@ -462,7 +492,7 @@ reg('diag', function () {
               }).join('')
             + '</div>' : '');
         return '<div class="card l1-sec">'
-          + '<h3>🌙 L6 SED 专项检测 <span class="conf">(文档→测试→工具)</span></h3>'
+          + '<h3>🌙 L6 SED 专项检测</h3>'  // S2: 去内部流程术语 (白话化原则)
           + '<div class="l1-cards">'
           + l1Card('L6-3', '间接事务过期', l63.verdict, l63.confidence, b6x, l63.conclusion, l63.evidence, l63.evidence_total)
           + '</div></div>';
@@ -478,19 +508,59 @@ reg('diag', function () {
       setTimeout(function () { reject(new Error('请求超时')); }, ms);
     })]);
   }
+  // S2: 加载逻辑抽为 loadDiag(pan) — 切换 PAN / 重新诊断复用;
   // 顺序修复 (08-10 用户反馈: L2/L3 被移动到最下方): 完成即存 sections[key],
   // renderH 按注册表顺序拼接 — 渐进渲染保留, 顺序固定, 不受响应完成顺序影响
-  MODULES.forEach(function (m) {
-    withTimeout(A.get(m.api), 15000).then(function (d) {
-      var html = m.render(d, checks);
-      if (html) sections[m.key] = html;   // 存 slot 而非追加
-    }).catch(function () { /* 单模块失败/超时不阻塞 (原嵌套 catch 链行为) */ })
-      .then(function () { renderH(); });  // 每模块 settle 后即渲染 (渐进)
+  function loadDiag() {
+    hitDevices = {};          // 重置事件链登记 (页面可重复进入 / 切 PAN)
+    sections = {}; checks = {}; offlineHtml = '';
+    var sel = document.getElementById('diag-pan');
+    diagPan = (sel && sel.options.length) ? sel.value : diagPan;
+    var q = diagPan ? ('?pan=' + diagPan) : '';
+    MODULES.forEach(function (m) {
+      withTimeout(A.get(m.api + q), 15000).then(function (d) {
+        var html = m.render(d, checks);
+        if (html) sections[m.key] = html;   // 存 slot 而非追加
+      }).catch(function () { /* 单模块失败/超时不阻塞 (原嵌套 catch 链行为) */ })
+        .then(function () { renderH(); });  // 每模块 settle 后即渲染 (渐进)
+    });
+    renderOffline(diagPan);
+  }
+  window.__diagPanChange = function (v) { diagPan = v; loadDiag(); };
+  window.__diagRerun = function () { loadDiag(); };
+  // PAN 列表初始化 (复用拓扑 events 端点: pans 全量 + main_pan 主网络)
+  // ⚠️ 修复 (2026-08-28 CDP 实测): 首次进入 rt() 已清空 mc, select 尚不存在 —
+  // 曾直接 return 导致 loadDiag 永不执行, 页面恒空白; 先 renderH 渲染 header 再填选项
+  A.get('/api/topology/events').then(function (d) {
+    var sel = document.getElementById('diag-pan');
+    if (!sel) { renderH(); sel = document.getElementById('diag-pan'); }
+    if (!sel) { loadDiag(); return; }
+    var pans = d.pans || [];
+    var main = d.main_pan;
+    var html = '<option value="">全部 PAN</option>';
+    if (main != null && pans.indexOf(main) !== -1) {
+      html += '<option value="' + main.toString(16).toUpperCase() + '">主网络 0x'
+        + main.toString(16).toUpperCase().padStart(4, '0') + '</option>';
+    }
+    (pans || []).forEach(function (p) {
+      if (main != null && p === main) return;
+      html += '<option value="' + p.toString(16).toUpperCase() + '">0x'
+        + p.toString(16).toUpperCase().padStart(4, '0') + '</option>';
+    });
+    panOptions = html;  // ⚠️ 存模块变量: renderH 重建 select 时复用 (曾重置为加载中)
+    sel.innerHTML = html;
+    // 默认主 PAN (与拓扑页一致: 每 PAN 独立网络, 数据不混入; 全部 PAN 为显式选项)
+    sel.value = diagPan || (main != null ? main.toString(16).toUpperCase() : '');
+    diagPan = sel.value;
+    loadDiag();
+  }).catch(function () {
+    var sel = document.getElementById('diag-pan');
+    if (sel) sel.innerHTML = '<option value="">全部 PAN</option>';
+    loadDiag();
   });
-  renderOffline();
 
-  function renderOffline() {
-    A.get('/api/diag/offline').then(function (d) {
+  function renderOffline(pan) {
+    A.get('/api/diag/offline' + (pan ? ('?pan=' + pan) : '')).then(function (d) {
       var devs = d.devices || [];
       if (!devs.length) {
         offlineHtml += '<div class="card empty">'
@@ -535,12 +605,15 @@ reg('diag', function () {
             var bt = burst.burst_index === 1 ? '第一波' : burst.burst_index === 2 ? '第二波' : ('第' + burst.burst_index + '波');
             var bc = burst.count > 1 ? (' ×' + burst.count) : '';
             var typeName = burst.type === 'kicked' ? '[被踢]' : burst.type === 'voluntary_permanent' ? '[主动永久]' : burst.type === 'voluntary_rejoin' ? '[主动暂离]' : '[被踢·可重入]';
-            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-leave">✕</span> ' + bt + ' Leave' + bc + ' ' + typeName + '</div>';
+            // S2: 补波次时间 (fmtTs 时钟时间, 与时间线一致)
+            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-leave">✕</span> ' + bt + ' Leave' + bc + ' ' + typeName
+              + ' <span class="text-dim" style="font-size:10px">' + fmtTs(burst.first_ts) + '</span></div>';
           }
           var rej = dev.rejoin_attempts || [];
           for (var r = 0; r < rej.length; r++) {
             var rj = rej[r];
-            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-join">📢</span> Device Announce ×' + rj.announce_count + ' (第' + rj.after_burst + '波Leave后 ' + rj.delay_seconds + 's) ← 重入网尝试</div>';
+            offlineHtml += '<div class="diag-ev"><span class="diag-ic diag-ic-join">📢</span> Device Announce ×' + rj.announce_count + ' (第' + rj.after_burst + '波Leave后 ' + rj.delay_seconds + 's) ← 重入网尝试'
+              + ' <span class="text-dim" style="font-size:10px">' + fmtTs(rj.first_ts) + '</span></div>';
           }
           offlineHtml += '</div>';
           var diag = dev.diagnosis || {};

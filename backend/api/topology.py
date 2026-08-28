@@ -578,67 +578,124 @@ async def diag_offline(pan: str = Query(default=""),
     pkts = get_packets()
     if not pkts:
         return {"devices": [], "summary": {"total_devices_left": 0}}
-    pan_int = int(pan, 16) if pan else None
+    pan_int = _pan_int(pan)  # S2: 非法 pan 宽松处理 (不 500)
     timeline = _ensure_events_timeline()
     nodes = get_nodes()
     return rev.aggregate_offline_diagnosis(timeline, nodes=nodes, pan=pan_int,
                                            t0=time_start, t1=time_end)
 
 
+# ── S2 (2026-08-28): 诊断检测器 PAN 过滤 + 结果缓存 ──
+# 多 PAN 聚合素材 (test2 9 个 PAN) 曾整包混算 — 每 PAN 独立网络, 数据不得串网
+# (用户拓扑页裁定语义); pan="" = 全部 PAN (前端"全部"选项)
+_diag_cache: dict = {}
+
+
+def _pan_int(pan: str) -> int | None:
+    """pan 字符串 → int; 非法值 (非 hex) 宽松视为 None (全 PAN), 不 500."""
+    try:
+        return int(pan, 16) if pan else None
+    except ValueError:
+        return None
+
+
+def _diag_pkts(pan: str) -> list[dict]:
+    """pan 参数 → 过滤后的包列表 (None 语义: 前端不传 = 全部)."""
+    full = get_full_packets()
+    if not full:
+        return []
+    pan_int = _pan_int(pan)
+    if pan_int is None:
+        return full
+    return [p for p in full
+            if p.get("pan_src") == pan_int or p.get("pan_dst") == pan_int]
+
+
+def _diag_cache_key() -> tuple:
+    """包内容指纹 (导入替换后失效): 帧数 + 首末帧抓包号."""
+    full = get_full_packets()
+    if not full:
+        return (0, None, None)
+    return (len(full), full[0].get("packet_id"), full[-1].get("packet_id"))
+
+
+def _diag_cached(name: str, pan: str, fn) -> dict:
+    """检测器结果缓存 (S3 events 缓存同模式): 键 = (检测器, 包指纹, PAN)."""
+    key = (name, _diag_cache_key(), pan)
+    hit = _diag_cache.get(key)
+    if hit is not None:
+        return hit
+    r = fn()
+    _diag_cache[key] = r
+    return r
+
+
 @router.get("/diag/l1")
-async def diag_l1():
+async def diag_l1(pan: str = Query(default="")):
     """L1 入网检测: Beacon Request 命中率 (L1-1) + Association 流程 (L1-2).
 
     需要 cubx 导入 (含 MAC 帧). pcap 导入无 MAC 帧 → 返回不可判定.
     """
     from ..detectors import l1 as l1_detector
-    full = get_full_packets()
-    if not full:
-        return {"error": "无数据 (需导入 .cubx 文件)"}
-    return l1_detector.detect(full)
+
+    def _run():
+        pkts = _diag_pkts(pan)
+        if not pkts:
+            return {"error": "无数据 (需导入 .cubx 文件)"}
+        return l1_detector.detect(pkts)
+    return _diag_cached("l1", pan, _run)
 
 
 @router.get("/diag/l2")
-async def diag_l2():
+async def diag_l2(pan: str = Query(default="")):
     """L2 在线维持检测: L2-1 终端频繁离线 (poll 间隔超时 / Leave-Rejoin 循环).
 
     需要含 MAC 帧的素材 (DataRequest 提取).
     """
     from ..detectors import l2 as l2_detector
-    full = get_full_packets()
-    if not full:
-        return {"error": "无数据 (需导入 .cubx 文件)"}
-    return l2_detector.detect(full)
+
+    def _run():
+        pkts = _diag_pkts(pan)
+        if not pkts:
+            return {"error": "无数据 (需导入 .cubx 文件)"}
+        return l2_detector.detect(pkts)
+    return _diag_cached("l2", pan, _run)
 
 
 @router.get("/diag/l6")
-async def diag_l6():
+async def diag_l6(pan: str = Query(default="")):
     """L6 SED 专项检测: L6-S3 间接事务过期 (Network Status 0x06).
 
     与 L3 检测合并计算交叉提示 (G32 案例: 0x06 是 0x0C 下行失败的 SED 侧表现).
     """
     from ..detectors import l3 as l3_detector
     from ..detectors import l6 as l6_detector
-    full = get_full_packets()
-    if not full:
-        return {"error": "无数据 (需导入 .cubx 文件)"}
-    l3_result = l3_detector.detect(full)
-    return l6_detector.detect(full, l3_result=l3_result)
+
+    def _run():
+        pkts = _diag_pkts(pan)
+        if not pkts:
+            return {"error": "无数据 (需导入 .cubx 文件)"}
+        l3_result = l3_detector.detect(pkts)
+        return l6_detector.detect(pkts, l3_result=l3_result)
+    return _diag_cached("l6", pan, _run)
 
 
 @router.get("/diag/l3")
-async def diag_l3():
+async def diag_l3(pan: str = Query(default="")):
     """L3 运营期检测: L3-5 源路由/MTORR 失效 (Network Status 0x0B/0x0C).
 
     与 L1 检测合并计算交叉提示 (838D 案例: L1-3 密钥循环 = L3-5 根因的表象).
     """
     from ..detectors import l1 as l1_detector
     from ..detectors import l3 as l3_detector
-    full = get_full_packets()
-    if not full:
-        return {"error": "无数据 (需导入 .cubx 文件)"}
-    l1_result = l1_detector.detect(full)
-    return l3_detector.detect(full, l1_result=l1_result)
+
+    def _run():
+        pkts = _diag_pkts(pan)
+        if not pkts:
+            return {"error": "无数据 (需导入 .cubx 文件)"}
+        l1_result = l1_detector.detect(pkts)
+        return l3_detector.detect(pkts, l1_result=l1_result)
+    return _diag_cached("l3", pan, _run)
 
 
 def _metric_stats(vals: list) -> dict | None:
