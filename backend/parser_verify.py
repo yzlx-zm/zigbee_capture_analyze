@@ -192,16 +192,20 @@ def _check_consistency(packets: list[dict], report: dict):
 
     # 1e. 地址合理性 (NWK src/dst 范围: 0x0000-0xFFF7, 广播 0xFFFF/0xFFFD/0xFFFC)
     bad_addr = 0
+    bad_samples = []  # S3 终验调试: 明细 (2026-08-28)
     for p in packets:
         for a in (p.get("nwk_src"), p.get("nwk_dst")):
             if a is not None and a > 0xFFF8 and a not in (0xFFFC, 0xFFFD, 0xFFFF):
                 bad_addr += 1
+                if len(bad_samples) < 8:
+                    bad_samples.append(f"#{p.get('id')} 0x{a:04X} {p.get('pkt_type')}")
     check = {
         "label": "NWK 地址范围",
         "expected": "0 个非法地址",
         "actual": f"{bad_addr} 个非法" if bad_addr else "OK",
         "passed": bad_addr == 0,
         "failure_type": "warn",
+        "samples": bad_samples,  # S3 终验调试
     }
     report["checks"]["addr_range"] = check
     if not check["passed"]:
