@@ -498,6 +498,7 @@ async def topology_from_events(pan: str = Query(default=""),
     # 曾下行源路由 relay 链"被提及"的地址直接入拓扑 (test2 C368/50A4
     # seen=0, 报文 0 帧, 用户质疑"报文里过滤都没有, 咋来的")
     seen_aids: set[int] = set()
+    seen_cnt: dict[int, int] = {}
     for _p in _full_pkts:
         if effective_pan is not None and (_p.get("pan_src") != effective_pan
                                           and _p.get("pan_dst") != effective_pan):
@@ -506,11 +507,21 @@ async def topology_from_events(pan: str = Query(default=""),
             _v = _p.get(_k)
             if isinstance(_v, int) and topo.is_unicast(_v):
                 seen_aids.add(_v)
+                seen_cnt[_v] = seen_cnt.get(_v, 0) + 1
+    # ⚠️ S3 修复 (2026-08-28, 用户实测 2 轮): 成员证据判定 —
+    # 仅被源路由"指向" (down 证据) + 报文 1 帧的设备 (7E34 路由管理帧 /
+    # E6C6 单帧未解密 Data) 不算网络成员。准入: poll/入网/RR 事件 或 帧数>=2
+    member_aids: set[int] = set()
+    for _aid, _info in ev_nodes.items():
+        if _info.get("evidence") in ("poll", "assoc", "rr"):
+            member_aids.add(_aid)
     for aid in ev_nodes:
         if aid in node_aids:
             continue
         if aid != 0 and aid not in seen_aids:
             continue  # 报文无此地址 → 不产生幽灵节点 (仅协调器根豁免)
+        if aid != 0 and aid not in member_aids and seen_cnt.get(aid, 0) < 2:
+            continue  # 非成员证据 + 单帧 → 不算成员 (7E34/E6C6 实锤)
         n = nodes.get(aid, {})
         full_graph["nodes"].append({
             "aid": aid, "label": f"0x{aid:04X}", "seen": n.get("seen", 0),
