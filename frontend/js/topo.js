@@ -25,6 +25,8 @@ reg('topo', function(){
     +'<button class="btn btn-o btn-s" id="tside-tog" title="折叠侧边栏">◀ 折叠</button>'
     +'<span id="tinfo"></span></div>'
     +'<div class="card card-tight"><h3>📊 拓扑统计</h3><div id="tstat"></div></div>'
+    +'<div class="card card-tight"><h3>🔍 节点搜索</h3><input id="tsearch" class="mono t-11" placeholder="地址 / 型号 / 厂商" style="width:100%">'
+    +'<div id="tsearch-list" class="scroll-y" style="max-height:180px;margin-top:4px"></div></div>'
     +'<div class="card card-tight"><h3>📡 PAN 列表</h3><div id="pan-list" class="scroll-y"></div></div>'
     +'<div class="card card-tight"><h3>📋 不对称链路</h3><div id="tasym"></div></div>'
     +'</div>'
@@ -34,6 +36,8 @@ reg('topo', function(){
     +'<div class="toolbar">'
     +'<input id="tpan" placeholder="PAN (16B6)" class="mono w-100 t-11">'
     +'<input id="taddr" placeholder="地址" class="mono w-90 t-11">'
+    // S3 (2026-08-28 用户反馈): 节点过滤手段 — 🎯 聚焦按钮 (输入地址 → 聚焦链路变化)
+    +'<button class="btn btn-o btn-s" id="tfocus" title="输入地址后聚焦该节点链路变化">🎯 聚焦</button>'
     +'<button class="btn btn-p btn-s" id="tgo">🔍 筛选</button><button class="btn btn-o btn-s" id="trst">重置</button>'
     +'<span class="toolbar-sep">|</span>'
     +'<button class="btn btn-o btn-s" id="tfit">⊞ 适应</button>'
@@ -118,10 +122,15 @@ reg('topo', function(){
   function enterFocus(aid){
     focusAid=aid;
     var bar=document.getElementById('focus-bar');
-    bar.innerHTML='<div class="fhist-row">🔍 聚焦 <b class="mono">0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
-      +'<span class="t-10" style="color:#cbd5e1">拖动时间滑块观察该节点链路变化</span>'
+    // ⚠️ S3 (2026-08-28, 用户反馈布局): 聚焦横幅结构化 4 行 —
+    // 标题行(地址+按钮) / 提示行 / 链路历史时间轴 / 当前段信息
+    bar.innerHTML='<div class="fhist-title">'
+      +'<b class="fhist-aid">🔍 聚焦 0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
+      +'<span class="fhist-hint">拖动时间滑块观察链路变化</span>'
+      +'<span class="fhist-btns">'
       +'<button class="btn btn-o btn-s" id="focus-tl" style="color:#fff">🔍 报文</button>'
-      +'<button class="btn btn-s" id="focus-exit">✕ 退出</button></div>'
+      +'<button class="btn btn-s" id="focus-exit">✕ 退出</button>'
+      +'</span></div>'
       // S3-C (2026-08-28, 用户选择 A+B): 链路历史时间轴 (分段色块 + 游标指针)
       +'<div id="focus-hist" class="fhist"></div>';
     bar.style.display='flex';
@@ -1162,6 +1171,51 @@ reg('topo', function(){
     }
   }
   document.getElementById('taddr').addEventListener('keydown',function(e){if(e.key==='Enter')locateAddr();});
+
+  // ═══ S3 (2026-08-28, 用户反馈): 节点过滤手段 — 侧栏节点搜索 + 🎯 聚焦按钮 ═══
+  var tsearchInput=document.getElementById('tsearch');
+  function renderSearchList(){
+    var list=document.getElementById('tsearch-list');
+    if(!list)return;
+    var q=(tsearchInput.value||'').trim().toLowerCase();
+    var ns=(S.topo&&S.topo.nodes)||[];
+    if(!q){list.innerHTML='<div class="t-10 text-dim">输入地址/型号/厂商过滤 (点击聚焦)</div>';return;}
+    var hits=[];
+    for(var i=0;i<ns.length;i++){
+      var n=ns[i];
+      var lbl='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
+      var model=n.model_id||'', mf=n.manufacturer_name||'';
+      if(lbl.toLowerCase().indexOf(q)>=0||model.toLowerCase().indexOf(q)>=0
+         ||(mf&&mf.toLowerCase().indexOf(q)>=0))hits.push(n);
+    }
+    if(!hits.length){list.innerHTML='<div class="t-10 text-dim">无匹配节点</div>';return;}
+    var h='';
+    for(var i=0;i<Math.min(hits.length,30);i++){
+      var n=hits[i];
+      var lbl='0x'+n.aid.toString(16).toUpperCase().padStart(4,'0');
+      h+='<div class="tsearch-item" data-aid="'+n.aid+'">'
+        +'<span class="mono t-11">'+lbl+'</span>'
+        +(n.model_id?' <span class="t-10 text-dim">'+n.model_id+'</span>':'')
+        +(n.manufacturer_name?' <span class="t-10 text-dim">'+n.manufacturer_name+'</span>':'')
+        +'</div>';
+    }
+    list.innerHTML=h;
+    list.querySelectorAll('.tsearch-item').forEach(function(it){
+      it.addEventListener('click',function(){enterFocus(parseInt(this.dataset.aid));});
+    });
+  }
+  if(tsearchInput){tsearchInput.addEventListener('input',renderSearchList);renderSearchList();}
+  document.getElementById('tfocus').addEventListener('click',function(){
+    var av=document.getElementById('taddr').value.trim();
+    if(!av){document.getElementById('taddr').title='先输入节点地址 (hex)';return;}
+    var aid=parseInt(av.replace(/^0x/i,''),16);
+    if(isNaN(aid)){document.getElementById('taddr').title='无效地址 (hex)';return;}
+    var ns=(S.topo&&S.topo.nodes)||[];
+    var found=false;
+    for(var i=0;i<ns.length;i++){if(ns[i].aid===aid){found=true;break;}}
+    if(!found){document.getElementById('taddr').title='节点不在当前图';return;}
+    enterFocus(aid);
+  });
 
   // ═══ 按钮事件 ═══
   document.getElementById('tgo').addEventListener('click',function(){
