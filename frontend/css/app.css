@@ -498,7 +498,8 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 /* ── U13: 链路历史时间轴 (底部面板) ── */
 .hist-bar { display: flex; gap: 2px; height: 26px; border: 1px solid var(--c-border); border-radius: 4px;
   padding: 2px; overflow: hidden; cursor: pointer; position: relative; }  /* S3: 滑块指针定位基准 */
-.hist-seg { height: 100%; min-width: 6px; border-radius: 2px; opacity: 0.85; }
+/* S3 修复: 色块 absolute 定位 (抓包坐标系, 指针滑块一致) */
+.hist-seg { position: absolute; top: 0; bottom: 0; min-width: 4px; border-radius: 2px; opacity: 0.85; }
 .hist-seg:hover { opacity: 1; outline: 1px solid #1e293b; }
 
 /* ── U13: 聚焦模式横幅 ── */
@@ -522,7 +523,8 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 .fhist-empty { font-size: 11px; color: #94a3b8; padding: 2px 0; }
 .fhist-bar { position: relative; display: flex; gap: 2px; height: 18px; border: 1px solid #334155;
   border-radius: 3px; padding: 1px 2px; overflow: hidden; }
-.fhist-seg { height: 100%; min-width: 4px; border-radius: 2px; opacity: 0.8; }
+/* S3 修复: 色块 absolute 定位 (抓包坐标系, 指针滑块一致) */
+.fhist-seg { position: absolute; top: 0; bottom: 0; min-width: 4px; border-radius: 2px; opacity: 0.8; }
 .fhist-seg:hover { opacity: 1; outline: 1px solid #fff; }
 /* ⚠️ S3 修复 (2026-08-28): cur 显式 z-index 置顶 + 加宽加亮 —
    z-index auto 时层叠不确定 (switch z2 可能盖住); 2px 白线在彩色段上不醒目 */

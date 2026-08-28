@@ -162,20 +162,23 @@ reg('topo', function(){
     if(!el)return;
     var segs=(S.topo&&S.topo.link_snapshots)?S.topo.link_snapshots[''+focusAid]:null;
     if(!segs||!segs.length){el.innerHTML='<div class="fhist-empty">该节点无链路证据帧</div>';return;}
-    var t0=segs[0].t0,t1=segs[segs.length-1].t1;
-    var span=Math.max(t1-t0,1);
+    // ⚠️ S3 修复 (2026-08-28, 用户反馈指针先到底): 时间轴统一**抓包坐标系**
+    // (tsStart~tsEnd) — 色块按节点证据实际位置 absolute 定位; 指针 = curT 全局
+    // 位置 → 滑块↔指针严格同步 (曾按证据范围映射, 证据早结束的节点指针先到 100%)
+    var spanAll=Math.max((tsEnd-tsStart),1);
     var h='<div class="fhist-bar">';
     for(var i=0;i<segs.length;i++){
       var s=segs[i];
       var color=s.kind==='parent'?'#0ea5e9':'#e74c3c';
-      var w=Math.max(6,Math.round((s.t1-s.t0)/span*100));
+      var left=Math.max(0,((s.t0-tsStart)/spanAll*100));
+      var w=Math.max(4,Math.min(100-left,((s.t1-s.t0)/spanAll*100)));
       h+='<div class="fhist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
-        +'" style="width:'+w+'%;background:'+color+'"></div>';
+        +'" style="left:'+left+'%;width:'+w+'%;background:'+color+'"></div>';
     }
     // 切换点: 相邻段链路签名变化 → 橙色竖线 (悬停看切换内容)
     for(var i=1;i<segs.length;i++){
       if(segSig(segs[i-1])!==segSig(segs[i])){
-        var left=Math.min(99,Math.max(1,((segs[i].t0-t0)/span*100)));
+        var left=Math.min(99,Math.max(1,((segs[i].t0-tsStart)/spanAll*100)));
         h+='<div class="fhist-switch" style="left:'+left+'%"'
           +' title="'+segChangeDesc(segs[i-1],segs[i])+'"></div>';
       }
@@ -193,10 +196,10 @@ reg('topo', function(){
     if(!el||focusAid==null)return;
     var segs=(S.topo&&S.topo.link_snapshots)?S.topo.link_snapshots[''+focusAid]:null;
     if(!segs||!segs.length)return;
-    var t0=segs[0].t0,t1=segs[segs.length-1].t1;
-    var span=Math.max(t1-t0,1);
+    // S3 修复: 指针 = curT 抓包全局位置 (与主滑块同步)
+    var spanAll=Math.max((tsEnd-tsStart),1);
     var cur=document.getElementById('fhist-cur');
-    if(cur)cur.style.left=Math.min(100,Math.max(0,(curT-t0)/span*100))+'%';
+    if(cur)cur.style.left=Math.min(100,Math.max(0,(curT-tsStart)/spanAll*100))+'%';
     var info=document.getElementById('fhist-info');
     if(info){
       var best=null;
@@ -1097,9 +1100,9 @@ reg('topo', function(){
   function updateHistCursor(){
     var cur=document.getElementById('hist-cur');
     if(!cur||!histSegs||!histSegs.length)return;
-    var t0=histSegs[0].t0,t1=histSegs[histSegs.length-1].t1;
-    var span=Math.max(t1-t0,1);
-    cur.style.left=Math.min(100,Math.max(0,(curT-t0)/span*100))+'%';
+    // S3 修复: 指针 = curT 抓包全局位置 (与主滑块同步, 曾按证据范围指针先到底)
+    var spanAll=Math.max((tsEnd-tsStart),1);
+    cur.style.left=Math.min(100,Math.max(0,(curT-tsStart)/spanAll*100))+'%';
   }
   function loadHist(){
     var info=document.getElementById('hist-info');
@@ -1114,15 +1117,16 @@ reg('topo', function(){
       histSegs=d.segments||[];
       info.textContent=d.error||(histSegs.length+' 段链路证据');
       if(!histSegs.length){tl.innerHTML='<p class="empty">无链路证据帧</p>';return;}
-      var t0=histSegs[0].t0,t1=histSegs[histSegs.length-1].t1;
-      var span=Math.max(t1-t0,1);
+      // S3 修复: 色块 absolute 定位 (抓包坐标系, 与滑块指针一致)
+      var spanAll=Math.max((tsEnd-tsStart),1);
       var h='<div class="hist-bar">';
       for(var i=0;i<histSegs.length;i++){
         var s=histSegs[i];
         var color=s.kind==='parent'?'#0ea5e9':PATH_COLORS[i%PATH_COLORS.length];
-        var w=Math.max(8,Math.round((s.t1-s.t0)/span*100));
+        var left=Math.max(0,((s.t0-tsStart)/spanAll*100));
+        var w=Math.max(4,Math.min(100-left,((s.t1-s.t0)/spanAll*100)));
         h+='<div class="hist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
-          +'" style="width:'+w+'%;background:'+color+'"></div>';
+          +'" style="left:'+left+'%;width:'+w+'%;background:'+color+'"></div>';
       }
       // ⚠️ S3 (2026-08-28, 用户选择): 滑块指针联动 — 主滑块拖动时白色指针跟随
       h+='<div id="hist-cur" class="fhist-cur"></div></div>'
