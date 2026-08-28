@@ -764,7 +764,9 @@ def _judge_l1_4_device(dev: int, ev: dict, remove_events: list[dict],
 def detect(packets: list[dict]) -> dict:
     """运行全部 L1 检测 → 汇总报告."""
     for _i, _p in enumerate(packets):
-        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
+        # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用);
+        # ⚠️ setdefault — _diag_pkts 已注入**全局索引** (PAN 过滤后枚举索引 ≠ 全局)
+        _p.setdefault("_idx", _i)
     return {
         "l1_1": detect_l1_1(packets),
         "l1_2": detect_l1_2(packets),

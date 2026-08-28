@@ -161,7 +161,8 @@ def detect_l6_3(packets: list[dict], l3_result: dict | None = None) -> dict:
 def detect(packets: list[dict], l3_result: dict | None = None) -> dict:
     """运行全部 L6 检测 → 汇总报告."""
     for _i, _p in enumerate(packets):
-        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
+        # S2: setdefault — _diag_pkts 已注入全局索引 (PAN 过滤后枚举索引 ≠ 全局)
+        _p.setdefault("_idx", _i)
     return {
         "l6_3": detect_l6_3(packets, l3_result),
     }

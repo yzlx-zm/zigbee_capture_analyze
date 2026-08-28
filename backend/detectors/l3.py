@@ -1016,7 +1016,8 @@ def detect_l3_11(packets: list[dict]) -> dict:
 def detect(packets: list[dict], l1_result: dict | None = None) -> dict:
     """运行全部 L3 检测 → 汇总报告."""
     for _i, _p in enumerate(packets):
-        _p["_idx"] = _i  # S2: 证据帧列表索引 (前端跳报文页 tlJumpFrame 用)
+        # S2: setdefault — _diag_pkts 已注入全局索引 (PAN 过滤后枚举索引 ≠ 全局)
+        _p.setdefault("_idx", _i)
     l3_5 = detect_l3_5(packets, l1_result)
     return {
         "l3_5": l3_5,

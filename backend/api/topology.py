@@ -623,15 +623,27 @@ async def diag_pans():
 
 
 def _diag_pkts(pan: str) -> list[dict]:
-    """pan 参数 → 过滤后的包列表 (None 语义: 前端不传 = 全部)."""
+    """pan 参数 → 过滤后的包列表 (None 语义: 前端不传 = 全部).
+
+    ⚠️ 2026-08-29 用户反馈修复: 证据帧 `_idx` 必须是**全局索引**
+    (packets API 的 id = 全量列表索引, tlJumpFrame 定位用) — 曾注入
+    PAN 过滤后列表的枚举索引, 主 PAN 下证据帧点击跳到错误帧
+    (id=1478 实为 MAC Ack, 真实帧 packet_id=5185 在别处).
+    """
     full = get_full_packets()
     if not full:
         return []
     pan_int = _pan_int(pan)
     if pan_int is None:
+        for _i, _p in enumerate(full):
+            _p["_idx"] = _i
         return full
-    return [p for p in full
-            if p.get("pan_src") == pan_int or p.get("pan_dst") == pan_int]
+    out = []
+    for _i, _p in enumerate(full):
+        if _p.get("pan_src") == pan_int or _p.get("pan_dst") == pan_int:
+            _p["_idx"] = _i  # 全局索引 (全量列表位置)
+            out.append(_p)
+    return out
 
 
 def _diag_cache_key() -> tuple:
