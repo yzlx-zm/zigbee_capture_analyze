@@ -526,6 +526,11 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 .fhist-seg:hover { opacity: 1; outline: 1px solid #fff; }
 .fhist-cur { position: absolute; top: -1px; bottom: -1px; width: 2px; background: #f8fafc;
   box-shadow: 0 0 4px rgba(255,255,255,.6); pointer-events: none; }
+/* S3 (2026-08-28 用户反馈): 链路切换点橙色竖线 (父/路径变更时刻) */
+.fhist-switch { position: absolute; top: -1px; bottom: -1px; width: 3px; background: #f59e0b;
+  z-index: 2; border-radius: 1px; box-shadow: 0 0 3px rgba(245,158,11,.5); cursor: pointer; }
+.fhist-switch:hover { outline: 1px solid #fff; }
+.fhist-legend { font-size: 10px; color: #94a3b8; margin-top: 2px; }
 .fhist-info { font-size: 11px; color: #cbd5e1; margin-top: 3px; }
 
 /* ── U17: 全局 AI 侧边栏 ── */

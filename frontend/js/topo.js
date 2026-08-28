@@ -143,6 +143,20 @@ reg('topo', function(){
   }
 
   // ═══ S3-C: 聚焦链路历史时间轴 (方案 B) — 该节点链路分段色块 + 游标指针 ═══
+  // S3 (2026-08-28, 用户反馈): 切换点橙色标记 — 相邻段链路签名变化处
+  function segSig(s){
+    if(s.kind==='parent')return 'p:'+s.parent;
+    if(s.kind==='route')return 'r:'+String(s.dst)+':'+(s.relays||[]).join(',');
+    return s.kind;
+  }
+  function segChangeDesc(prev,cur){
+    var hx=function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');};
+    if(prev.kind==='parent'&&cur.kind==='parent')
+      return '父链路切换 '+hx(prev.parent)+' → '+hx(cur.parent)+' @ '+fmtTsH(cur.t0);
+    if(prev.kind==='route'&&cur.kind==='route')
+      return '路径切换 @ '+fmtTsH(cur.t0);
+    return '链路变更 ('+(prev.kind==='parent'?'父':'路径')+'→'+(cur.kind==='parent'?'父':'路径')+') @ '+fmtTsH(cur.t0);
+  }
   function renderFocusHist(){
     var el=document.getElementById('focus-hist');
     if(!el)return;
@@ -158,7 +172,18 @@ reg('topo', function(){
       h+='<div class="fhist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
         +'" style="width:'+w+'%;background:'+color+'"></div>';
     }
+    // 切换点: 相邻段链路签名变化 → 橙色竖线 (悬停看切换内容)
+    for(var i=1;i<segs.length;i++){
+      if(segSig(segs[i-1])!==segSig(segs[i])){
+        var left=Math.min(99,Math.max(1,((segs[i].t0-t0)/span*100)));
+        h+='<div class="fhist-switch" style="left:'+left+'%"'
+          +' title="'+segChangeDesc(segs[i-1],segs[i])+'"></div>';
+      }
+    }
     h+='<div id="fhist-cur" class="fhist-cur"></div></div>'
+      +'<div class="fhist-legend"><span style="color:#0ea5e9">▮</span> 父链路 · '
+      +'<span style="color:#e74c3c">▮</span> 路由路径 · '
+      +'<span style="color:#f59e0b">▮</span> 链路切换点</div>'
       +'<div id="fhist-info" class="fhist-info"></div>';
     el.innerHTML=h;
     updateFocusHist();
