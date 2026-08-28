@@ -54,7 +54,7 @@ reg('topo', function(){
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
       +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网/下行证据)</div>'
       +'<div class="lp-title mt-1">状态</div>'
-      +'<div class="lp-row"><span class="lp-q">?</span> 链路遗失 (历史残影, 悬停看最后时间)</div>'
+      +'<div class="lp-row"><span class="lp-q">⏳</span> 链路遗失 (历史残影, 悬停看最后时间)</div>'
       +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
       +'<div class="lp-row"><span class="dot hl"></span> 高亮节点</div>'
     +'</div>'
@@ -381,13 +381,14 @@ reg('topo', function(){
         }
       }
     }
-    // 节点 stale 标记 (tooltip 显示最后链路时间; 视觉: 细灰虚线边框 + label 加 "?")
+    // 节点 stale 标记 (tooltip 显示最后链路时间; 视觉: 淡化+灰虚线边框+label ⏳)
+    // S3-方案A (2026-08-28 用户选择): "?" → ⏳ 沙漏 (链路等待中语义), 节点 opacity 0.65
     for(var sni=0;sni<cyNodes.length;sni++){
       var ndata=cyNodes[sni].data;
       var nst=snaps[ndata.aid]?snapState(snaps[ndata.aid]):{state:'none'};
       if(nst.state==='stale'){
         ndata.stale=true; ndata.last_link_ts=nst.seg.t1;
-        ndata.label=String(ndata.label).replace(/\s*\?$/, '')+' ?';  // 用户要求: 遗失节点加 "?" (去重防连加)
+        ndata.label=String(ndata.label).replace(/[\s?⏳]+$/, '')+' ⏳';  // 去重防连加
         if(cyNodes[sni].classes.indexOf('inactive')<0)cyNodes[sni].classes+=' stale-node';
       }
     }
@@ -461,11 +462,11 @@ reg('topo', function(){
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
         // S3-方案A (2026-08-27, 用户选择): 历史残影 — 时刻窗内无证据但有历史:
-        //   灰虚线弱化边 (节点留最后链路位置) + 节点细灰虚线边框
-        // (双类选择器压过 path-cX 单类颜色)
+        //   灰虚线弱化边 (节点留最后链路位置) + 节点淡化 0.65 + 细灰虚线边框
+        // (双类选择器压过 path-cX 单类颜色; 2026-08-28 用户选择: 加淡化)
         {selector:'edge.route-path.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
         {selector:'edge.parent-edge.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
-        {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5}},
+        {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5,'opacity':0.65}},
         // U13-C: 窗内非当前路径弱化 (同源多路径主次分明)
         {selector:'edge.route-alt', style:{'opacity':0.22,'line-style':'dashed','width':1.5}},
         {selector:'edge.hist-hl', style:{'width':6,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48','z-index':999}},
