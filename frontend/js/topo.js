@@ -252,6 +252,12 @@ reg('topo', function(){
         pathNodes[full[j]].push(i);
       }
     }
+    // ⚠️ S3 修复 (2026-08-28, test2 实锤): on_path 扩展 — 有父链路证据
+    // (poll/assoc/rr/down 四来源) 的节点也是"链路上"节点。曾只认 RR 路径 →
+    // test2 401 个下行源路由父节点被染黄 (用户反馈"有些节点还是黄色的")
+    for(var i=0;i<ns.length;i++){
+      if(ns[i].parent!=null&&!pathNodes[ns[i].aid])pathNodes[ns[i].aid]=[];
+    }
 
     // ── 节点 ──
     var cyNodes=[];
