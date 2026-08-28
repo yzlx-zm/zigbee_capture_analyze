@@ -138,6 +138,15 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   ("Write Attributes" 实为 GP Proxy Commissioning Mode, 官方 SDK command-id.h
   依据 → zcl_defs 补 GP 表 + 前端 frame_type 守卫不猜) — 帧96 标题
   "ZCL GP Proxy Commissioning Mode" ✓, poll FCF 0x8863 ✓, 回归 3 套全过
+- [T1 设备分析 CLI 工具](issues/T1-设备分析CLI工具.md) — **独立工具完成 (08-28)**, 目录
+  `D:\ai_agent\zigbee_device_analyze\` (用户指定): device_analyze.py (argparse/目录批量/进度/
+  --src/--json-only) + sync_deps.py (方案 D: 整文件复制 6 模块 + ast 函数级抽取 3 共享模块
+  detail_shared/node_stats_shared/nodes_shared + 版本戳 + MANIFEST sha256 漂移检测);
+  **原工程零改动** (用户强调, 曾试共享位置方案已完整回滚); 复用 = parse_cubx/_node_stats/
+  _extract_nodes_from_packets/_detail_dict + U15 画像格式; 坑: 涂鸦 PAYLOAD_PARSERS 注册在
+  files.py 顶部 → deps 模式需显式注册 (否则 0xEF00 静默走 fallback); 验证 6/6: dimmer 对账
+  (U9/U15 实证逐项一致) + 中继 122 设备 (838D=AKLOCK-C6) + 批量 5 素材 + deps/src 逐字段 0 差异
+  + MANIFEST 校验 + 与主工具 /nodes/export 逐字段 0 差异; CLI 目录 git 管理待用户确认
 - [S3 拓扑页稳定化](issues/S3-拓扑页稳定化.md) — 打包前稳定化第 3 站 (用户指定
   下一站): **P1×5 清零** (①runLayout 固定列 nd ReferenceError — 布局二次切换
   崩溃, CDP 异常实测 ②link-history 端点缺 return — 恒 null → 前端 TypeError
