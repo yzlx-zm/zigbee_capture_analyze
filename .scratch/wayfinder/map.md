@@ -185,6 +185,19 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   108324 帧 5 端点全 <1s (无性能 P1); 复验: CDP 12/12 + 群控 L3-2 3/3 + 回归
   3 套全绿; 过程中修复 2 坑 (首次 select 未渲染→页面恒空白 / renderH 重建重置
   选项); 版本号 20260829d
+- [T2 主工具打包分发](issues/T2-主工具打包分发.md) — **主工程打包分发完成**
+  (提交 8c3aab5): 目录包 onedir (74.8MB/1724 文件, zip 41.1MB) + version.json
+  版本管理 + 手动覆盖更新 + 数据分层 (打包后 AI key → %APPDATA%\zigbee-analyzer\
+  隔离 + logs 轮转; 开发模式原路径不变); 打包工具 build.py/spec/launcher 入 git;
+  **过程中修复 4 坑**: ①from backend import __main__ frozen 下 ImportError →
+  模块路径导入 ②**P3 ProcessPoolExecutor frozen 下需 freeze_support()** —
+  大包导入曾卡 30% (97623 帧 5 分钟无进展实锤), 修复后 10s ③单实例锁
+  os.kill(pid,0) Windows 抛 OSError 被吞 → 双开实锤 (PID 46444) → CreateMutex
+  ④版本号仅 total>0 显示 → 无包也显示; **9 条实测清单全过**: 双击 exe 自动开
+  浏览器 (Edge 3s 后创建) / 全页面 CDP 9/9 (导入小包+大包 573 万帧拆分 8.8s→
+  拆产物 10s 导入 / 诊断/拓扑/报文/节点导出/AI 检索/重启) / 更新覆盖 version
+  1.0.0→1.0.1 数据保留 / 单实例 / 离线降级 (401 提示) / 中文路径 / 日志落盘 /
+  开发模式回归; 遗留: 大包全量导入未测 / 杀软扫描未执行 (诚实标注)
 
 ## Not yet specified
 
