@@ -54,6 +54,7 @@ reg('topo', function(){
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
       +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网/下行证据)</div>'
       +'<div class="lp-title mt-1">状态</div>'
+      +'<div class="lp-row"><span class="lp-q">?</span> 链路遗失 (历史残影, 悬停看最后时间)</div>'
       +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
       +'<div class="lp-row"><span class="dot hl"></span> 高亮节点</div>'
     +'</div>'
@@ -380,12 +381,13 @@ reg('topo', function(){
         }
       }
     }
-    // 节点 stale 标记 (tooltip 显示最后链路时间; 视觉: 细灰虚线边框)
+    // 节点 stale 标记 (tooltip 显示最后链路时间; 视觉: 细灰虚线边框 + label 加 "?")
     for(var sni=0;sni<cyNodes.length;sni++){
       var ndata=cyNodes[sni].data;
       var nst=snaps[ndata.aid]?snapState(snaps[ndata.aid]):{state:'none'};
       if(nst.state==='stale'){
         ndata.stale=true; ndata.last_link_ts=nst.seg.t1;
+        ndata.label=String(ndata.label).replace(/\s*\?$/, '')+' ?';  // 用户要求: 遗失节点加 "?" (去重防连加)
         if(cyNodes[sni].classes.indexOf('inactive')<0)cyNodes[sni].classes+=' stale-node';
       }
     }

@@ -11,7 +11,7 @@ window.S = S; window.A = A; window.sb = sb; window.fmtTs = fmtTs;
 window.sr = sr; window.setProg = setProg; window.doPI = doPI;
 
 // ── 页面模块静态导入 (确保所有 reg() 在 rt() 前完成) ──
-import './topo.js?v=20260827u';  // S3-方案A: 时刻视图链路残影 (历史灰虚线边+节点留原位), 改版递增
+import './topo.js?v=20260828a';  // S3: 残影节点 label 加 "?" + 图例说明 (用户要求), 改版递增
 import './import.js?v=20260827a';  // S1: CSV 导入删除 (只留抓包), 改版递增
 import './timeline.js?v=20260827e';  // S4: Security 层修复 + 详情帧号, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
