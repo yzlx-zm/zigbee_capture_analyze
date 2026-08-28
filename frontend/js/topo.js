@@ -118,16 +118,79 @@ reg('topo', function(){
   function enterFocus(aid){
     focusAid=aid;
     var bar=document.getElementById('focus-bar');
-    bar.innerHTML='🔍 聚焦 <b class="mono">0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
+    bar.innerHTML='<div class="fhist-row">🔍 聚焦 <b class="mono">0x'+aid.toString(16).toUpperCase().padStart(4,'0')+'</b>'
       +'<span class="t-10" style="color:#cbd5e1">拖动时间滑块观察该节点链路变化</span>'
       +'<button class="btn btn-o btn-s" id="focus-tl" style="color:#fff">🔍 报文</button>'
-      +'<button class="btn btn-s" id="focus-exit">✕ 退出</button>';
+      +'<button class="btn btn-s" id="focus-exit">✕ 退出</button></div>'
+      // S3-C (2026-08-28, 用户选择 A+B): 链路历史时间轴 (分段色块 + 游标指针)
+      +'<div id="focus-hist" class="fhist"></div>';
     bar.style.display='flex';
     document.getElementById('focus-tl').addEventListener('click',function(){
       S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');S.topoT0=null;S.topoT1=null;location.hash='tl';
     });
     document.getElementById('focus-exit').addEventListener('click',exitFocus);
+    renderFocusHist();
     reloadTopo();
+  }
+
+  // ═══ S3-C: 聚焦链路历史时间轴 (方案 B) — 该节点链路分段色块 + 游标指针 ═══
+  function renderFocusHist(){
+    var el=document.getElementById('focus-hist');
+    if(!el)return;
+    var segs=(S.topo&&S.topo.link_snapshots)?S.topo.link_snapshots[''+focusAid]:null;
+    if(!segs||!segs.length){el.innerHTML='<div class="fhist-empty">该节点无链路证据帧</div>';return;}
+    var t0=segs[0].t0,t1=segs[segs.length-1].t1;
+    var span=Math.max(t1-t0,1);
+    var h='<div class="fhist-bar">';
+    for(var i=0;i<segs.length;i++){
+      var s=segs[i];
+      var color=s.kind==='parent'?'#0ea5e9':'#e74c3c';
+      var w=Math.max(6,Math.round((s.t1-s.t0)/span*100));
+      h+='<div class="fhist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
+        +'" style="width:'+w+'%;background:'+color+'"></div>';
+    }
+    h+='<div id="fhist-cur" class="fhist-cur"></div></div>'
+      +'<div id="fhist-info" class="fhist-info"></div>';
+    el.innerHTML=h;
+    updateFocusHist();
+  }
+  function updateFocusHist(){
+    var el=document.getElementById('focus-hist');
+    if(!el||focusAid==null)return;
+    var segs=(S.topo&&S.topo.link_snapshots)?S.topo.link_snapshots[''+focusAid]:null;
+    if(!segs||!segs.length)return;
+    var t0=segs[0].t0,t1=segs[segs.length-1].t1;
+    var span=Math.max(t1-t0,1);
+    var cur=document.getElementById('fhist-cur');
+    if(cur)cur.style.left=Math.min(100,Math.max(0,(curT-t0)/span*100))+'%';
+    var info=document.getElementById('fhist-info');
+    if(info){
+      var best=null;
+      for(var i=0;i<segs.length;i++){
+        var s=segs[i];
+        if(s.t0>curT)break;
+        if(slideMode&&curT-s.t1>60)continue;  // 与 snapAt 同语义 (30s 窗+顺延)
+        best=s;
+      }
+      if(best){
+        // S3 修复: link_snapshots 段无 path_str 字段 (那是 link-history 端点拼的),
+        // 这里从段数据拼路径文本
+        var evL={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[best.evidence]||'';
+        var ps;
+        if(best.kind==='parent'){
+          ps='父: 0x'+best.parent.toString(16).toUpperCase().padStart(4,'0');
+        }else{
+          var chain=[focusAid].concat(best.relays||[]).concat([best.dst]);
+          ps=chain.map(function(a){return '0x'+a.toString(16).toUpperCase().padStart(4,'0');}).join(' → ');
+        }
+        info.innerHTML='<span class="mono">'+ps+'</span>'
+          +' <span class="t-10 text-dim">'+fmtTsH(best.t0)+'~'+fmtTsH(best.t1)
+          +(evL?' · '+evL:'')+'</span>'
+          +(slideMode&&curT-best.t1>60?' <span style="color:#d97706">⏳ 历史残影</span>':'');
+      }else{
+        info.innerHTML='<span class="t-10 text-dim">当前时刻无链路证据</span>';
+      }
+    }
   }
   function exitFocus(){
     focusAid=null;
@@ -263,16 +326,31 @@ reg('topo', function(){
     var cyNodes=[];
     var hasPaths=rps.length>0;  // 无 Route Record 路径时全部按"在路径上"渲染, 否则 offpath 会让整图隐形
     // ⚠️ U13-B 聚焦模式: focusAid 非空时只渲染 协调器+聚焦节点+链路链 (downlink+parent 链)
-    var focusSet=null;
+    // ⚠️ S3-C (2026-08-28, 用户选择 A+B): focusCore=当前链路链 (实线);
+    // focusGhost=历史段节点 (该节点历史链路的父/中继, 灰淡对比显示)
+    var focusSet=null, focusCore=null;
     if(focusAid!=null&&ns.length){
-      focusSet={}; focusSet[0]=1; focusSet[focusAid]=1;
+      focusSet={}; focusCore={};
+      focusSet[0]=1;focusCore[0]=1; focusSet[focusAid]=1;focusCore[focusAid]=1;
       var fnd=null; for(var fi=0;fi<ns.length;fi++){if(ns[fi].aid===focusAid){fnd=ns[fi];break;}}
       if(fnd){
-        if(fnd.downlink)fnd.downlink.forEach(function(a){focusSet[a]=1;});
+        if(fnd.downlink)fnd.downlink.forEach(function(a){focusSet[a]=1;focusCore[a]=1;});
         var fcur=focusAid, fguard=0;
         while(fcur!=null&&fcur!==0&&fguard++<20){
           var fpn=null; for(var pi2=0;pi2<ns.length;pi2++){if(ns[pi2].aid===fcur){fpn=ns[pi2];break;}}
-          if(fpn&&fpn.parent!=null){focusSet[fpn.parent]=1;fcur=fpn.parent;}else break;
+          if(fpn&&fpn.parent!=null){focusSet[fpn.parent]=1;focusCore[fpn.parent]=1;fcur=fpn.parent;}else break;
+        }
+      }
+      // S3-C: 聚焦节点所有历史段的父/中继/dst 节点 → ghost 对比 (仅 focusSet, 非 core)
+      var fsSegs=d.link_snapshots?d.link_snapshots[''+focusAid]:null;
+      if(fsSegs){
+        for(var gi=0;gi<fsSegs.length;gi++){
+          var gs=fsSegs[gi];
+          if(gs.kind==='parent'&&gs.parent!=null){focusSet[gs.parent]=1;}
+          else if(gs.kind==='route'){
+            if(gs.dst!=null)focusSet[gs.dst]=1;
+            for(var gj=0;gj<(gs.relays||[]).length;gj++)focusSet[gs.relays[gj]]=1;
+          }
         }
       }
     }
@@ -280,6 +358,8 @@ reg('topo', function(){
       var n=ns[i]; var aid=n.aid;
       if(focusSet&&!focusSet[aid])continue;  // 聚焦: 非链路链节点不渲染
       var dt=n.device_type||'unknown';
+      // S3-C: ghost 节点 = 聚焦时历史链路段的父/中继 (灰淡, 对比显示)
+      var isGhost=focusCore!=null&&!focusCore[aid]&&aid!==focusAid;
       var onPath=(!hasPaths)||!!pathNodes[aid]||aid===0;  // 无路径全可见; 协调器永远可见
       // U14-2: label 双行 — 第二行型号 (model_id 非空时; 小节点放不下由 tooltip 兜底)
       // U14-3: behavior 类 (rejoining/sleeping/offline) — 仅 onpath 节点应用
@@ -303,7 +383,7 @@ reg('topo', function(){
           link_parent:n.parent, link_ev:n.parent_evidence||'',
           downlink:n.downlink||null,
           inactive:!online},
-        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')+(online?'':' inactive')):(online?'offpath':'offpath inactive')
+        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')+(online?'':' inactive')+(isGhost?' ghost-node':'')):(online?'offpath':'offpath inactive')
       });
     }
     // ⚠️ S3-重构 (2026-08-27, 用户对齐): 节点全量返回 (后端 nodes 含所有出现过节点),
@@ -313,8 +393,16 @@ reg('topo', function(){
     // ── 边: 数据流量 → 灰色细线背景 ──
     var cyEdges=[];
     var trafficSeen={};
+    // ⚠️ S3 修复 (2026-08-28): cyNodeIds 提前构建 — 曾定义在链路快照段 (traffic 边
+    // 之后), var 提升但值为 undefined → 聚焦检查 src/dst 时 TypeError → renderGraph
+    // 崩溃 → canvas 0 (92 节点但图空白, 用户"无效果"另一根源)
+    var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
     for(var i=0;i<es.length;i++){
       var e=es[i];
+      // ⚠️ S3 修复 (2026-08-28, 聚焦无效果根因): 聚焦模式节点被过滤后,
+      // 未检查 src/dst 是否在渲染集 → Cytoscape 创建边异常 → renderGraph 中断
+      // → 链路边不画 → 拖动游标"完全没有效果" (t-0-28762 异常实锤)
+      if(!cyNodeIds[''+e.src]||!cyNodeIds[''+e.dst])continue;
       var ek=Math.min(e.src,e.dst)+'-'+Math.max(e.src,e.dst);
       if(trafficSeen[ek]) continue;
       trafficSeen[ek]=true;
@@ -328,7 +416,7 @@ reg('topo', function(){
     // 每节点 T 时刻状态 = link_snapshots 分段中 t0<=curT 的最近一段:
     //   route 段 → 该时刻路径全链边; parent 段 → 该时刻 poll 父边
     // (曾用窗过滤 route_paths + 全程 parent — 时刻语义不精确, 用户反馈重做)
-    var cyNodeIds={}; for(var ni=0;ni<cyNodes.length;ni++)cyNodeIds[cyNodes[ni].data.id]=true;
+    // ⚠️ S3: cyNodeIds 已在 traffic 边段前构建 (曾定义于此导致 traffic 检查 TypeError)
     var snaps=d.link_snapshots||{};
     var lsKeys={};
     // ⚠️ S3-重构 (2026-08-27, 用户对齐: 默认全貌 + 游标时刻):
@@ -383,6 +471,31 @@ reg('topo', function(){
             cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll',stale:true,last_ts:seg.t1},classes:'parent-edge stale-path'});
           }else{
             cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll'},classes:'parent-edge'});
+          }
+        }
+      }
+      // ⚠️ S3-C (2026-08-28, 用户选择 A+B): 聚焦节点历史链路段 ghost 叠加 —
+      // 拖动游标时"从哪变到哪"一目了然 (旧父/旧路径灰淡虚线)
+      if(focusAid!=null&&aidN===focusAid){
+        var segsAll=snaps[aidS];
+        for(var gi=0;gi<segsAll.length;gi++){
+          var gs=segsAll[gi];
+          if(gs===seg)continue;  // 当前段 (已画实线/残影)
+          if(gs.kind==='parent'&&gs.parent!=null&&cyNodeIds[''+gs.parent]){
+            var ek5=Math.min(aidN,gs.parent)+'-'+Math.max(aidN,gs.parent);
+            if(!lsKeys[ek5]){lsKeys[ek5]=true;
+              cyEdges.push({data:{id:'gh-'+ek5,source:''+aidN,target:''+gs.parent,edge_type:'parent',evidence:gs.evidence||'poll',ghost:true},classes:'parent-edge ghost-edge'});
+            }
+          }else if(gs.kind==='route'){
+            var gchain=[aidN].concat(gs.relays||[]).concat([gs.dst]);
+            for(var gj=0;gj<gchain.length-1;gj++){
+              var gs3=''+gchain[gj],gt3=''+gchain[gj+1];
+              if(!cyNodeIds[gs3]||!cyNodeIds[gt3])continue;
+              var gk=Math.min(gchain[gj],gchain[gj+1])+'-'+Math.max(gchain[gj],gchain[gj+1]);
+              if(lsKeys[gk])continue;
+              lsKeys[gk]=true;
+              cyEdges.push({data:{id:'gh-'+gk,source:gs3,target:gt3,edge_type:'route',ghost:true},classes:'route-path ghost-edge'});
+            }
           }
         }
       }
@@ -473,6 +586,9 @@ reg('topo', function(){
         {selector:'edge.route-path.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
         {selector:'edge.parent-edge.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
         {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5,'opacity':0.65}},
+        // S3-C: 聚焦历史叠加 — ghost 节点 (历史链路段的父/中继, 灰淡) + ghost 边 (z 低于当前边)
+        {selector:'node.ghost-node', style:{'opacity':0.35,'background-color':'#94a3b8','border-color':'#cbd5e1','border-width':1,'width':16,'height':16,'text-opacity':0.5}},
+        {selector:'edge.ghost-edge', style:{'z-index':-1,'opacity':0.18,'line-style':'dashed','width':2,'line-color':'#94a3b8','target-arrow-color':'#94a3b8','target-arrow-shape':'none'}},
         // U13-C: 窗内非当前路径弱化 (同源多路径主次分明)
         {selector:'edge.route-alt', style:{'opacity':0.22,'line-style':'dashed','width':1.5}},
         {selector:'edge.hist-hl', style:{'width':6,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48','z-index':999}},
@@ -500,8 +616,10 @@ reg('topo', function(){
         if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
         // U13: 父链路 (协议级证据) + 下行 source-route
+        // ⚠️ S3 修复 (2026-08-28): data 存的是 link_ev (parent 是 Cytoscape 保留字段),
+        // 曾用 d.parent_evidence → undefined → tooltip "(undefined)"
         if(d.link_parent!=null){
-          var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.parent_evidence]||d.parent_evidence;
+          var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.link_ev]||d.link_ev;
           h+='\n父链路: 0x'+Number(d.link_parent).toString(16).toUpperCase().padStart(4,'0')+' ('+evN+')';
         }
         if(d.downlink&&d.downlink.length){
@@ -1114,11 +1232,13 @@ reg('topo', function(){
     var v=parseInt(document.getElementById('tsl').value);
     curT=sliderToTs(v);
     updateTimeLabel();
+    updateFocusHist();  // S3-C: 聚焦时间轴指针跟随
     clearTimeout(tSliderTO);
     tSliderTO=setTimeout(function(){ if(S.topo) renderGraph(S.topo); },120);
   };
   window.onTimeSlideEnd=function(){
     clearTimeout(tSliderTO);
+    updateFocusHist();
     if(S.topo) renderGraph(S.topo);
   };
 

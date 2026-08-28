@@ -504,7 +504,20 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 /* ── U13: 聚焦模式横幅 ── */
 #focus-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
   background: #1e293b; color: #fff; padding: 6px 14px; border-radius: 6px; font-size: 12px;
-  z-index: 500; box-shadow: 0 2px 10px rgba(0,0,0,.3); display: flex; gap: 8px; align-items: center; }
+  z-index: 500; box-shadow: 0 2px 10px rgba(0,0,0,.3); display: flex; gap: 8px; align-items: center;
+  flex-direction: column; min-width: 460px; }
+.fhist-row { display: flex; gap: 8px; align-items: center; }
+
+/* ── S3-C: 聚焦链路历史时间轴 (横幅内) ── */
+.fhist { width: 100%; }
+.fhist-empty { font-size: 11px; color: #94a3b8; padding: 2px 0; }
+.fhist-bar { position: relative; display: flex; gap: 2px; height: 18px; border: 1px solid #334155;
+  border-radius: 3px; padding: 1px 2px; overflow: hidden; }
+.fhist-seg { height: 100%; min-width: 4px; border-radius: 2px; opacity: 0.8; }
+.fhist-seg:hover { opacity: 1; outline: 1px solid #fff; }
+.fhist-cur { position: absolute; top: -1px; bottom: -1px; width: 2px; background: #f8fafc;
+  box-shadow: 0 0 4px rgba(255,255,255,.6); pointer-events: none; }
+.fhist-info { font-size: 11px; color: #cbd5e1; margin-top: 3px; }
 
 /* ── U17: 全局 AI 侧边栏 ── */
 .ai-fab { position: fixed; right: 18px; bottom: 18px; width: 46px; height: 46px; border-radius: 50%;
