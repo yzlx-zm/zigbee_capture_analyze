@@ -15,6 +15,7 @@ BASE_DIR = str(Path(__file__).resolve().parents[2])
 from fastapi import APIRouter, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 
+from .. import config
 from .. import zcl_defs
 from .. import tuya_proto as _tuya_proto
 
@@ -810,6 +811,23 @@ async def import_status():
         report = {"passed": _verify_report.get("passed")}
     return {"total": len(_packets), "nodes": len(_nodes), "type": _file_type,
             "ts_start": ts_start, "ts_end": ts_end, "verify_ok": report}
+
+
+@router.get("/version")
+async def app_version():
+    """版本号 (T2 打包分发): version.json (打包脚本写入); 开发模式返回 None.
+
+    前端顶栏显示用; 开发模式无版本文件 → version=None (不显示)."""
+    import json as _json
+    vf = config.VERSION_FILE
+    try:
+        with open(vf, encoding="utf-8") as f:
+            d = _json.load(f)
+        return {"version": d.get("version"), "date": d.get("date"),
+                "note": d.get("note"), "frozen": bool(getattr(sys, "frozen", False))}
+    except Exception:
+        return {"version": None, "date": None, "note": None,
+                "frozen": bool(getattr(sys, "frozen", False))}
 
 
 @router.get("/packets")

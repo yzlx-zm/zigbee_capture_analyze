@@ -29,7 +29,10 @@ class LLMError(Exception):
     """LLM 调用失败 (无 key/网络/额度/参数) — message 为人类可读提示."""
 
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_config.json")
+# T2 (2026-08-29): 路径统一走 config.AI_CONFIG_PATH —
+# 打包后 = %APPDATA%\zigbee-analyzer\ai_config.json (数据分层), 开发模式 = 工程根
+from . import config as _cfg
+CONFIG_PATH = _cfg.AI_CONFIG_PATH
 
 
 def _load_config() -> dict:

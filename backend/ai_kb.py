@@ -25,8 +25,10 @@ TOOL_NAME = "search_silicon_labs_knowledge_sources"
 _UA = "zigbee-capture-analyzer/1.0"
 _TIMEOUT = httpx.Timeout(25.0, connect=8.0)
 
-# 本地 LLM 配置 (ai_config.json, 与 config.py 同目录; 不入 git) — 这里只读 mcp_token 字段
-AI_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_config.json")
+# 本地 LLM 配置 (ai_config.json, 不入 git) — 这里只读 mcp_token 字段
+# T2 (2026-08-29): 路径统一走 config.AI_CONFIG_PATH — 打包后 = %APPDATA%\zigbee-analyzer\
+from . import config as _cfg
+AI_CONFIG_PATH = _cfg.AI_CONFIG_PATH
 # Claude Code 凭证 (OAuth 授权过 kapa.ai 的 token; 自动发现兜底)
 _CLAUDE_CRED = os.path.expanduser("~/.claude/.credentials.json")
 
@@ -208,7 +210,8 @@ def search_kb(query: str) -> dict:
             "name": TOOL_NAME, "arguments": {"query": query},
         })
     except httpx.HTTPError as e:
-        return {"ok": False, "error": f"知识源不可达: {e.__class__.__name__}"}
+        # T2: 离线降级文案 (打包分发离线场景, 用户可理解)
+        return {"ok": False, "error": f"知识源不可达 (需联网): {e.__class__.__name__}"}
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
     if not result:

@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-AI_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ai_config.json")
+# T2 (2026-08-29): 路径统一走 config.AI_CONFIG_PATH — 打包后 = %APPDATA%\zigbee-analyzer\
+from .. import config as _cfg
+AI_CONFIG_PATH = _cfg.AI_CONFIG_PATH
 
 # ── 意图分流 (U17 对齐决策: 统一对话输入框, 自动分流, 非双 Tab) ──
 # 分析信号: 范围/包关键词 → 阶段二对话式分析; 无信号 → 纯知识检索

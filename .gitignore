@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 venv/
 dist/
-build/output/
+build/
 *.egg-info/
 config.json
 ai_config.json
