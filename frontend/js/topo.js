@@ -11,7 +11,9 @@ let silentHidden = false, focusAid = null;
 let slideMode = false;  // S3-重构: 时刻模式 (拖动游标, 30s 证据窗) vs 全貌模式 (最近证据)
 let curT = null;   // U13 时刻游标 (当前时刻, 边按此过滤)   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
-const PATH_COLORS = ['#e74c3c','#3498db','#2ecc71','#e67e22','#9b59b6','#1abc9c','#f39c12','#e91e63'];
+// S3 (2026-08-28 用户选择): 路径色板优化 — 高区分度 8 色 (红蓝绿橙紫青黄粉,
+// 相邻 aid 撞色概率低; 曾暖色集中 #e74c3c/#e67e22/#f39c12/#e91e63 易混)
+const PATH_COLORS = ['#e6194B','#4363d8','#3cb44b','#f58231','#911eb4','#42d4f4','#d2a106','#f032e6'];
 
 reg('topo', function(){
   // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
@@ -58,7 +60,11 @@ reg('topo', function(){
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
       +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网/下行证据)</div>'
       +'<div class="lp-title mt-1">状态</div>'
-      +'<div class="lp-row"><span class="lp-q">⏳</span> 链路遗失 (历史残影, 悬停看最后时间)</div>'
+      +'<div class="lp-row"><span class="lp-ic">🔄</span> 重连中 (淡橙)</div>'
+      +'<div class="lp-row"><span class="lp-ic">💤</span> 休眠 (灰半透明)</div>'
+      +'<div class="lp-row"><span class="lp-ic">⏻</span> 离线 (灰填充+暗红框)</div>'
+      +'<div class="lp-row"><span class="lp-q">⏳</span> 链路遗失 (静默连接, 边保持实线)</div>'
+      +'<div class="lp-row"><span class="edge-demo ghost"></span> 历史链路叠加 (聚焦对比)</div>'
       +'<div class="lp-row"><span class="dot silent"></span> 静默节点 (可隐藏)</div>'
       +'<div class="lp-row"><span class="dot hl"></span> 高亮节点</div>'
     +'</div>'
@@ -407,9 +413,12 @@ reg('topo', function(){
       var dense=ns.length>40;
       // S3-重构: online=false = 窗内无在线证据 (终端无 poll / 路由无帧) → 灰显
       var online=n.online!==false;
+      // S3 (2026-08-28 用户选择): 行为状态图标上 label (非密集, 地址行尾)
+      //  🔄重连中 / 💤休眠 / ⏻离线; stale ⏳ 由后置循环追加
+      var stIcon={rejoining:'🔄',sleeping:'💤',offline:'⏻'}[n.behavior]||'';
       cyNodes.push({
         data:{id:''+aid,
-          label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(model&&!dense?'\n'+model:''),
+          label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(stIcon&&!dense?' '+stIcon:'')+(model&&!dense?'\n'+model:''),
           aid:aid, device_type:dt, seen:n.seen, on_path:onPath,
           model_id:model, manufacturer_name:n.manufacturer_name||'',
           behavior:n.behavior||'', poll_interval:n.poll_interval,
@@ -510,22 +519,17 @@ reg('topo', function(){
           var ek3=Math.min(chain[jj],chain[jj+1])+'-'+Math.max(chain[jj],chain[jj+1]);
           if(lsKeys[ek3])continue;
           lsKeys[ek3]=true;
-          if(isStale){  // 残影: 灰虚线 + 最后证据时间
-            cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:false,stale:true,last_ts:seg.t1},
-              classes:'route-path stale-path'});
-          }else{
-            // 按节点分配路径色 (曾全部 path-c0 全红 — 用户反馈)
-            cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c'+(aidN%PATH_COLORS.length)});
-          }
+          // ⚠️ S3 修复 (2026-08-28, 用户方案B): 残影边保持原色实线 —
+          // 曾灰淡虚线 (误导离线); 设备可能只是静默但一直连着 →
+          // 边与当前链路同款样式, 证据新旧由节点 ⏳ + tooltip 最后链路时间表达
+          cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:!isStale,stale:isStale,last_ts:isStale?seg.t1:null},
+            classes:'route-path path-c'+(aidN%PATH_COLORS.length)});
         }
       }else if(seg.kind==='parent'&&cyNodeIds[''+seg.parent]){
         var ek4=Math.min(aidN,seg.parent)+'-'+Math.max(aidN,seg.parent);
         if(!lsKeys[ek4]){lsKeys[ek4]=true;
-          if(isStale){
-            cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll',stale:true,last_ts:seg.t1},classes:'parent-edge stale-path'});
-          }else{
-            cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll'},classes:'parent-edge'});
-          }
+          // S3 (用户方案B): 残影父边保持天蓝实线 (连接感, 不误导离线)
+          cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll',stale:isStale,last_ts:isStale?seg.t1:null},classes:'parent-edge'});
         }
       }
       // ⚠️ S3-C (2026-08-28, 用户选择 A+B): 聚焦节点历史链路段 ghost 叠加 —
@@ -596,10 +600,11 @@ reg('topo', function(){
         {selector:'node.dense.unknown', style:{'width':22,'height':22}},
         {selector:'node.dense.coordinator', style:{'width':54,'height':54,'font-size':'10px'}},
         // U14-3: 行为状态样式 — 重连橙虚线边框 / 休眠灰半透明 / 离线暗红边框
-        // (角标 canvas 难实现, 用粗红边框 + tooltip 状态文字表达)
-        {selector:'node.rejoining', style:{'border-color':'#f59e0b','border-style':'dashed','border-width':3}},
+        // S3 (2026-08-28 用户选择): 填充色微调 — 重连淡橙填充 / 离线灰填充
+        // (形状=类型, 填充色=状态, 一眼可辨)
+        {selector:'node.rejoining', style:{'background-color':'#fbbf24','border-color':'#d97706','border-style':'dashed','border-width':3}},
         {selector:'node.sleeping', style:{'opacity':0.55}},
-        {selector:'node.offline', style:{'border-color':'#b91c1c','border-width':3}},
+        {selector:'node.offline', style:{'background-color':'#94a3b8','border-color':'#b91c1c','border-width':3}},
         // 路径节点: 紫框
         {selector:'node.onpath', style:{'border-width':3,'border-color':'#7c3aed'}},
         // 路径外节点: 半透明缩小
@@ -634,11 +639,9 @@ reg('topo', function(){
           'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
-        // S3-方案A (2026-08-27, 用户选择): 历史残影 — 时刻窗内无证据但有历史:
-        //   灰虚线弱化边 (节点留最后链路位置) + 节点淡化 0.65 + 细灰虚线边框
-        // (双类选择器压过 path-cX 单类颜色; 2026-08-28 用户选择: 加淡化)
-        {selector:'edge.route-path.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
-        {selector:'edge.parent-edge.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
+        // S3-方案A (2026-08-27, 用户选择): 历史残影节点 — 淡化 0.65 + 细灰虚线边框
+        // ⚠️ 2026-08-28 用户方案B: 残影**边**不再灰淡化 (误导离线) — 保持原色实线,
+        // 节点 ⏳ + 淡化表达"静默连接"; stale-path 边样式已删
         {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5,'opacity':0.65}},
         // S3-C: 聚焦历史叠加 — ghost 节点 (历史链路段的父/中继, 灰淡) + ghost 边 (z 低于当前边)
         {selector:'node.ghost-node', style:{'opacity':0.35,'background-color':'#94a3b8','border-color':'#cbd5e1','border-width':1,'width':16,'height':16,'text-opacity':0.5}},
@@ -666,7 +669,7 @@ reg('topo', function(){
         if(d.eui64)h+='\nEUI64: '+d.eui64;
         h+='\n状态: '+bName;
         // S3-方案A: 时刻窗内无链路证据但有历史 → 标注最后链路时间
-        if(d.stale&&d.last_link_ts)h+='\n⏳ 最后链路: '+fmtTs(d.last_link_ts);
+        if(d.stale&&d.last_link_ts)h+='\n⏳ 最后链路: '+fmtTs(d.last_link_ts)+' (静默连接, 边保持实线)';
         if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
         // U13: 父链路 (协议级证据) + 下行 source-route
