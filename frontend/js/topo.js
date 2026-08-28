@@ -74,7 +74,7 @@ reg('topo', function(){
     +'<div id="cy-graph">'
     +'<div id="off-frame"></div>'
     +'<div id="focus-bar" style="display:none"></div>'
-    +'<div id="off-label">📡 仅LS可见</div>'
+    +'<div id="off-label">◌ 未关联 (无链路证据)</div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
     +'<div id="bottom-panels">'
@@ -328,21 +328,31 @@ reg('topo', function(){
     //   全貌模式 (slideMode=false) = 每节点最近证据, 无窗限制 (链路现状图)
     //   时刻模式 (拖动游标) = 30s 证据窗 + 顺延前 30s:
     //     分段末帧距 curT 超过 60s (30 窗 + 30 顺延) → 证据过旧不算
-    function snapAt(segs){
-      var best=null;
+    // ⚠️ S3-方案A (2026-08-27, 用户选择: 原位+残影): 三态链路 —
+    //   cur   = 时刻窗内证据 → 正常链路边 (实线)
+    //   stale = 无窗内证据但历史有 → 灰色虚线残影边 (节点留最后链路位置,
+    //           不丢右上堆叠; 残影边参与 BFS 布局 = 位置 = 最后已知链路)
+    //   none  = 从未有链路证据 → 待定区 (现状 off-path)
+    function snapState(segs){
+      if(!segs||!segs.length)return {state:'none'};
+      var best=null, stale=null;
       for(var si=0;si<segs.length;si++){
         var s=segs[si];
         if(s.t0>curT)break;
-        if(slideMode&&curT-s.t1>60)continue;
+        if(slideMode&&curT-s.t1>60){stale=s;continue;}
         best=s;
       }
-      return best;
+      if(best)return {state:'cur',seg:best};
+      if(stale)return {state:'stale',seg:stale};
+      return {state:'none'};
     }
     for(var aidS in snaps){
-      var seg=snapAt(snaps[aidS]);
-      if(!seg)continue;
+      var st=snapState(snaps[aidS]);
+      if(st.state==='none')continue;
+      var seg=st.seg;
       var aidN=parseInt(aidS);
       if(!cyNodeIds[''+aidN])continue;
+      var isStale=st.state==='stale';
       if(seg.kind==='route'){
         var chain=[aidN].concat(seg.relays||[]).concat([seg.dst]);
         for(var jj=0;jj<chain.length-1;jj++){
@@ -351,14 +361,32 @@ reg('topo', function(){
           var ek3=Math.min(chain[jj],chain[jj+1])+'-'+Math.max(chain[jj],chain[jj+1]);
           if(lsKeys[ek3])continue;
           lsKeys[ek3]=true;
-          // 按节点分配路径色 (曾全部 path-c0 全红 — 用户反馈)
-          cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c'+(aidN%PATH_COLORS.length)});
+          if(isStale){  // 残影: 灰虚线 + 最后证据时间
+            cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:false,stale:true,last_ts:seg.t1},
+              classes:'route-path stale-path'});
+          }else{
+            // 按节点分配路径色 (曾全部 path-c0 全红 — 用户反馈)
+            cyEdges.push({data:{id:'ls-'+ek3,source:s3,target:t3,edge_type:'route',cur:true},classes:'route-path path-c'+(aidN%PATH_COLORS.length)});
+          }
         }
       }else if(seg.kind==='parent'&&cyNodeIds[''+seg.parent]){
         var ek4=Math.min(aidN,seg.parent)+'-'+Math.max(aidN,seg.parent);
         if(!lsKeys[ek4]){lsKeys[ek4]=true;
-          cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:'poll'},classes:'parent-edge'});
+          if(isStale){
+            cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll',stale:true,last_ts:seg.t1},classes:'parent-edge stale-path'});
+          }else{
+            cyEdges.push({data:{id:'ls-'+ek4,source:''+aidN,target:''+seg.parent,edge_type:'parent',evidence:seg.evidence||'poll'},classes:'parent-edge'});
+          }
         }
+      }
+    }
+    // 节点 stale 标记 (tooltip 显示最后链路时间; 视觉: 细灰虚线边框)
+    for(var sni=0;sni<cyNodes.length;sni++){
+      var ndata=cyNodes[sni].data;
+      var nst=snaps[ndata.aid]?snapState(snaps[ndata.aid]):{state:'none'};
+      if(nst.state==='stale'){
+        ndata.stale=true; ndata.last_link_ts=nst.seg.t1;
+        if(cyNodes[sni].classes.indexOf('inactive')<0)cyNodes[sni].classes+=' stale-node';
       }
     }
 
@@ -430,6 +458,12 @@ reg('topo', function(){
           'target-arrow-shape':'triangle','target-arrow-color':'#0ea5e9','arrow-scale':0.7,'opacity':0.9}},
         // 路径行 hover 高亮 (路由路径链联动)
         {selector:'edge.path-hl', style:{'width':5,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48'}},
+        // S3-方案A (2026-08-27, 用户选择): 历史残影 — 时刻窗内无证据但有历史:
+        //   灰虚线弱化边 (节点留最后链路位置) + 节点细灰虚线边框
+        // (双类选择器压过 path-cX 单类颜色)
+        {selector:'edge.route-path.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
+        {selector:'edge.parent-edge.stale-path', style:{'line-style':'dashed','opacity':0.3,'width':1.5,'line-color':'#94a3b8','target-arrow-color':'#94a3b8'}},
+        {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5}},
         // U13-C: 窗内非当前路径弱化 (同源多路径主次分明)
         {selector:'edge.route-alt', style:{'opacity':0.22,'line-style':'dashed','width':1.5}},
         {selector:'edge.hist-hl', style:{'width':6,'opacity':1,'line-color':'#e11d48','target-arrow-color':'#e11d48','z-index':999}},
@@ -452,6 +486,8 @@ reg('topo', function(){
         if(d.model_id)h+='\n型号: '+d.model_id;
         if(d.eui64)h+='\nEUI64: '+d.eui64;
         h+='\n状态: '+bName;
+        // S3-方案A: 时刻窗内无链路证据但有历史 → 标注最后链路时间
+        if(d.stale&&d.last_link_ts)h+='\n⏳ 最后链路: '+fmtTs(d.last_link_ts);
         if(d.poll_interval)h+='\npoll 间隔: '+Math.round(d.poll_interval*10)/10+'s';
         if(d.tx_count!=null||d.rx_count!=null)h+='\n帧量: 发'+d.tx_count+'/收'+d.rx_count;
         // U13: 父链路 (协议级证据) + 下行 source-route
@@ -466,11 +502,11 @@ reg('topo', function(){
         tooltip.innerHTML=h;tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','node',function(){tooltip.style.display='none';});
     cy.on('mouseover','edge',function(e){var ed=e.target;var d=ed.data();
-      if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN;}
+      if(d.edge_type==='parent'){var evN={poll:'poll轮询',assoc:'入网关联',rr:'路由下一跳',down:'下行源路由'}[d.evidence]||d.evidence||'?';tooltip.innerHTML='<b>父链路 (协议级)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n证据: '+evN+(d.stale&&d.last_ts?'\n⏳ 历史残影 (最后链路 '+fmtTs(d.last_ts)+')':'');}
       else if(d.edge_type==='traffic'){tooltip.innerHTML='<b>数据流</b>\n0x'+d.source.toString(16).toUpperCase()+' ↔ 0x'+d.target.toString(16).toUpperCase()+'\n'+d.count+' 包';}
       // ⚠️ S3 修复 (2026-08-27): U13 时刻游标重构后 route 边不再带 path_idx/hop
       // (边来自 link_snapshots 分段, 非 route_paths 行), 原 else 分支渲染 #NaN — 独立分支
-      else if(d.edge_type==='route'){tooltip.innerHTML='<b>路由路径 (时刻链路)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+'\n当前时刻该设备的上行路径跳';}
+      else if(d.edge_type==='route'){tooltip.innerHTML='<b>路由路径 (时刻链路)</b>\n0x'+d.source.toString(16).toUpperCase()+' → 0x'+d.target.toString(16).toUpperCase()+(d.stale&&d.last_ts?'\n⏳ 历史残影 (最后链路 '+fmtTs(d.last_ts)+')':'')+'\n当前时刻该设备的上行路径跳';}
       else{var hf=S.topoT0!=null||S.topoT1!=null;var st=hf?(d.active!==false?'● 活跃':'◌ 窗口外'):(d.is_current?'● 当前':'◌ 历史');tooltip.innerHTML='<b>路径 #'+(d.path_idx+1)+' 第'+(d.hop+1)+'跳</b>\n'+st+'\n'+d.path_str;};
       tooltip.style.display='block';updateTooltipPos(e);});
     cy.on('mouseout','edge',function(){tooltip.style.display='none';});
