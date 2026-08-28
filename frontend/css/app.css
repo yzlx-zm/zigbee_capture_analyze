@@ -501,6 +501,9 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 /* S3 修复: 色块 absolute 定位 (抓包坐标系, 指针滑块一致) */
 .hist-seg { position: absolute; top: 0; bottom: 0; min-width: 4px; border-radius: 2px; opacity: 0.85; }
 .hist-seg:hover { opacity: 1; outline: 1px solid #1e293b; }
+/* S3 (2026-08-28 用户反馈): 面板浅色背景指针用品牌蓝 (白色指针在白底不可见) */
+.hist-cur { position: absolute; top: -1px; bottom: -1px; width: 3px; background: #3b82f6;
+  box-shadow: 0 0 4px rgba(59,130,246,.6); pointer-events: none; z-index: 5; }
 
 /* ── U13: 聚焦模式横幅 ── */
 #focus-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%);

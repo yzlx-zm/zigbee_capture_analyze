@@ -1128,8 +1128,9 @@ reg('topo', function(){
         h+='<div class="hist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
           +'" style="left:'+left+'%;width:'+w+'%;background:'+color+'"></div>';
       }
-      // ⚠️ S3 (2026-08-28, 用户选择): 滑块指针联动 — 主滑块拖动时白色指针跟随
-      h+='<div id="hist-cur" class="fhist-cur"></div></div>'
+      // ⚠️ S3 (2026-08-28, 用户选择): 滑块指针联动 — 主滑块拖动时指针跟随
+      // (浅色面板背景用蓝色指针, 深色聚焦横幅用白色 — 独立样式)
+      h+='<div id="hist-cur" class="hist-cur"></div></div>'
         +'<div class="hist-legend t-10 text-muted">色块=链路稳定段 · 悬停看路径 · 点击高亮当时链路 · 拖动主滑块看指针</div>'
         +'<div id="hist-detail" class="t-11 mt-1"></div>';
       tl.innerHTML=h;
