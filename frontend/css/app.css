@@ -497,7 +497,7 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
 
 /* ── U13: 链路历史时间轴 (底部面板) ── */
 .hist-bar { display: flex; gap: 2px; height: 26px; border: 1px solid var(--c-border); border-radius: 4px;
-  padding: 2px; overflow: hidden; cursor: pointer; }
+  padding: 2px; overflow: hidden; cursor: pointer; position: relative; }  /* S3: 滑块指针定位基准 */
 .hist-seg { height: 100%; min-width: 6px; border-radius: 2px; opacity: 0.85; }
 .hist-seg:hover { opacity: 1; outline: 1px solid #1e293b; }
 

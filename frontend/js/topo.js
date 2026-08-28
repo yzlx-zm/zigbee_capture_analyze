@@ -1043,6 +1043,14 @@ reg('topo', function(){
       var idx=parseInt(row.dataset.pidx);
       row.addEventListener('mouseenter',function(){highlightPathOnGraph(idx);});
       row.addEventListener('mouseleave',function(){clearPathHighlight();});
+      // ⚠️ S3 (2026-08-28, 用户选择): 路径行点击 → 聚焦该路径源节点
+      // (hover 只能看, 点击进聚焦看该节点链路变化)
+      row.addEventListener('click',function(){
+        var rp=(S.topo||topoData).route_paths&&(S.topo||topoData).route_paths[idx];
+        if(rp&&S.topo&&S.topo.nodes.some(function(n){return n.aid===rp.src;})){
+          enterFocus(rp.src);
+        }
+      });
     });
   }
 
@@ -1085,6 +1093,14 @@ reg('topo', function(){
     if(histAid==null)histAid=parseInt(sel.value);
     if(sel.value)loadHist();
   }
+  // ⚠️ S3 (2026-08-28, 用户选择): 链路历史面板滑块指针跟随 (主滑块拖动)
+  function updateHistCursor(){
+    var cur=document.getElementById('hist-cur');
+    if(!cur||!histSegs||!histSegs.length)return;
+    var t0=histSegs[0].t0,t1=histSegs[histSegs.length-1].t1;
+    var span=Math.max(t1-t0,1);
+    cur.style.left=Math.min(100,Math.max(0,(curT-t0)/span*100))+'%';
+  }
   function loadHist(){
     var info=document.getElementById('hist-info');
     var tl=document.getElementById('hist-timeline');
@@ -1108,9 +1124,12 @@ reg('topo', function(){
         h+='<div class="hist-seg" data-i="'+i+'" title="'+fmtTsH(s.t0)+'~'+fmtTsH(s.t1)+' '+s.path_str
           +'" style="width:'+w+'%;background:'+color+'"></div>';
       }
-      h+='</div><div class="hist-legend t-10 text-muted">色块=链路稳定段 · 悬停看路径 · 点击高亮当时链路</div>'
+      // ⚠️ S3 (2026-08-28, 用户选择): 滑块指针联动 — 主滑块拖动时白色指针跟随
+      h+='<div id="hist-cur" class="fhist-cur"></div></div>'
+        +'<div class="hist-legend t-10 text-muted">色块=链路稳定段 · 悬停看路径 · 点击高亮当时链路 · 拖动主滑块看指针</div>'
         +'<div id="hist-detail" class="t-11 mt-1"></div>';
       tl.innerHTML=h;
+      updateHistCursor();
       tl.querySelectorAll('.hist-seg').forEach(function(b){
         b.addEventListener('click',function(){
           var i=parseInt(this.dataset.i);var s=histSegs[i];
@@ -1160,6 +1179,7 @@ reg('topo', function(){
     h+='<div id="nb-detail" class="t-11 scroll-y"></div>';
     panel.innerHTML=h;
     // Global function to show neighbor detail
+    // ⚠️ S3 (2026-08-28, 用户选择): 不对称标记列 + 质量色带 (单元格浅底色)
     window.showNbTable=function(){
       var v=document.getElementById('nb-dev-sel').value;
       var detail=document.getElementById('nb-detail');
@@ -1168,18 +1188,31 @@ reg('topo', function(){
       if(!nbt[aid]){detail.innerHTML='';return;}
       var nbs=nbt[aid]; var nbKeys=Object.keys(nbs);
       if(nbKeys.length===0){detail.innerHTML='<p class="text-dim">该设备无邻居记录</p>';return;}
-      var th='<table class="tbl"><tr><th>邻居</th><th>In Cost</th><th>Out Cost</th><th>最后更新</th><th>次数</th></tr>';
+      // 不对称映射 (S.topo.asymmetric_links: 非 OK 的级别)
+      var asymMap={};
+      var alist=(d&&d.asymmetric_links)||[];
+      for(var ai=0;ai<alist.length;ai++){
+        var al=alist[ai];
+        asymMap[Math.min(al.a,al.b)+'-'+Math.max(al.a,al.b)]=al.level;
+      }
+      var th='<table class="tbl"><tr><th>邻居</th><th>In</th><th>Out</th><th>不对称</th><th>最后更新</th><th>次数</th></tr>';
       nbKeys.sort(function(a,b){return (nbs[b].out_cost||0)-(nbs[a].out_cost||0);});
       for(var i=0;i<nbKeys.length;i++){
         var nb=nbs[nbKeys[i]]; var addr=parseInt(nbKeys[i]);
         var ic=nb.in_cost||0; var oc=nb.out_cost||0;
         var icColor=ic<=1?'#16a34a':ic<=3?'#d97706':'#dc2626';
         var ocColor=oc<=1?'#16a34a':oc<=3?'#d97706':'#dc2626';
+        var lv=asymMap[Math.min(aid,addr)+'-'+Math.max(aid,addr)];
+        var asymCell = !lv||lv==='OK'
+          ?'<td class="t-10 text-dim">-</td>'
+          :'<td class="text-strong" style="color:'+(lv==='WEAK'?'#d97706':'#dc2626')+'">'+(lv==='WEAK'?'⚠':'✕')+' '+lv+'</td>';
         var ts=new Date((nb.last_seen_ts||0)*1000);ts=String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0')+':'+String(ts.getSeconds()).padStart(2,'0');
         th+='<tr onclick="S.topoAddr=\'0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'\';S.topoT0=null;S.topoT1=null;location.hash=\'tl\'">'
           +'<td>0x'+addr.toString(16).toUpperCase().padStart(4,'0')+'</td>'
-          +'<td class="text-strong" style="color:'+icColor+'">'+ic+'</td>'
-          +'<td class="text-strong" style="color:'+ocColor+'">'+oc+'</td>'
+          // 质量色带: 文字色 + 13% 浅底色 (用户选择: 颜色更明显)
+          +'<td class="text-strong" style="color:'+icColor+';background:'+icColor+'22">'+ic+'</td>'
+          +'<td class="text-strong" style="color:'+ocColor+';background:'+ocColor+'22">'+oc+'</td>'
+          +asymCell
           +'<td class="t-10 text-dim">'+ts+'</td>'
           +'<td class="t-10">'+nb.count+'</td></tr>';
       }
@@ -1329,12 +1362,14 @@ reg('topo', function(){
     curT=sliderToTs(v);
     updateTimeLabel();
     updateFocusHist();  // S3-C: 聚焦时间轴指针跟随
+    updateHistCursor(); // S3: 链路历史面板指针跟随
     clearTimeout(tSliderTO);
     tSliderTO=setTimeout(function(){ if(S.topo) renderGraph(S.topo); },120);
   };
   window.onTimeSlideEnd=function(){
     clearTimeout(tSliderTO);
     updateFocusHist();
+    updateHistCursor();
     if(S.topo) renderGraph(S.topo);
   };
 
