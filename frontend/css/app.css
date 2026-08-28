@@ -295,7 +295,12 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .time-scale { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; }
 .time-scale .ts-label { font-size: 9px; color: var(--c-text-4); font-family: var(--font-mono); white-space: nowrap; }
 .time-scale .ts-track { flex: 1; height: 4px; background: var(--c-border-strong); border-radius: 2px; position: relative; }
+/* S3 交互重构: 视图组收纳 (⋯ 视图 展开) */
+.tview-group { display: inline-flex; gap: 4px; }
 .time-scale .ts-window { position: absolute; top: -1px; height: 6px; background: var(--c-primary); border-radius: 2px; opacity: 0.55; }
+/* S3 交互重构 (用户选择): 刻度条当前时刻指针 */
+.time-scale .ts-cursor { position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: #1e293b; box-shadow: 0 0 0 1px #fff; pointer-events: none; }
 /* 滑块预览遮罩 (D1): 拖动中显示窗口时间, 不刷新图 */
 .time-mask { position: absolute; left: 8px; bottom: 8px; z-index: 6; background: rgba(30,41,59,.75); color: #fff;
   font-size: var(--fs-xs); padding: 3px 8px; border-radius: var(--r-sm); pointer-events: none; }

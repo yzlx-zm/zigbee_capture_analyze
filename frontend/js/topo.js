@@ -7,7 +7,7 @@ let cy = null, topoData = null, hlNode = null;
 let tCenter = null, tSliderTO = null, curLayout = 0;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
-let silentHidden = false, focusAid = null;
+let focusAid = null;  // S3: silentHidden 已删 (静默节点开关移除)
 let slideMode = false;  // S3-重构: 时刻模式 (拖动游标, 30s 证据窗) vs 全貌模式 (最近证据)
 let curT = null;   // U13 时刻游标 (当前时刻, 边按此过滤)   // U13-B 聚焦模式   // 静默/邻居边 状态 (模块级, 跨页面保留)
 let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
@@ -40,14 +40,18 @@ reg('topo', function(){
     +'<input id="taddr" placeholder="地址" class="mono w-90 t-11">'
     // S3 (2026-08-28 用户反馈): 节点过滤手段 — 🎯 聚焦按钮 (输入地址 → 聚焦链路变化)
     +'<button class="btn btn-o btn-s" id="tfocus" title="输入地址后聚焦该节点链路变化">🎯 聚焦</button>'
-    +'<button class="btn btn-p btn-s" id="tgo">🔍 筛选</button><button class="btn btn-o btn-s" id="trst">重置</button>'
+    // ⚠️ S3 交互重构 (用户选择): tgo 文案动态化 (定位/筛PAN/全量); 删冗余
+    // (清除高亮 — 单击 toggle 已能清; 静默节点开关 — 待定区标签已标注)
+    +'<button class="btn btn-p btn-s" id="tgo" title="地址→定位 · PAN→过滤">🔍 全量</button>'
+    +'<button class="btn btn-o btn-s" id="trst" title="重置所有过滤">🗑 重置</button>'
     +'<span class="toolbar-sep">|</span>'
-    +'<button class="btn btn-o btn-s" id="tfit">⊞ 适应</button>'
+    // 视图组 (收纳): ⋯ 展开/收起 适应/层次/图例
+    +'<button class="btn btn-o btn-s" id="tviews" title="视图选项">⋯ 视图</button>'
+    +'<span id="tview-group" class="tview-group" style="display:none">'
+    +'<button class="btn btn-o btn-s" id="tfit" title="适应全图">⤢ 适应</button>'
     +'<button class="btn btn-o btn-s" id="tlay" title="切换布局">📐 层次</button>'
-    +'<button class="btn btn-o btn-s" id="tshow-all" title="显示/隐藏静默节点">👁 静默节点</button>'
-    +'<button class="btn btn-o btn-s" id="thl-clear" title="清除高亮">🔆 清除高亮</button>'
-    +'<span class="toolbar-sep">|</span>'
     +'<button class="btn btn-o btn-s" id="tlegend" title="显示/隐藏图例">📖 图例</button>'
+    +'</span>'
     // 图例浮层 (C1: 折叠收纳, 点击切换)
     +'<div class="legend-pop hidden" id="legend-pop">'
       +'<div class="lp-title">节点形状</div>'
@@ -77,7 +81,8 @@ reg('topo', function(){
     +'<span class="t-10 text-muted" style="margin-left:8px">拖动游标观察该时刻的链路</span>'
     +'<div class="time-scale">'
       +'<span class="ts-label" id="ts-t0"></span>'
-      +'<div class="ts-track"><div class="ts-window" id="ts-window"></div></div>'
+      // ⚠️ S3 交互重构 (用户选择): 刻度条当前时刻指针 (拖动滑块时移动)
+      +'<div class="ts-track"><div id="ts-cursor" class="ts-cursor"></div></div>'
       +'<span class="ts-label" id="ts-t1"></span>'
     +'</div>'
     +'</div>'
@@ -710,17 +715,20 @@ reg('topo', function(){
     }
     cy.on('mousemove',function(e){ if(tooltip.style.display==='block') updateTooltipPos(e); });  // tooltip 跟随鼠标移动
 
-    // Click → 跳转时间线
-    // ⚠️ U13-B (2026-08-25): 单击进入聚焦模式 (曾直接跳时间线) — 选节点看链路变化,
-    // 时间线跳转移到聚焦横幅按钮; 再单击同节点退出聚焦
+    // ⚠️ S3 交互重构 (2026-08-28, 用户选择): 单击=高亮 / 双击=聚焦
+    // (曾单击进聚焦/双击高亮 — 容易误触; 交换后单击轻量查看, 双击才进入聚焦)
     cy.on('tap','node',function(e){var n=e.target;var d=n.data();
       if(d.inactive)return;
-      if(focusAid===d.aid){exitFocus();return;}
-      enterFocus(d.aid);
+      var aid=n.data('aid');
+      if(hlNode===aid){clearHighlight();return;}   // 再点同节点取消高亮
+      hlNode=aid;highlightNode(aid);
     });
-
-      // 双击 → 高亮/淡出
-      cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');if(hlNode===aid){clearHighlight();return;}hlNode=aid;highlightNode(aid);});
+    // 双击 → 聚焦 (再双击同节点退出)
+    cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');
+      if(n.data('inactive'))return;
+      if(focusAid===aid){exitFocus();return;}
+      enterFocus(aid);
+    });
     }else{
       cy.json({elements: cyNodes.concat(cyEdges)});   // 实例复用: 只替换元素, 保留样式表/事件/视图
     }
@@ -770,7 +778,6 @@ reg('topo', function(){
       // 曾无条件写 '▦ 固定列' → 显示与实际布局不一致)
       document.getElementById('tlay').textContent=curLayout===1?'🔄 力导':'▦ 固定列';
     })();
-    applySilentHidden();   // 数据刷新后恢复静默节点隐藏状态
   }
 
   // ═══ 布局引擎 ═══
@@ -846,7 +853,6 @@ reg('topo', function(){
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
       document.getElementById('tlay').textContent='🔄 力导';
     }
-    applySilentHidden();   // 布局切换后恢复静默节点隐藏状态
   }
 
   function highlightNode(aid){
@@ -1332,22 +1338,27 @@ reg('topo', function(){
     curLayout=(curLayout+1)%2; runLayout();
     if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
   });
-  document.getElementById('thl-clear').addEventListener('click',function(){clearHighlight();});
-
-  // ═══ 静默节点显示/隐藏 (tshow-all, U7 修复死控件) — 静默 = 孤立节点 (degree 0, 非路径) ═══
-  function applySilentHidden(){
-    if(!cy) return;
-    cy.nodes().forEach(function(n){
-      if(n.degree()===0&&n.data('on_path')!==true) n.style('display',silentHidden?'none':'element');
-    });
-  }
-  document.getElementById('tshow-all').addEventListener('click',function(){
-    if(!cy) return;
-    silentHidden=!silentHidden;
-    applySilentHidden();
-    this.classList.toggle('on',silentHidden);
-    this.title=silentHidden?'显示静默节点':'隐藏静默节点';
+  // ⚠️ S3 交互重构 (用户选择): 删 thl-clear (单击 toggle 已能清高亮) + tshow-all (待定区标签已标注)
+  // ⚠️ S3 交互重构: 视图组收纳 (⋯ 视图 展开/收起 适应/层次/图例)
+  document.getElementById('tviews').addEventListener('click',function(){
+    var g=document.getElementById('tview-group');
+    if(!g)return;
+    var show=g.style.display!=='inline-flex';
+    g.style.display=show?'inline-flex':'none';
+    this.classList.toggle('on',show);
   });
+  // ⚠️ S3 交互重构 (用户选择): tgo 文案动态化 — 地址→定位 / PAN→筛PAN / 空→全量
+  function updateTgoLabel(){
+    var b=document.getElementById('tgo');
+    if(!b)return;
+    var a=document.getElementById('taddr').value.trim();
+    var p=document.getElementById('tpan').value.trim();
+    b.textContent=a?'🔍 定位':(p?'🔍 筛PAN':'🔍 全量');
+    b.title=a?'定位并高亮该地址节点':'PAN 过滤 ('+(p||'全部')+')';
+  }
+  document.getElementById('taddr').addEventListener('input',updateTgoLabel);
+  document.getElementById('tpan').addEventListener('input',updateTgoLabel);
+  updateTgoLabel();
 
   // ═══ 时间滑块 (时刻游标, U13 2026-08-25 重构: 单滑块 = 时刻, 无窗口档位) ═══
   // ⚠️ S3 清理 (2026-08-27): 删除 twin-size 档位时代死代码
@@ -1361,6 +1372,11 @@ reg('topo', function(){
     // U13 时刻游标: 显示当前时刻
     var el=document.getElementById('ttime-label');
     if(el&&curT!=null) el.textContent=fmtTs(curT);
+    // ⚠️ S3 交互重构 (用户选择): 刻度条当前时刻指针
+    var cs=document.getElementById('ts-cursor');
+    if(cs&&tsEnd>tsStart&&curT!=null){
+      cs.style.left=Math.min(100,Math.max(0,(curT-tsStart)/(tsEnd-tsStart)*100))+'%';
+    }
   }
 
   // ⚠️ U13 时刻游标 (2026-08-25 重构): 滑块 = 时刻, 拖动实时本地重渲染 (不请求后端)
