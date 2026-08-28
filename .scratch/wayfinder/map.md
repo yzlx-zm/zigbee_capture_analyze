@@ -169,6 +169,22 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   ⑤交互体验 (单击高亮/双击聚焦 / 工具栏收纳 / 刻度条指针 / tgo 动态化);
   **版本号教训**: app.js topo.js import sed 多次失败卡旧版 → 必须 Edit 精确改,
   三处同步 (css?v/app.js?v/topo.js?v)
+- [S2 诊断页稳定化](issues/S2-诊断页稳定化.md) — 打包前稳定化第 2 站 (用户指定):
+  **P1×4 清零** (①**多 PAN 串网** — 检测器吃全量包无 PAN 过滤, test2 (9 PAN)
+  L3-1 命中 5 台含 3 台异 PAN (0x77D0/0x89F9 属 0x2310, 0xBC49 属 0x237F),
+  摘要/事件链卡混入; 修复: 端点 pan 参数 + _diag_pkts 过滤 + 前端 PAN 选择器
+  (默认主 PAN, 主 PAN 0xFEED 仅 2 台页面级验证) ②**L3-2 协调器拒绝归因** —
+  群控 1234 条 Default Response 0xC3 (网关拒锁 0x20 Operation Event Notification)
+  全聚合 0x0000; 响应方为协调器时按发起方聚合 → 16 锁 (合计不变)
+  ③覆盖提示写死 8/55 → 动态 N/55 (13/55 实测) ④L1-2_POSSIBLE_NO_RESPONSE
+  白话兜底) + **P2×4 方向** (证据帧号→报文页跳转 (tlJumpFrame, 4 检测器证据加
+  id 索引; L2-6 证据 packet_id=None 修复) / 白话清理 (卡片标题去内部术语,
+  L6-S3 事件链白话) / 重跑按钮 + 非法 PAN 宽松 (曾 500) / 死代码+API 膨胀删 +
+  检测器结果缓存 (l3 1.8s→0.01s)); **顺带实证**: 0x20 = Door Lock Operation
+  Event Notification, 网关不支持 (群控 memory 待确认项闭环); 性能实测群控
+  108324 帧 5 端点全 <1s (无性能 P1); 复验: CDP 12/12 + 群控 L3-2 3/3 + 回归
+  3 套全绿; 过程中修复 2 坑 (首次 select 未渲染→页面恒空白 / renderH 重建重置
+  选项); 版本号 20260829d
 
 ## Not yet specified
 
