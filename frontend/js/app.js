@@ -15,7 +15,7 @@ import './topo.js?v=20260828o';  // S3: 底部面板增强 (路径行点击聚�
 import './import.js?v=20260827a';  // S1: CSV 导入删除 (只留抓包), 改版递增
 import './timeline.js?v=20260827e';  // S4: Security 层修复 + 详情帧号, 改版递增
 import './nodes.js?v=20260824a';  // 缓存破坏: 时区修复 + U9 重构, 改版递增
-import './diag.js?v=20260907c';  // U12: 场景学习视图 (案例库+差距报告+导入导出), 改版递增
+import './diag.js?v=20260907d';  // U12: 场景学习视图 (案例库+差距报告+导入导出), 改版递增
 import './ai.js?v=20260827a';  // U17: resize 手柄移到头部加减号中间, 改版递增
 
 // ── 初始路由 ──

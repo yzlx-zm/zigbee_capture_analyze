@@ -822,7 +822,8 @@ reg('diag', function () {
         + '<td>' + (c.scenarios || []).map(function (s) { return '<span class="sc-tag">' + s + '</span>'; }).join(' ') + '</td>'
         + '<td>' + (c.has_material
           ? '<a class="ev-jump" href="/api/cases/download?path=' + encodeURIComponent(c.material_path || '') + '" title="下载素材副本">📦</a>'
-          : '<span class="text-dim">—</span>') + '</td>'
+          : '<span class="text-dim" title="无素材副本 (上传导入/刷新丢源路径)">—</span>'
+            + ' <button class="btn-s" data-attach-case="' + escHtml(c.id) + '" title="用当前导入包补素材副本">📎补</button>') + '</td>'
         + '<td><button class="btn-s text-danger" data-del-case="' + escHtml(c.id) + '" title="删除案例">✕</button></td>'
         + '</tr>';
     });
@@ -848,6 +849,17 @@ reg('diag', function () {
         fetch('/api/cases/' + id, { method: 'DELETE' }).then(function (r) { return r.json(); }).then(function (d) {
           if (d.ok) { learnData = null; loadLearn(); }  // 强刷
           else alert(d.error || '删除失败');
+        });
+      });
+    }
+    // U12 补素材: 无素材副本案例 → 📎补 (source_path 空 → 后端兜底当前导入包)
+    var atts = el.querySelectorAll('[data-attach-case]');
+    for (var k = 0; k < atts.length; k++) {
+      atts[k].addEventListener('click', function () {
+        var id = this.dataset.attachCase;
+        A.post('/api/cases/' + id + '/attach-material', { source_path: '' }).then(function (d) {
+          if (d.ok) { alert('素材副本已补'); learnData = null; loadLearn(); }
+          else alert((d.error || '补素材失败') + ' — 提示: 先本地路径导入原素材包');
         });
       });
     }

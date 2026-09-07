@@ -139,7 +139,12 @@ async def annotate(req: AnnotateRequest):
         "frames": len(pkts),
         "source_file": source_file,
     }
-    src_path = req.source_path if (req.source_path and os.path.isfile(req.source_path)) else None
+    # ⚠️ 素材源路径修复 (2026-09-07 用户实测): 曾只认前端 source_path
+    # (S.lastImportPath — 页面刷新/上传导入即丢) → 本地路径导入素材副本恒缺失;
+    # 兜底 _pcap_paths[0] — files.py 本地路径导入存的就是真实存在的源文件
+    # (上传导入 tmp 已删, isfile 检查自然跳过)
+    src_cands = [req.source_path] + list(_files._pcap_paths)
+    src_path = next((p for p in src_cands if p and os.path.isfile(p)), None)
     try:
         case = cl.add_case(req.model_dump(), det, meta,
                            source_path=src_path, copy_material=req.copy_material)
@@ -244,3 +249,22 @@ async def case_delete(case_id: str):
     if not cl.delete_case(case_id):
         return JSONResponse({"error": f"案例 {case_id} 不存在"}, 404)
     return {"ok": True}
+
+
+class AttachMaterialRequest(BaseModel):
+    source_path: str = ""   # 空 = 兜底当前导入包源路径 (_pcap_paths)
+
+
+@router.post("/{case_id}/attach-material")
+async def case_attach_material(case_id: str, req: AttachMaterialRequest):
+    """给已有案例补素材副本 (标注时无源路径的案例 — 本地路径导入兜底已修;
+    历史/上传导入案例用此补: source_path 空时自动取当前导入包源路径)."""
+    from . import files as _files
+    cands = [req.source_path] + list(_files._pcap_paths)
+    src = next((p for p in cands if p and os.path.isfile(p)), None)
+    if not src:
+        return JSONResponse({"error": "无素材源路径 (当前导入为上传文件, 请提供本地路径)"}, 400)
+    c = cl.attach_material(case_id, src)
+    if not c:
+        return JSONResponse({"error": f"案例 {case_id} 不存在"}, 404)
+    return {"ok": True, "case": cl._case_brief(c)}

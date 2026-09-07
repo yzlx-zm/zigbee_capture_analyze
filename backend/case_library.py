@@ -204,6 +204,30 @@ def add_case(annotation: dict, detection: dict, meta: dict,
     return case
 
 
+def attach_material(case_id: str, source_path: str | None) -> dict | None:
+    """给已有案例补素材副本 (标注时无源路径, 案例入库后补 — 导出传播自带素材).
+
+    - source_path 有效 (文件存在) → 复制到 materials/<id><suffix> + 更新 material_copy
+    - source_path 无效 → 置 material_copy=None (不阻断)
+    返回更新后的案例; 案例不存在返回 None.
+    """
+    c = get_case(case_id)
+    if not c:
+        return None
+    if source_path and os.path.isfile(source_path):
+        dst = _materials_dir() / f"{case_id}{Path(source_path).suffix.lower()}"
+        try:
+            shutil.copy2(source_path, dst)
+            c["material_copy"] = str(dst)
+        except OSError:
+            c["material_copy"] = None
+    else:
+        c["material_copy"] = None
+    _case_path(case_id).write_text(
+        json.dumps(c, ensure_ascii=False, indent=2), encoding="utf-8")
+    return c
+
+
 def list_cases(scenario: str | None = None) -> list[dict]:
     """案例列表 (ts 降序); scenario 过滤 = 归属含该场景."""
     out: list[dict] = []
