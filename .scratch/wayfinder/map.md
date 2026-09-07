@@ -199,9 +199,22 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   1.0.0→1.0.1 数据保留 / 单实例 / 离线降级 (401 提示) / 中文路径 / 日志落盘 /
   开发模式回归; 遗留: 大包全量导入未测 / 杀软扫描未执行 (诚实标注)
 
+- [U12 诊断页学习机制](issues/U12-诊断页学习机制.md) — **场景 tab = 学习容器全交付**
+  (2026-09-07): backend/case_library.py (案例库 cases/ + 54 场景表 — **taxonomy "~55" 为
+  约数, 逐条计 54**; add/list/find_similar (Jaccard+同义词+token, 无向量化)/scenario_stats/
+  gap_report/export/import zip 含素材副本, _redact 思路去密钥; APP_DATA_DIR 数据分层对齐 T2)
+  + backend/api/cases.py 11 端点 (annotate 自动跑 4 检测器 PAN 过滤不串网; export/import 复用
+  U6 后台任务; download 白名单; ⚠️ 动态 /{case_id} 后注册 — FastAPI 按序匹配吞静态路径 404 实锤)
+  + diag.js 双视图 (检测结果不变 / 场景学习: 已学 X/54 + 54 tab 案例徽章 + 置信度 ≥3 多案例支撑
+  + 待完善清单 + 案例导入标注弹层 + 导出导入); 验证: **E2E 六标准全过** (中继包自动命中 8 场景
+  L1-3/L1-4/L2-1/L2-6/L3-1/L3-2/L3-5/L3-11, 相似 5.07, 导出导入含素材恢复) + CDP 15/15 +
+  空库回归 8/8 + zcl_fcf 12/12 + parser_verify 12/12 + p2 4/4 (--update 2 中继素材: zigbee_pc_keys
+  09-07 环境变化解密增强, 非代码回归); 坑: 插入代码丢 reg 收尾 (浏览器 EOF 缓存 b/c 版本) /
+  case_total 归属求和虚高 / S.pkts 内存态误拒标注 (改查后端 status); 截图 .scratch/verification/u12-learn/
+
 ## Not yet specified
 
-- 55 场景中 49 个未闭环 — 优先级由用户定 (低挂果实: L6-S3/L2-6/L2-3)
+- 54 场景中 40 个未闭环 (13 有检测器 + 案例库学习机制待填充) — 优先级由用户定 (低挂果实: L6-S3/L2-6/L2-3)
 - 1885→838D 下行链路断的根因 (非对称: 上行通下行断) — 需现场信息 (L3-5 检测已就绪, 现场复测可验证)
 - L1-3 规则 A1/A2/B1 的故障帧形态 — 等用户素材后验证
 - L1-4 规则 R1/R2a (0x07 显式拒绝/踢人) 与 R3 (静默拒绝) — 等复现素材 (网关白名单 deny / 删除设备操作)
