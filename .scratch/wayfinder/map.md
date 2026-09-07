@@ -211,6 +211,17 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   空库回归 8/8 + zcl_fcf 12/12 + parser_verify 12/12 + p2 4/4 (--update 2 中继素材: zigbee_pc_keys
   09-07 环境变化解密增强, 非代码回归); 坑: 插入代码丢 reg 收尾 (浏览器 EOF 缓存 b/c 版本) /
   case_total 归属求和虚高 / S.pkts 内存态误拒标注 (改查后端 status); 截图 .scratch/verification/u12-learn/
+- [T3 使用手册](issues/T3-使用手册.md) — **外部分发 HTML 图文手册全交付** (2026-09-07):
+  docs/user-manual.html (2.43MB 单文件自包含: 0 CDN/外链, 17 张截图 base64 内嵌) 11 章
+  (简介/安装启动/数据目录/导入拆分/诊断/拓扑/报文/节点/AI/更新/FAQ) + 模板/构建脚本
+  docs/manual/ (UI 改版复抓截图重跑 build_manual.py); 实机截图: 重启 8720 (遗留实例 nodes=0 损坏态
+  重建) + 中继包 8435 帧 + CDP 17 张 (导入/密钥/拆分面板真实触发 4.2MB/诊断命中卡/场景学习 9/54/
+  拓扑+图例/报文详情/节点展开+示例弹层/AI 检索真跑通); T2 联动 build.spec datas 打包进
+  dist/…/docs/user-manual.html + DIST_README 指向 (顺手修正 README 大包阈值 30MB→1MB 过时描述);
+  版本绑定 v1.0.2 基线 (截图含 U12; 打包 --version 1.0.2 即一致); 事实核对: 拆分阈值实为 >1MB /
+  密钥存 %APPDATA%\Wireshark\zigbee_pc_keys 与 Wireshark 共享 / AI key 设置截图脱敏验证;
+  诚实标注: 会话模型无视觉 — 截图 UI 一致性用 DOM 级断言验证, 待用户目视抽验;
+  遗留: 打包实测手册随包待下次 build.py 确认
 
 ## Not yet specified
 

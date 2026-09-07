@@ -40,7 +40,9 @@ a = Analysis(
     [os.path.join(ROOT, 'launcher.py')],
     pathex=[ROOT],
     binaries=[],
-    datas=[(os.path.join(ROOT, 'frontend'), 'frontend')],
+    datas=[(os.path.join(ROOT, 'frontend'), 'frontend'),
+           # T3 (2026-09-07): 使用手册随包 (dist/ZigbeeAnalyzer/docs/user-manual.html)
+           (os.path.join(ROOT, 'docs', 'user-manual.html'), 'docs')],
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],

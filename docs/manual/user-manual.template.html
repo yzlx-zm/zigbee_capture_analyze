@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zigbee Capture Analyzer 使用手册</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc;
+    --accent:#0e7490; --accent-soft:#ecfeff; --ok:#15803d; --warn:#b45309;
+    --bad:#b91c1c; --chip:#f1f5f9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.7;font-size:15px}
+  .page{max-width:1060px;margin:0 auto;padding:28px 36px 80px}
+  /* ── 头部 ── */
+  header.hero{border:1px solid var(--line);border-radius:14px;padding:34px 38px;
+    background:linear-gradient(135deg,#ffffff,#f0f9fa);margin-top:12px}
+  .hero h1{margin:0 0 4px;font-size:27px;letter-spacing:.5px}
+  .hero .sub{color:var(--muted);font-size:14px}
+  .ver-tag{display:inline-block;background:#0e7490;color:#fff;border-radius:6px;
+    padding:3px 12px;font-size:13px;margin:12px 6px 0 0}
+  .ver-tag.plain{background:#e2e8f0;color:#334155}
+  /* ── 目录 ── */
+  nav.toc{background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:16px 22px;margin:22px 0;columns:2;column-gap:40px}
+  nav.toc h2{column-span:all;font-size:15px;margin:0 0 8px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:1px}
+  nav.toc a{display:block;text-decoration:none;color:var(--ink);padding:2px 0;
+    font-size:14px;border-bottom:1px dashed transparent}
+  nav.toc a:hover{color:var(--accent)}
+  /* ── 章节 ── */
+  section.ch{margin-top:40px}
+  .ch-title{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid var(--accent);
+    padding-bottom:8px}
+  .ch-title .no{font-size:15px;color:#fff;background:var(--accent);border-radius:8px;
+    padding:2px 10px;white-space:nowrap}
+  .ch-title h2{margin:0;font-size:21px}
+  h3{font-size:16.5px;margin:26px 0 8px;color:#0c4a5e}
+  h4{font-size:15px;margin:18px 0 6px}
+  p{margin:8px 0}
+  ul,ol{margin:8px 0;padding-left:26px}
+  li{margin:4px 0}
+  .step{background:#fff;border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:8px;padding:12px 18px;margin:10px 0}
+  .step .t{font-weight:600;color:#0c4a5e}
+  .note{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;
+    padding:10px 16px;margin:12px 0;font-size:14px}
+  .warn{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+    padding:10px 16px;margin:12px 0;font-size:14px}
+  .tip{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+    padding:10px 16px;margin:12px 0;font-size:14px}
+  code{background:var(--chip);border-radius:4px;padding:1px 6px;font-family:Consolas,monospace;
+    font-size:13px}
+  .mono{font-family:Consolas,monospace;font-size:13px}
+  figure{margin:16px 0}
+  figure img{width:100%;border:1px solid var(--line);border-radius:10px;background:#fff;
+    box-shadow:0 1px 4px rgba(15,23,42,.06)}
+  figcaption{font-size:13px;color:var(--muted);margin-top:6px}
+  table{border-collapse:collapse;width:100%;background:#fff;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9;font-weight:600;white-space:nowrap}
+  .hl{background:#ecfeff}
+  footer{margin-top:56px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);
+    padding-top:14px}
+  @media print{ body{background:#fff} figure{page-break-inside:avoid} }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════ 头部 ═══════════ -->
+<header class="hero">
+  <h1>📡 Zigbee Capture Analyzer 使用手册</h1>
+  <p class="sub">Zigbee 抓包离线分析工具 — 导入抓包 → 诊断网络问题 → 查看拓扑 / 报文 / 节点 → AI 辅助分析</p>
+  <div style="margin-top:14px">
+    <span class="ver-tag">对应工具版本：v1.0.2（2026-09-07 基线）</span>
+    <span class="ver-tag plain">文档版本：1.0（2026-09-07）</span>
+    <span class="ver-tag plain">适用系统：Windows 10/11</span>
+  </div>
+  <p style="font-size:13.5px;color:var(--muted);margin-top:14px">
+    读者：拿到分发包（<span class="mono">ZigbeeAnalyzer-版本.zip</span>）的使用者。
+    本文按「导入 → 分析」的实际工作顺序讲解，全部界面截图来自真实运行画面；
+    跟随第 4 章即可完成一次完整的抓包分析。文中「<b>诊断</b>」「<b>拓扑</b>」等
+    词指页面顶部导航上的页面名。
+  </p>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <a href="#ch1">1. 工具简介</a>
+  <a href="#ch2">2. 安装与启动</a>
+  <a href="#ch3">3. 数据目录说明</a>
+  <a href="#ch4">4. 导入抓包（含大包拆分）</a>
+  <a href="#ch5">5. 诊断页</a>
+  <a href="#ch6">6. 拓扑页</a>
+  <a href="#ch7">7. 报文页</a>
+  <a href="#ch8">8. 节点页</a>
+  <a href="#ch9">9. AI 侧边栏</a>
+  <a href="#ch10">10. 版本更新</a>
+  <a href="#ch11">11. 常见问题 FAQ</a>
+</nav>
+
+<!-- ═══════════ 1 简介 ═══════════ -->
+<section class="ch" id="ch1">
+  <div class="ch-title"><span class="no">1</span><h2>工具简介</h2></div>
+  <p>Zigbee Capture Analyzer 是一个 <b>Zigbee 抓包离线分析工具</b>：
+  把网关切出的无线抓包文件（<span class="mono">.cubx</span> / <span class="mono">.pcap</span> / <span class="mono">.pcapng</span>）导入本地分析，
+  自动解读每一帧并给出网络问题诊断，无需部署服务器、抓包文件不出本机。</p>
+
+  <h3>它能做什么</h3>
+  <table>
+    <tr><th style="width:110px">页面</th><th>用途（使用者视角）</th></tr>
+    <tr><td>导入</td><td>把抓包文件载入工具；大文件按时间窗拆分成小段；配置解密密钥；查看解析校验结果</td></tr>
+    <tr><td>诊断</td><td>自动扫描整段抓包，按常见网络问题逐项给出「正常 / 发现问题 / 无法判定」结论与证据帧，可一键跳转看原始帧</td></tr>
+    <tr><td>拓扑</td><td>图形化展示网络里有哪些设备（协调器/路由器/终端）、它们之间的链路与通信路径，可随时间滑块观察链路变化</td></tr>
+    <tr><td>报文</td><td>逐帧浏览全部抓包内容，多种条件过滤，点开任意一帧看从物理层到应用层的完整字段解析</td></tr>
+    <tr><td>节点</td><td>按设备汇总：厂商/型号、收发的命令类型与次数、邻居表、链路质量；可导出单台设备「画像」</td></tr>
+    <tr><td>AI 助手</td><td>右下角浮标；可联网查 Zigbee/芯科官方知识，也可描述问题让 AI 结合当前抓包给出分析（后者需自配 API Key）</td></tr>
+  </table>
+
+  <h3>典型工作流</h3>
+  <ol>
+    <li>拿到一段「有问题的」抓包（例如设备入网失败、频繁掉线、命令无响应）；</li>
+    <li>在<b>导入</b>页载入文件（若文件很大，先用时间窗拆分出问题时段）；</li>
+    <li>打开<b>诊断</b>页看工具自动发现了什么（可点卡片里的「报文」按钮跳到具体帧核实）；</li>
+    <li>到<b>拓扑</b>页看设备间链路、<b>报文</b>页核对协议交互细节、<b>节点</b>页查设备身份；</li>
+    <li>把结论或疑问丢给<b>AI 助手</b>做交叉印证。</li>
+  </ol>
+
+  <div class="tip"><b>提示</b>：工具只做<b>分析</b>，不做现场调试——它不能修改网络，也不连接任何设备。
+  所有结论都来自你导入的这一段抓包。</div>
+</section>
+
+<!-- ═══════════ 2 安装与启动 ═══════════ -->
+<section class="ch" id="ch2">
+  <div class="ch-title"><span class="no">2</span><h2>安装与启动</h2></div>
+
+  <h3>2.1 安装（= 解压）</h3>
+  <div class="step"><span class="t">步骤 1</span> —— 把收到的 <span class="mono">ZigbeeAnalyzer-版本.zip</span> 解压到任意目录。
+  建议放在一个固定位置（例如 <span class="mono">D:\Tools\ZigbeeAnalyzer\</span>），不要在压缩包里直接运行。</div>
+  <div class="step"><span class="t">步骤 2</span> —— 确认目录里有 <span class="mono">ZigbeeAnalyzer.exe</span> 和
+  <span class="mono">_internal</span> 文件夹（依赖与页面文件）。<b>二者要保持在同一目录</b>，移动时整体移动。</div>
+  <p>工具无需额外安装任何运行库（Python/Node 都不用装），解压即用。
+  目录放在<b>中文路径</b>（如桌面、<span class="mono">D:\测试工具\</span>）也能正常运行。</p>
+
+  <h3>2.2 启动</h3>
+  <div class="step"><span class="t">步骤 1</span> —— <b>双击 <span class="mono">ZigbeeAnalyzer.exe</span></b>。</div>
+  <div class="step"><span class="t">步骤 2</span> —— 弹出黑色<b>控制台窗口</b>，同时自动打开默认浏览器进入工具页面
+  （首次启动准备环境约需数秒）。控制台第一行会打印访问地址（形如
+  <span class="mono">http://127.0.0.1:57231</span>）与版本号。</div>
+  <div class="step"><span class="t">步骤 3</span> —— 浏览器没自动打开时，<b>手动把控制台里显示的地址输入浏览器</b>即可。
+  页面顶部状态栏显示当前版本号（如 <span class="mono">v1.0.2</span>）。</div>
+  <div class="note"><b>退出 = 关闭黑色控制台窗口</b>（或按 <span class="mono">Ctrl+C</span>）。
+  只关浏览器页时工具仍在后台运行，再次双击 exe 会打开新页面连回原实例。</div>
+  <div class="note"><b>单实例</b>：同时只允许运行一个实例。第二次双击会提示
+  「工具已在运行，请关闭已打开的窗口（控制台窗）后重试」，这是正常保护，不是故障。</div>
+
+  <h3>2.3 主界面速览</h3>
+  <figure>
+    <img src="{IMG:import_main}" alt="工具主界面：顶栏导航 + 导入页">
+    <figcaption>主界面。顶栏：<b>导入 / 拓扑 / 报文 / 节点 / 诊断</b> 五个页面 + 右侧状态栏（当前包数|节点数、版本号）+「⟳ 重启后端」按钮。</figcaption>
+  </figure>
+  <p>「⟳ 重启后端」用于极少数页面卡死时的恢复（例如导入超大文件后界面无响应），平时无需使用。</p>
+</section>
+
+<!-- ═══════════ 3 数据目录 ═══════════ -->
+<section class="ch" id="ch3">
+  <div class="ch-title"><span class="no">3</span><h2>数据目录说明</h2></div>
+  <p>工具把数据分成两类存放：<b>程序文件</b>（更新时整包覆盖）与<b>个人数据</b>（更新时保留）。
+  理解这个分层后，升级版本永远不用重新配置。</p>
+
+  <table>
+    <tr><th style="width:200px">内容</th><th style="width:330px">位置</th><th>更新版本时</th></tr>
+    <tr><td>程序文件：exe、依赖、前端页面、version.json</td>
+      <td class="mono">你的解压目录\</td><td><b>整包覆盖替换</b></td></tr>
+    <tr><td>AI API Key 等个人配置（敏感，本地保存）</td>
+      <td class="mono">%APPDATA%\zigbee-analyzer\ai_config.json</td><td><b>自动保留，不覆盖</b></td></tr>
+    <tr><td>运行日志（排障用，自动轮转 2MB×3）</td>
+      <td class="mono">%APPDATA%\zigbee-analyzer\logs\app.log</td><td>保留</td></tr>
+    <tr><td>手工添加的 Zigbee 解密密钥</td>
+      <td class="mono">%APPDATA%\Wireshark\zigbee_pc_keys</td><td>保留（与 Wireshark 共享）</td></tr>
+  </table>
+
+  <p><span class="mono">%APPDATA%</span> 是系统用户目录（资源管理器地址栏输入
+  <span class="mono">%APPDATA%</span> 回车即可打开）。</p>
+
+  <h3>为什么要这样设计</h3>
+  <ul>
+    <li><b>升级不丢配置</b>：AI Key 存在用户目录，新版程序文件直接覆盖即可，Key 不会丢；</li>
+    <li><b>卸载干净</b>：删除整个解压目录即完成卸载（个人配置目录可按需一并删除）；</li>
+    <li><b>解密密钥与 Wireshark 互通</b>：工具读写的是 Wireshark 的标准密钥文件
+    （<span class="mono">zigbee_pc_keys</span>）。你在 Wireshark 里加过的 Zigbee 密钥，工具直接可用；
+    在工具里加的，Wireshark 解密同一份抓包时同样生效；</li>
+    <li><b>日志可查</b>：遇到异常时把 <span class="mono">logs\app.log</span> 发给我们即可定位问题。</li>
+  </ul>
+  <div class="note"><b>注意</b>：导入的抓包数据保存在<b>内存</b>中（不上传、不落盘、重启后清空）。
+  需要留档的分析，用各页面的导出功能（节点画像 / 案例库导出）把结论存到本地。</div>
+</section>
+
+<!-- ═══════════ 4 导入 ═══════════ -->
+<section class="ch" id="ch4">
+  <div class="ch-title"><span class="no">4</span><h2>导入抓包</h2></div>
+
+  <h3>4.1 支持的文件</h3>
+  <table>
+    <tr><th>格式</th><th>来源</th><th>说明</th></tr>
+    <tr><td class="mono">.cubx</td><td>芯科 Simplicity Studio Network Analyzer / 抓包器导出</td>
+      <td>推荐格式：含密钥、LQI/RSSI 等附加信息，解析最完整</td></tr>
+    <tr><td class="mono">.pcap / .pcapng</td><td>Wireshark 等</td>
+      <td>受支持；无 64 位地址等附加信息时会相应少展示</td></tr>
+  </table>
+
+  <h3>4.2 导入小文件（直接分析）</h3>
+  <div class="step"><span class="t">步骤 1</span> —— 进入<b>导入</b>页。把文件拖进虚线框（支持多选），或点击虚线框选择文件；
+  也可以点击「或输入本地路径…」直接粘贴路径（多个用逗号分隔）。</div>
+  <div class="step"><span class="t">步骤 2</span> —— 页面出现解析进度条，顶栏同步显示进度。单个 <span class="mono">.cubx</span>
+  在 1MB 以内、以及任意 <span class="mono">.pcap</span> 文件都会直接开始整包导入。</div>
+  <div class="step"><span class="t">步骤 3</span> —— 完成后显示<b>导入结果</b>卡片：总帧数、设备数、帧类型分布、
+  解密成功率与校验结果；点「查看拓扑 →」直接进入拓扑页。</div>
+
+  <h3>4.3 大文件（&gt;1MB 的 .cubx）：时间窗拆分导入</h3>
+  <p>几十上百 MB 的整包抓包（物理帧可达百万级）直接解析会非常慢。
+  工具对此采用<b>先选时段、再导入该时段</b>的流程：导入单个超过 1MB 的 <span class="mono">.cubx</span> 时，
+  会先快速预扫描（秒级）并弹出<b>时间窗拆分面板</b>，让你只导入感兴趣的时间段。</p>
+  <figure>
+    <img src="{IMG:import_split_panel}" alt="大包时间窗拆分面板：预扫信息、帧密度直方图、双滑块选窗">
+    <figcaption>拆分面板：上方为文件信息（大小/物理帧数/时长/信道/LQI·RSSI）；中间的柱状图是<b>各分钟帧密度</b>；
+    用两个滑块或精确时间输入框圈定目标时段，窗口标签实时显示所选范围。</figcaption>
+  </figure>
+  <div class="step"><span class="t">步骤 1（选窗）</span> —— 在柱状图上，把两侧滑块拖到问题时段附近
+  （配合时间刻度）或用「精确时间（月-日 时:分）→ 应用」精确输入起点与终点。</div>
+  <div class="step"><span class="t">步骤 2（拆分）</span> —— 点「<b>拆分子包</b>」。工具物理拆出一个只含该时段的小 .cubx
+  （几秒内完成，可在 Ubiqua 中打开复验）。拆分结果列在面板下方：
+  <span class="mono">窗口 · 帧数</span> + 「⬇ 下载」（留存/复验）+「<b>导入此子包</b>」。</div>
+  <div class="step"><span class="t">步骤 3（导入）</span> —— 点「<b>导入此子包</b>」，该时段小包很快解析完成，进入正常分析流程。
+  可以连续拆多个时段分别导入。</div>
+  <div class="note"><b>两个备选按钮</b>：「取消（整包导入）」= 不做拆分，直接整包导入（大包将解析很久，请确认需要全量数据）；
+  「关闭面板（换别的包）」= 放弃本次选择，不导入也不拆。</div>
+
+  <h3>4.4 解密与密钥管理</h3>
+  <p>Zigbee 数据帧大多带链路层加密。没有密钥时，这些帧只能看到加密概要。
+  工具已内置常见预设密钥（<span class="mono">ZigBeeAlliance09</span> 等），并会自动使用：
+  <b>① 素材文件自带的密钥</b>（.cubx 常内嵌抓包时的密钥）② <b>Wireshark 系统密钥文件</b>里的密钥。</p>
+  <figure>
+    <img src="{IMG:import_keys}" alt="密钥管理面板：解密统计 + 密钥列表 + 添加密钥输入行">
+    <figcaption>导入页的「🔑 密钥管理」面板。顶部是<b>解密统计</b>（已解密帧/安全帧总数与成功率、命中 Key 数）；
+    表格里每个密钥显示 16 字节 hex（点击可展开看全量）、标签、「✓ 命中（N 帧）/ ✗ 未命中」；
+    预设密钥带「预设」徽章且不可删除。底部是添加行。</figcaption>
+  </figure>
+  <div class="step"><span class="t">如何添加密钥</span> —— 展开「🔑 密钥管理」，把 16 字节密钥粘贴到
+  <span class="mono">Key</span> 输入框（支持 <span class="mono">FC:90:D2…</span>、<span class="mono">FC90D2…</span> 等写法），
+  填个便于识别的标签，点「添加」。列表随即刷新该 Key 的命中统计。</div>
+  <div class="warn"><b>关键提示</b>：解密发生在<b>导入时</b>。若导入完成后发现未解密帧多，
+  请先补齐密钥再<b>重新导入一次</b>该文件，让新密钥生效到全部帧（见 11.6）。</div>
+
+  <h3>4.5 解析校验报告</h3>
+  <p>导入完成后工具会自动做一轮<b>解析正确性自检</b>（帧能否按规范正确解读）。
+  校验结果展示在导入结果卡片上。正常时为「通过」；若校验失败，为保证分析结论可信，
+  拓扑 / 报文 / 节点三个页面会被锁定并提示原因，回到导入页重新导入即可。
+  <b>只要看到校验通过，后续分析的数字都是基于可靠解读的。</b></p>
+
+  <h3>4.6 清除数据 / 重新开始</h3>
+  <p>导入结果卡片右下角「<b>清除数据</b>」清空当前分析内容（连点两次确认）。
+  清除后可以导入另一段抓包。同一时间只保留一份数据——分析新的前请先把上一份的结论导出留档。</p>
+</section>
+
+<!-- ═══════════ 5 诊断 ═══════════ -->
+<section class="ch" id="ch5">
+  <div class="ch-title"><span class="no">5</span><h2>诊断页（自动发现问题）</h2></div>
+  <p>诊断页是本工具的「体检报告」：导入完成后切到<b>诊断</b>页，工具自动扫描整段抓包，
+  对照常见网络问题逐项检查。页面上方先选「网络(PAN)」（一份抓包含多个网络时切换查看），再点「⟳ 重新诊断」。</p>
+
+  <h3>5.1 阅读方法：检测结果视图</h3>
+  <figure>
+    <img src="{IMG:diag_detect}" alt="诊断页检测结果视图：摘要卡 + 检测卡片">
+    <figcaption>顶部摘要卡给总体结论；下方每张卡片对应一类问题。截图示例：发现 8 项问题，摘要按影响列出白话结论。</figcaption>
+  </figure>
+  <h4>每张检测卡长这样</h4>
+  <ul>
+    <li><b>标题</b>：小角标 = 问题编号（内部编号，无需记忆）；正文 = 白话说明，如「密钥分发或验证出问题」；
+    紧接<b>结论标签</b>——正常 / 发现问题 / 无法判定（不同颜色），以及<b>置信度</b>（高=直接证据 / 中=帧模式 / 低=推断 / 不可判定=数据不足）；</li>
+    <li><b>💬 结论</b>：一句话讲人话的结论；</li>
+    <li><b>关键计数</b>：判定依据的量化数据（例如验证循环 ×7、失败帧 39 条）；</li>
+    <li><b>涉及设备</b>：每台命中设备一行，行尾「🔍 报文」可<b>跳转到报文页定位到相关帧</b>；</li>
+    <li><b>📋 证据帧</b>：可展开的帧列表（时间/收发方/命令），是结论的原始依据；</li>
+    <li><b>事件链卡片</b>：当多个问题命中同一台设备时，会有一张卡把事件按时间串起来讲（例如「设备入网→验证失败→反复重试→离网」）。</li>
+  </ul>
+  <figure>
+    <img src="{IMG:diag_hitcard}" alt="命中卡片示例：密钥分发失败问题卡，含设备明细与证据">
+    <figcaption>命中卡片示例。白话结论 + 命中设备 + 证据描述，展开「📋 证据帧」可看原始帧，点设备行的「🔍 报文」直接跳转报文页。</figcaption>
+  </figure>
+  <div class="note"><b>关于「无法判定」</b>：抓包有盲区（如听不到某些信道），没有证据 ≠ 没有问题。
+  标「无法判定（琥珀色）」表示这段抓包不足以得出结论，请结合现场复测。</div>
+
+  <h3>5.2 场景学习视图（案例库）</h3>
+  <p>检测卡片基于协议规则自动判读。当遇到工具还不会自动判读的疑难问题时，
+  可以把这段抓包<b>标成一个案例</b>入库；下次导入同类问题时，工具会在<b>场景学习</b>视图给出
+  「这个问题以前遇到过」的提示与当时记录，越用越准。</p>
+  <figure>
+    <img src="{IMG:diag_learn}" alt="场景学习视图：54 个场景 + 案例库进度">
+    <figcaption>场景学习视图。顶部：已学场景数/共 54 场景、案例库条数；54 个场景标签带案例数量徽章；
+    选中的场景显示案例列表与置信度（同一问题多案例支撑 = 更可信）；右侧可把当前包「➕ 标为案例」、
+    导出 / 导入案例库（zip，含素材副本，可跨机器共享）。</figcaption>
+  </figure>
+  <div class="step"><span class="t">把当前包标为案例</span> —— 点「➕ 把当前包标为案例」，在弹层里填
+  现象（出什么问题）、根因（排查结论）、严重度、环境与所属场景（可多选，系统自动预填当前网络），保存后该包入案例库。</div>
+  <div class="note"><b>口径说明</b>：场景学习的「已学 X/54」指案例库已覆盖的场景数；每个场景下的案例会带
+  「证据置信度」——案例越多、越一致，参考价值越高。案例只在本机或你主动导出的 zip 内，不会上传。</div>
+</section>
+
+<!-- ═══════════ 6 拓扑 ═══════════ -->
+<section class="ch" id="ch6">
+  <div class="ch-title"><span class="no">6</span><h2>拓扑页（网络结构图）</h2></div>
+  <p>拓扑页把抓包中「活跃的设备与链路」画成一张图：一眼看出谁在跟谁通信、走哪条路径。
+  图上方是<b>拓扑统计</b>与工具条，点「📖 图例」随时对照图形含义。</p>
+
+  <h3>6.1 节点与形状</h3>
+  <ul>
+    <li><b>形状 = 设备类型</b>：协调器 / 路由器 / 终端设备 / 未知设备（自动按协议行为判定）；</li>
+    <li><b>标签两行</b>：第一行短地址（如 <span class="mono">0x838D</span>），第二行型号（从设备上报的身份读取，如 <span class="mono">AKLOCK-C6</span>）；</li>
+    <li><b>颜色与图标 = 当前状态</b>：正常 / 🔄 重连中 / 💤 休眠 / ⏻ 离线 / 静默（有记录但当前无活动，可隐藏）；</li>
+    <li>鼠标悬停显示详情（厂商/型号/EUI64/轮询间隔/收发帧量等），<b>单击</b>高亮该节点与相关链路，<b>双击</b>聚焦放大。</li>
+  </ul>
+
+  <h3>6.2 链路（边）</h3>
+  <ul>
+    <li><b>数据流</b>：两设备间发生过直接通信；</li>
+    <li><b>路由路径</b>：经过中间节点转发的通信路径（实线=当前路径，虚线=历史路径）；</li>
+    <li><b>父链路</b>：由轮询 / 入网应答 / 下行投递证据确定的「谁挂在谁下面」的关系。</li>
+  </ul>
+  <div class="note"><b>链路是「画出来的证据」而非猜测</b>：每条边都来自抓包中的协议证据（轮询父节点、
+  路由请求/应答、下行路径等）。没有证据的节点会标「◌ 未关联」。</div>
+  <figure>
+    <img src="{IMG:topo_main}" alt="拓扑页全貌：网络图 + 统计 + PAN 列表 + 不对称链路表">
+    <figcaption>拓扑页全貌。左上统计面板；图上节点/边均可交互；下方有节点搜索、PAN 列表与不对称链路表；底部面板可切换「路由路径链 / 链路历史 / 邻居关系」。</figcaption>
+  </figure>
+
+  <h3>6.3 时间游标：观察链路变化</h3>
+  <p>图上方的「⏱ 时刻」滑块把整段抓包按时间展开。拖动游标，图上显示<b>该时刻</b>的链路：
+  谁当时在通信、父链路当时指向谁。配合底部的「🕐 链路历史」面板（每台设备的链路变更分段时间线，
+  悬停色块看路径、点击高亮当时的链路），可以回答「这条路是什么时候从 A 换到 B 的」这类问题。</p>
+
+  <h3>6.4 图例与其它</h3>
+  <figure>
+    <img src="{IMG:topo_legend}" alt="拓扑图例浮层：节点形状、链路与状态全部符号说明">
+    <figcaption>点「📖 图例」弹出的对照表：所有形状、链路样式与状态图标都在这里。</figcaption>
+  </figure>
+  <ul>
+    <li><b>🔍 节点搜索</b>：输入地址/型号/厂商过滤，点击结果聚焦该节点；</li>
+    <li><b>PAN 列表</b>：多网络抓包切换查看对象；行内「→TL」跳到报文页过滤该网络；</li>
+    <li><b>不对称链路表</b>：列出「A→B 与 B→A 帧数差异大」的链路（信号单向可见，常与抓包位置相关）；</li>
+    <li><b>静默节点</b>：可隐藏只出现在某个时刻的设备，聚焦长期活跃成员。</li>
+  </ul>
+</section>
+
+<!-- ═══════════ 7 报文 ═══════════ -->
+<section class="ch" id="ch7">
+  <div class="ch-title"><span class="no">7</span><h2>报文页（逐帧查看）</h2></div>
+  <p>报文页是原始抓包列表——诊断卡里点「🔍 报文」也会跳到这里。
+  左侧是帧列表，点击任意一帧，右侧显示该帧<b>从物理层到应用层的完整字段解析</b>。</p>
+
+  <h3>7.1 帧列表与摘要</h3>
+  <table>
+    <tr><th>列</th><th>含义</th></tr>
+    <tr><td>帧号</td><td>抓包内的帧序号</td></tr>
+    <tr><td>时间</td><td>相对开始时间（时:分:秒）</td></tr>
+    <tr><td>摘要</td><td>该帧干了什么（如 Beacon、MAC Ack、命令名），附事件徽章（⛔ 离网 / 🔄 重入网 / ⚠️ 网络状态等）</td></tr>
+    <tr><td>路径</td><td>从源到目的经过的转发链（可展开看完整路径）</td></tr>
+    <tr><td>NWK Src / Dst</td><td>网络层源 / 目的短地址</td></tr>
+    <tr><td>APS Ctr</td><td>应用层计数器（同一事务的帧计数器相同）</td></tr>
+  </table>
+  <div class="note"><b>行颜色 = 协议层次</b>（MAC 帧 / 网络命令 / 应用帧等分色，图例见页面说明）。
+  <b>安全帧未解密</b>的行默认隐藏（见 7.3 开关），需要时再展开。</div>
+  <figure>
+    <img src="{IMG:timeline_main}" alt="报文页：过滤条 + 帧列表">
+    <figcaption>报文页帧列表。顶部过滤条可组合过滤；默认按时间升序逐帧展示。</figcaption>
+  </figure>
+
+  <h3>7.2 详情面板</h3>
+  <figure>
+    <img src="{IMG:timeline_detail}" alt="帧详情：MAC/NWK/安全/ZCL 分层字段逐条解析">
+    <figcaption>帧详情示例（ZCL 读属性帧）：标题给帧号与类型；正文按 MAC → NWK → 安全 → APS → ZCL 逐层列出每个字段的值。
+    点详情中的 PAN/短地址可把该值填入过滤框快速过滤（字段点选）。</figcaption>
+  </figure>
+  <ul>
+    <li><b>未解密帧</b>只显示加密层概要（密钥类型/序号等），看不到应用内容——需密钥后重新导入（见 4.4）；</li>
+    <li>命令帧会标注<b>协议语义</b>（如 Read Attributes、Default Response），应用层载荷尽量解析为可读字段（控制命令、属性读写、DP 数据等）；</li>
+    <li>摘要徽章行与帧首部信息区给出该帧在网络事件中的角色。</li>
+  </ul>
+
+  <h3>7.3 过滤与查看</h3>
+  <div class="step"><span class="t">过滤条</span> —— <b>PAN</b>（网络）、<b>节点</b>（短地址）、<b>时间</b>
+  （开始~结束，支持到时:分:秒的精确输入）、<b>类型</b>（下拉列出当前包实际存在的帧类型，动态生成）——
+  任意组合后点查询。</div>
+  <div class="step"><span class="t">🔒 未解密开关</span> —— 勾选「🔒 未解密」时列表显示加密但未解密的帧；
+  取消勾选则只显示已解读出内容的帧。未解密帧数多 = 缺密钥（见 FAQ 11.6），不是工具坏了。</div>
+</section>
+
+<!-- ═══════════ 8 节点 ═══════════ -->
+<section class="ch" id="ch8">
+  <div class="ch-title"><span class="no">8</span><h2>节点页（设备汇总与画像）</h2></div>
+  <p>节点页把每个设备汇总成一行：这台设备是谁、出现在抓包里多少次、控制过什么。</p>
+
+  <h3>8.1 列表</h3>
+  <figure>
+    <img src="{IMG:nodes_main}" alt="节点页列表：地址/设备类型/厂商/型号/出现次数">
+    <figcaption>节点列表：地址、设备类型、厂商名、型号、出现次数。搜索框可输地址直达；行内 🎯 跳到拓扑页定位该节点。</figcaption>
+  </figure>
+
+  <h3>8.2 点击行展开详情</h3>
+  <figure>
+    <img src="{IMG:nodes_expand}" alt="节点行展开详情：身份/EUI64/邻居表/端点">
+    <figcaption>点击设备行展开详情：首末出现时间、EUI64（64 位地址）、LQI/RSSI 统计、帧类型构成、邻居表（入/出向链路代价与最近时间）与端点列表。</figcaption>
+  </figure>
+
+  <h3>8.3 控制命令统计 + 📄 示例 + ⬇️ 导出画像</h3>
+  <figure>
+    <img src="{IMG:nodes_clusters}" alt="控制命令统计表：每类命令频率 + 示例按钮 + 导出画像">
+    <figcaption>展开详情下部的<b>控制命令统计</b>：该设备收发过的簇命令（簇/命令/方向/频率）。
+    每行「📄 示例」打开该命令最近一帧的完整分层解析；「⬇️ 导出画像」把整台设备的画像（身份+统计+代表帧解析）导出为 JSON+MD 两个文件。</figcaption>
+  </figure>
+  <figure>
+    <img src="{IMG:nodes_example}" alt="示例帧解析弹层：控制命令代表帧的完整字段树">
+    <figcaption>「📄 示例」弹层：该命令的代表帧从物理层到应用层的完整解析树，核对设备行为时逐字段查看。</figcaption>
+  </figure>
+  <div class="tip"><b>典型用法</b>：查一台「不听话」的设备 → 节点页找它的行 → 展开看它收发的控制命令与频率 →
+  点「📄 示例」确认命令内容 → ⬇️ 导出画像留档或发给同事。</div>
+</section>
+
+<!-- ═══════════ 9 AI ═══════════ -->
+<section class="ch" id="ch9">
+  <div class="ch-title"><span class="no">9</span><h2>AI 侧边栏助手</h2></div>
+  <p>任意页面右下角都有 <b>🤖</b> 浮标，点击打开 AI 助手。它提供两种能力，是否需要 API Key 不同：</p>
+  <table>
+    <tr><th style="width:150px">能力</th><th>做什么</th><th>是否需要 Key</th></tr>
+    <tr><td><b>知识检索</b></td><td>你的问题若是「这是什么 / 原理 / 怎么做」——联网检索芯科官方文档库，返回相关条目与官方链接</td><td>不需要</td></tr>
+    <tr><td><b>对话分析</b></td><td>问题里带上包、地址、时间等范围时——先解析范围、自动整理该范围的统计与事件摘要，再交给大模型结合抓包内容回答</td><td>需要（自配）</td></tr>
+  </table>
+  <figure>
+    <img src="{IMG:ai_panel}" alt="AI 助手面板：对话引导语与两种用法示例">
+    <figcaption>AI 助手面板（对话页）。直接输入问题即可：纯知识问题走官方文档检索；含范围的问题（如图中示例）会进入包内分析。</figcaption>
+  </figure>
+  <figure>
+    <img src="{IMG:ai_kb}" alt="知识检索结果：官方文档条目 + 打开官方文档链接">
+    <figcaption>知识检索示例：返回结果带内容摘要与「🔗 打开官方文档」链接（需联网；离线时提示「知识源不可达（需联网）」，其余功能不受影响）。</figcaption>
+  </figure>
+
+  <h3>9.1 配置 API Key（可选，仅对话分析需要）</h3>
+  <figure>
+    <img src="{IMG:ai_config}" alt="AI 设置：提供商选择、API Key（仅本地）、端点/模型、风格、访问 token">
+    <figcaption>AI 设置页。选择 LLM 提供商、粘贴 API Key、按需填端点/模型与「芯科访问 token」（留空自动使用本机授权）。</figcaption>
+  </figure>
+  <div class="note"><b>隐私说明</b>：Key 只保存在本机（打包版存
+  <span class="mono">%APPDATA%\zigbee-analyzer\ai_config.json</span>），不随包分发、不上传任何服务器；
+  对话分析时发送给大模型的是当前抓包的<b>统计与帧摘要</b>（脱敏），抓包原始文件不发送。</div>
+  <div class="warn"><b>未配置 Key 时</b>：知识检索照常可用；输入分析类问题时，AI 会提示去设置里配置 Key。
+  不知道填哪个 Key：向你们团队的 AI 平台管理员索取（支持 Anthropic / OpenAI / DeepSeek 兼容端点）。</div>
+
+  <h3>9.2 其它功能</h3>
+  <ul>
+    <li><b>历史</b>：侧栏的对话历史（本机保存，刷新不丢）；「＋」开新会话；</li>
+    <li><b>回答里的帧引用</b>：分析回答中提到的帧可直接点击跳转到报文页对应帧；</li>
+    <li>面板右下可拖动改变宽度，顶栏「─」折叠。</li>
+  </ul>
+</section>
+
+<!-- ═══════════ 10 更新 ═══════════ -->
+<section class="ch" id="ch10">
+  <div class="ch-title"><span class="no">10</span><h2>版本更新</h2></div>
+  <div class="step"><span class="t">步骤 1</span> —— 拿到新版压缩包 <span class="mono">ZigbeeAnalyzer-新版本.zip</span>。</div>
+  <div class="step"><span class="t">步骤 2</span> —— <b>先退出正在运行的工具</b>（关闭黑色控制台窗口）。</div>
+  <div class="step"><span class="t">步骤 3</span> —— 用新版文件<b>覆盖</b>旧解压目录（解压时选择「全部覆盖」；
+  或删除旧目录后解压新版，推荐后者，最干净）。</div>
+  <div class="step"><span class="t">步骤 4</span> —— 双击新 exe 启动，页面顶栏显示新版本号即成功。</div>
+  <div class="note"><b>数据保留</b>：如上覆盖只动程序目录——AI Key 配置与日志在
+  <span class="mono">%APPDATA%\zigbee-analyzer\</span>，解密密钥在
+  <span class="mono">%APPDATA%\Wireshark\zigbee_pc_keys</span>，全部自动保留，无需重新配置。
+  案例库等个人导出的文件建议更新前先备份。</div>
+  <p><b>怎么确认当前版本</b>：页面顶栏右侧「v版本号」（如 <span class="mono">v1.0.2</span>）；
+  或打开解压目录里的 <span class="mono">version.json</span> 查看。</p>
+  <div class="warn"><b>不要</b>把新版文件直接解压到旧目录中的子文件夹里（会变成新旧混放）。
+  要么整体覆盖同一层目录，要么删旧解新。</div>
+</section>
+
+<!-- ═══════════ 11 FAQ ═══════════ -->
+<section class="ch" id="ch11">
+  <div class="ch-title"><span class="no">11</span><h2>常见问题 FAQ</h2></div>
+
+  <h3>11.1 杀毒软件报警 / 无法运行</h3>
+  <p>PyInstaller 打包的绿色程序没有商业数字签名，部分杀软（尤其 Defender）可能误报。
+  属正常现象：请为解压目录添加<b>信任 / 排除项</b>后重新解压运行。
+  若已被隔离，先恢复文件再排除。工具本身只在本机解析抓包，无联网上传行为
+  （唯一联网项是 AI 知识检索，且失败时不影响其它功能）。</p>
+
+  <h3>11.2 双击 exe 没反应 / 页面打不开</h3>
+  <ol>
+    <li>等 3~5 秒——首次启动在准备环境，可能无窗口闪烁；</li>
+    <li>确认没有旧实例未关闭（弹「工具已在运行」= 有旧实例，任务管理器结束旧进程或重启电脑）；</li>
+    <li>杀软可能拦截了启动——把目录加入排除项重试；</li>
+    <li>控制台窗口里有报错信息，或日志文件 <span class="mono">%APPDATA%\zigbee-analyzer\logs\app.log</span>
+    有记录时，把内容发给支持人员。</li>
+  </ol>
+
+  <h3>11.3 端口被占用 / 控制台显示端口错误</h3>
+  <p>工具默认自动挑选空闲端口，一般不冲突。若看到端口相关报错，通常是旧实例残留：
+  关闭所有控制台窗口后重试。页面顶栏「⟳ 重启后端」可在页面卡死时恢复后端，无需重启整个工具。</p>
+
+  <h3>11.4 日志在哪里</h3>
+  <p><span class="mono">%APPDATA%\zigbee-analyzer\logs\app.log</span>
+  （文件较大时已自动轮转，保留最近 3 份）。报障时请附带该文件。</p>
+
+  <h3>11.5 AI 知识检索提示「知识源不可达（需联网）」</h3>
+  <p>知识检索需要联网访问芯科官方文档服务。内网 / 断网环境不可用，属预期：
+  其余全部功能（导入/诊断/拓扑/报文/节点）离线可用，不受影响。</p>
+
+  <h3>11.6 报文里「未解密」的帧很多</h3>
+  <p>安全帧必须匹配到正确的<b>网络密钥</b>才能解密。未解密多通常是：</p>
+  <ul>
+    <li>该网络使用非标准密钥且未提供 → 拿到设备/网关切出的密钥，在导入页密钥面板添加后<b>重新导入</b>（解密发生在导入时）；</li>
+    <li>使用标准密钥（如 <span class="mono">ZigBeeAlliance09</span>）或素材自带密钥时工具会自动使用；</li>
+    <li>个别帧连密钥类型都无法识别属正常（见报文页「🔒 未解密」开关可隐藏）。</li>
+  </ul>
+
+  <h3>11.7 中文路径支持吗</h3>
+  <p>支持。工具在中文目录 / 桌面已实测正常运行。若个别系统区域设置下异常，
+  可改英文路径（多为杀软或系统编码问题，而非工具自身）。</p>
+
+  <h3>11.8 大包导入很慢 / 卡住</h3>
+  <p>几十 MB 的 .cubx 物理帧可达百万级，整包解析耗时数分钟属正常。
+  <b>正确姿势</b>：使用时间窗拆分（见 4.3）只导入问题时段（秒级完成）。
+  若进度条长时间不动（超过 10 分钟），点顶栏「⟳ 重启后端」后重试。</p>
+
+  <h3>11.9 诊断说「无法判定」是没分析出来吗</h3>
+  <p>不是。<b>没有证据 ≠ 没有问题</b>：单点抓包有覆盖盲区（听不到其它信道 / 其它频段），
+  无法判定表示这段抓包里看不到足以裁定的证据，请结合现场复测或多点抓包。</p>
+
+  <h3>11.10 可以分析多台网关 / 多个网络的抓包吗</h3>
+  <p>可以。一份抓包里含多个网络时：诊断页 / 拓扑页 / 报文页均有<b>网络(PAN)选择器</b>，
+  先选目标网络再分析，避免串网误判。节点页展示全部网络设备（每台标注所属）。</p>
+
+  <h3>11.11 我的抓包能在别的机器上复现吗</h3>
+  <p>可以。把 <span class="mono">.cubx/.pcap</span> 原文件发给对方即可（解密密钥如有自配，一起告知）。
+  案例库支持导出 zip（含素材副本），导入后「场景学习」内容完整迁移。</p>
+</section>
+
+<footer>
+  Zigbee Capture Analyzer 使用手册 · v1.0（2026-09-07）· 对应工具版本 v1.0.2 基线 ·
+  界面截图来自 v1.0.2 构建（示例数据：一段 Zigbee 入网过程抓包，含 8435 帧 / 122 台设备）。
+  版本升级后界面如有变化，以新版本为准（本手册随包分发，见解压目录 docs\ 下同名文件）。
+</footer>
+</div>
+</body>
+</html>
