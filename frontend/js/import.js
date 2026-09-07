@@ -72,6 +72,8 @@ reg('import',function(){
   document.getElementById('plpath').addEventListener('click',function(){
     var p=prompt('pcap/cubx 文件路径 (逗号分隔多个):');if(!p)return;
     var isCubx=p.toLowerCase().endsWith('.cubx');
+    // U12: 记录素材原路径 (诊断页案例标注复制素材副本用)
+    S.lastImportPath=p.split(',')[0].trim();
     if(isCubx){
       // U11: cubx 先预扫 — >30MB 进时间窗拆分面板, 小文件直接导入
       importLocalCubx(p,p.split(/[\\\\/]/).pop());
@@ -182,6 +184,7 @@ reg('import',function(){
     document.getElementById('cs-cancel').addEventListener('click',function(){
       csPanel.classList.add('hidden');
       S.cubxPrescan=null;
+      S.lastImportPath=csPanel.dataset.path;  // U12: 案例素材副本源路径
       importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
     });
     // 关闭面板 (换别的包): 清面板状态 + 子包清单, 不导入 — 用户反馈 08-13
@@ -246,6 +249,7 @@ reg('import',function(){
     el.querySelectorAll('.cs-sub-import').forEach(function(b){
       b.addEventListener('click',function(){
         var p=b.dataset.path;
+        S.lastImportPath=p;  // U12: 案例素材副本源路径
         importPath('/api/import/local-cubx','path',p,p.split(/[\\\\/]/).pop());
       });
     });

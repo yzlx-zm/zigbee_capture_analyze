@@ -2,21 +2,21 @@
  "kept_frames": 8435,
  "stats": {
   "pkt_type": {
-   "APS Ack": 221,
+   "APS Ack": 224,
    "APS Cmd": 65,
    "Acknowledgement": 2522,
    "Beacon": 1454,
-   "Data": 1582,
+   "Data": 1576,
    "End Device Timeout Request": 1,
    "Leave": 342,
-   "Link Status": 123,
+   "Link Status": 158,
    "MAC Cmd": 301,
-   "NWK Cmd": 1292,
+   "NWK Cmd": 1224,
    "Network Report": 4,
    "Network Status": 39,
-   "Route Record": 31,
+   "Route Record": 49,
    "Route Reply": 1,
-   "Route Request": 161,
+   "Route Request": 176,
    "ZDP Cmd": 112,
    "ZDP: Active EP Req": 16,
    "ZDP: Active EP Resp": 9,
@@ -24,23 +24,23 @@
    "ZDP: IEEE Addr Req": 15,
    "ZDP: IEEE Addr Resp": 3,
    "ZDP: Match Desc Req": 13,
-   "ZDP: NWK Addr Req": 40,
+   "ZDP: NWK Addr Req": 43,
    "ZDP: Node Desc Req": 31,
    "ZDP: Node Desc Resp": 26,
    "ZDP: Simple Desc Req": 11
   },
   "security": {
    "": 4278,
-   "Decrypted": 1729,
-   "Encrypted": 2428
+   "Decrypted": 1837,
+   "Encrypted": 2320
   },
   "nwk_cmd_id": {
-   "0x01": 161,
+   "0x01": 176,
    "0x02": 1,
    "0x03": 39,
    "0x04": 342,
-   "0x05": 31,
-   "0x08": 123,
+   "0x05": 49,
+   "0x08": 158,
    "0x09": 4,
    "0x0B": 1,
    "0x3E": 1
@@ -56,10 +56,10 @@
   },
   "leave_rejoin": 336,
   "leave_request": 336,
-  "zcl_frames": 436,
+  "zcl_frames": 470,
   "nodes_src": 107,
   "nodes_dst": 94
  },
- "frames_sha256": "2f5f1a0dd3f6f2b7234404da56625172df88fae78ceb91a9dac51750585319ef",
+ "frames_sha256": "f3362ca2b76d059f37591693f114c32857e46f9dd75c06da45e2341be1597d27",
  "parser_commit": "6d93770"
 }

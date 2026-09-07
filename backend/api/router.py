@@ -5,6 +5,7 @@ from .topology import router as t_router
 from .keys import router as k_router
 from .ubiqua import router as u_router
 from .ai import router as ai_router
+from .cases import router as c_router  # U12: 案例库 (诊断页学习机制)
 
 api = APIRouter(prefix="/api")
 api.include_router(f_router, tags=["import"])
@@ -12,3 +13,4 @@ api.include_router(t_router, tags=["topology"])
 api.include_router(k_router, tags=["keys"])
 api.include_router(u_router, tags=["ubiqua"])
 api.include_router(ai_router, tags=["ai"])
+api.include_router(c_router, tags=["cases"])

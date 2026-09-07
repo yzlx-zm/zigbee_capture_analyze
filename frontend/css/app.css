@@ -639,3 +639,43 @@ input[type=range]::-webkit-slider-runnable-track { height: 6px; background: tran
   user-select: none; background: var(--c-canvas); border: 1px solid var(--c-border-strong);
   border-radius: 4px; line-height: 1; }
 .ai-resize-handle:hover { color: var(--c-primary); border-color: var(--c-primary); }
+
+/* ── U12: 诊断页场景学习 (学习容器, 2026-09-07) ── */
+.sc-view-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--c-border); margin: 8px 0 4px; }
+.sc-view-tab { background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+  font-size: 13px; padding: 6px 14px; color: var(--c-text-3); }
+.sc-view-tab:hover { color: var(--c-text); background: #f1f5f9; }
+.sc-view-tab.on { color: var(--c-primary); font-weight: 600; border-bottom-color: var(--c-primary); }
+
+.sc-progress { font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-progress b { color: var(--c-primary); font-size: 15px; }
+
+.sc-tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 8px; }
+.sc-group { font-size: 10px; color: #94a3b8; margin: 0 4px 0 8px; border-left: 1px solid var(--c-border); padding-left: 8px; }
+.sc-tab { border: 1px solid var(--c-border); background: var(--c-surface); border-radius: 12px;
+  cursor: pointer; font-size: 11px; padding: 3px 9px; color: var(--c-text-3); line-height: 1.5; }
+.sc-tab:hover { border-color: var(--c-primary); color: var(--c-text); }
+.sc-tab.on { border-color: var(--c-primary); color: var(--c-primary); font-weight: 600; background: #eff6ff; }
+.sc-tab.sc-covered:not(.sc-learned) { color: #64748b; }          /* 有检测器无案例: 灰 */
+.sc-tab.sc-learned { color: #15803d; border-color: #86efac; background: #f0fdf4; }
+.sc-tab.sc-learned.on { color: #15803d; background: #dcfce7; }
+.sc-badge { display: inline-block; min-width: 14px; text-align: center; background: #16a34a;
+  color: #fff; border-radius: 7px; font-size: 9px; padding: 0 3px; margin-left: 2px; }
+
+.sc-tab-body { border-top: 1px dashed var(--c-border); padding-top: 8px; }
+.sc-mini-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sc-mini-table th { text-align: left; color: #94a3b8; font-weight: 500; padding: 3px 6px;
+  border-bottom: 1px solid var(--c-border); white-space: nowrap; }
+.sc-mini-table td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+
+.sc-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 3px 10px; max-height: 180px; overflow-y: auto; border: 1px solid var(--c-border);
+  border-radius: 6px; padding: 6px 8px; }
+.sc-check { font-size: 11px; color: var(--c-text-2); display: flex; align-items: center; gap: 4px; }
+.sc-check input { margin: 0; }
+
+.sc-modal-mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 200;
+  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
+.sc-modal { background: var(--c-surface); border-radius: 10px; padding: 16px 18px; width: 640px;
+  max-width: 96vw; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+.sc-form .ai-lbl { display: block; font-size: 12px; font-weight: 600; color: var(--c-text-2); margin: 10px 0 4px; }

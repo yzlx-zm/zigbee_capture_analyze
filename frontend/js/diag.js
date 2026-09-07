@@ -125,7 +125,9 @@ function verdictText(scenario, verdict) {
 // 覆盖范围提示 (2026-08-10 U8-3): 防"未发现明显问题"误信 —
 // 检测体系 8 大类 55 场景; ⚠️ S2 (2026-08-28): 写死 "8/55" 已过时 (检测器增至 13 场景),
 // 改为按实际完成检测数动态统计 (渐进渲染时数字如实增长)
-var SCENARIO_TOTAL = 55;  // taxonomy 场景总数 (ADR-0001, 框架只允许增量扩展)
+// U12 (2026-09-07): 场景总数以 /api/cases/scenarios 为准 (54 — taxonomy 逐条计数,
+// 文档标题 "~55" 为约数); 学习进度 "已学 X/N" 同端点
+var SCENARIO_TOTAL = 55;  // 兜底值 (端点失败时); ADR-0001: 框架只允许增量扩展
 
 function summaryCard(checks) {
   // checks: [{scenario, verdict, conclusion}]
@@ -157,7 +159,9 @@ function summaryCard(checks) {
     var covered = Object.keys(checks).length;
     h += '<p class="text-dim" style="font-size:11px;color:#64748b;margin:6px 0 0">'
       + '⚠️ 覆盖范围: 本页已检测 ' + covered + '/' + SCENARIO_TOTAL + ' 场景, 其余 '
-      + (SCENARIO_TOTAL - covered) + ' 个未检测 — "未发现明显问题"≠"网络没问题"</p>';
+      + (SCENARIO_TOTAL - covered) + ' 个未检测 — "未发现明显问题"≠"网络没问题"</p>'
+    // U12: 相似历史案例区 (新包诊断时; 案例库非空且当前检测有命中场景时提示入口)
+    if (window.__similarHint) h += window.__similarHint;
   }
   h += '</div>';
   return h;
@@ -172,11 +176,27 @@ reg('diag', function () {
   // renderH 按注册表顺序拼接 — 渐进渲染保留, 但顺序固定, 不再受响应完成顺序影响
   // S2 (2026-08-28): 网络(PAN)选择器 + 重新诊断按钮 — 多 PAN 素材串网修复的交互端;
   // 加载逻辑抽为 loadDiag() 供切换 PAN/重跑复用
+  // U12 (2026-09-07): 诊断页 = 学习容器 — 双视图: 「检测结果」(现有全部卡) +
+  // 「场景学习」(54 场景 tab, 案例列表/学习进度/差距报告/案例导入导出);
+  // 无案例库时「检测结果」行为与现状一致 (回归要求)
   var sections = {};       // 模块 key → section html (完成即存)
   var offlineHtml = '';    // 离线区 (独立请求)
   var checks = {};
   var diagPan = '';        // 当前 PAN 选择 ('' = 全部)
   var panOptions = '<option value="">加载中...</option>';  // PAN 选项 (renderH 重建 select 复用)
+
+  // ── U12: 视图切换 (检测结果 / 场景学习) ──
+  var diagView = S.diagView || 'detect';   // 'detect' | 'learn'
+  S.diagView = diagView;
+  var learnHtml = '';                      // 场景学习区 (惰性加载后缓存)
+
+  function viewTabs() {
+    return '<div class="sc-view-tabs">'
+      + '<button class="sc-view-tab' + (diagView === 'detect' ? ' on' : '') + '" data-v="detect">🩺 检测结果</button>'
+      + '<button class="sc-view-tab' + (diagView === 'learn' ? ' on' : '') + '" data-v="learn">📚 场景学习</button>'
+      + '</div>';
+  }
+
   function renderH() {
     var summaryHtml = Object.keys(checks).length ? summaryCard(Object.keys(checks).map(function (k) { return checks[k]; })) : '';
     // 跨卡片事件链 (2026-08-10 U8-2): 同设备 ≥2 项检测命中 → 提示可能同一问题链
@@ -200,7 +220,8 @@ reg('diag', function () {
     var bodyHtml = MODULES.map(function (m) { return sections[m.key] || ''; }).join('');
     var headerHtml = '<div class="card"><h3>🩺 网络诊断</h3>'
       + '<p class="hint mt-1">基于协议数据 (Leave/Rejoin/Announce/Network Status) 的离线诊断</p>'
-      + '<div class="mt-1">网络(PAN): <select id="diag-pan" class="mono" style="font-size:12px" '
+      + viewTabs()
+      + '<div class="mt-1" id="detect-ctrl">网络(PAN): <select id="diag-pan" class="mono" style="font-size:12px" '
       + 'onchange="window.__diagPanChange(this.value)">'
       + panOptions + '</select> '
       + '<button id="diag-rerun" class="btn-s" onclick="window.__diagRerun()">⟳ 重新诊断</button>'
@@ -208,9 +229,26 @@ reg('diag', function () {
       + '</div></div>';
     // ⚠️ S2: renderH 重建 innerHTML 会重置 select — 保存/恢复当前选择
     var prevPan = document.getElementById('diag-pan') ? document.getElementById('diag-pan').value : diagPan;
-    document.getElementById('mc').innerHTML = headerHtml + summaryHtml + bodyHtml + offlineHtml;
+    var detectBody = summaryHtml + bodyHtml + offlineHtml;
+    document.getElementById('mc').innerHTML = headerHtml
+      + (diagView === 'detect'
+        ? '<div id="diag-detect">' + detectBody + '</div>'
+        : '<div id="diag-detect" style="display:none">' + detectBody + '</div>'
+          + '<div id="diag-learn">' + learnHtml + '</div>');
     var sel = document.getElementById('diag-pan');
     if (sel && sel.options.length) { sel.value = prevPan || diagPan; }
+    // U12: 视图 tab 点击
+    var tabs = document.querySelectorAll('.sc-view-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function () { switchView(this.dataset.v); });
+    }
+  }
+
+  function switchView(v) {
+    if (v === diagView) return;
+    diagView = v; S.diagView = v;
+    renderH();
+    if (v === 'learn' && !learnHtml) loadLearn();  // 惰性首载
   }
 
   // ── 检测器注册表 (2026-08-10 U8-1: 四层嵌套 → 数据驱动) ──
@@ -566,6 +604,14 @@ reg('diag', function () {
     loadDiag();
   });
 
+  // U12: 进入页面时若上次停在学习视图, 惰性加载案例库 (无案例库不影响检测视图)
+  if (diagView === 'learn') loadLearn();
+  if (!S.lastImportPath) {
+    // 素材原路径 (案例素材副本用; 本地路径导入时有值 — /api/import/last 不带路径,
+    // 由 import.js 导入时写入 S.lastImportPath)
+    S.lastImportPath = '';
+  }
+
   function renderOffline(pan) {
     A.get('/api/diag/offline' + (pan ? ('?pan=' + pan) : '')).then(function (d) {
       var devs = d.devices || [];
@@ -635,4 +681,323 @@ reg('diag', function () {
       renderH(); document.getElementById('mc').innerHTML += '<div class="card text-danger">诊断数据加载失败: ' + e.message + '</div>';
     });
   }
+
+  // ══════════ U12: 场景学习视图 (学习容器) ══════════
+  // 数据源: /api/cases/scenarios (学习进度 + 54 场景) + /api/cases (案例列表)
+  // + /api/cases/gaps (差距报告); tab 惰性渲染 (仅激活场景渲染案例, 性能)
+  var learnData = null;      // scenarios 端点缓存
+  var learnCases = [];       // 全部案例摘要 (tab 过滤在渲染层)
+  var learnGaps = null;      // 差距报告
+  var activeScenario = null; // 当前激活场景 tab (null = 总览)
+
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fmtDate(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts * 1000);
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+  function fmtPan(pan) { return pan != null ? '0x' + pan.toString(16).toUpperCase().padStart(4, '0') : '—'; }
+  function fmtAddr(a) { return a != null ? '0x' + a.toString(16).toUpperCase().padStart(4, '0') : '—'; }
+  var SEV_TXT = { high: '严重', medium: '中等', low: '轻微' };
+
+  function loadLearn(force) {
+    if (learnData && !force) { renderLearn(); return; }
+    A.get('/api/cases/scenarios').then(function (s) {
+      learnData = s;
+      SCENARIO_TOTAL = s.total || SCENARIO_TOTAL;
+      return A.get('/api/cases');
+    }).then(function (c) {
+      learnCases = c.cases || [];
+      learnRootCauses = c.root_cause_suggestions || [];
+      return A.get('/api/cases/gaps');
+    }).then(function (g) {
+      learnGaps = g;
+      renderLearn();
+    }).catch(function (e) {
+      learnHtml = '<div class="card text-danger">案例库加载失败: ' + escHtml(e.message || e) + '</div>';
+      renderH();
+    });
+  }
+  var learnRootCauses = [];
+
+  // 场景 tab 分组 (8 大类; 已学/有检测器的排前, 大类内保持编号序)
+  var GROUPS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8'];
+  var GROUP_NAMES = { L1: '入网', L2: '在线维持', L3: '运营期', L4: '网络维护', L5: '应用层', L6: 'SED 专项', L7: 'MAC/物理', L8: '硬件固件' };
+
+  function renderLearn() {
+    var s = learnData;
+    if (!s) { loadLearn(); return; }
+    var scen = s.scenarios || {};
+    // ── 头部: 学习进度 + 操作按钮 ──
+    var h = '<div class="card">'
+      + '<h3>📚 场景学习 <span class="text-dim" style="font-size:11px;font-weight:400">(问题包+标注 → 案例入库 → 结论由案例支撑)</span></h3>'
+      + '<div class="sc-progress">已学 <b>' + s.learned + '</b>/' + s.total + ' 场景 · 案例库 ' + (s.case_total || 0) + ' 条 '
+      + '<button class="btn-s" onclick="window.__caseAnnotate()">➕ 把当前包标为案例</button> '
+      + '<button class="btn-s" onclick="window.__caseExport()">⬇ 导出案例库</button> '
+      + '<button class="btn-s" onclick="window.__caseImportClick()">⬆ 导入案例库</button> '
+      + '<input type="file" id="case-import-file" accept=".zip" style="display:none">'
+      + '</div></div>';
+    // ── 差距报告摘要 (检测 vs 标注未对齐 → 检测器改进优先级) ──
+    if (learnGaps && learnGaps.gap_count > 0) {
+      h += '<div class="card" style="border-left:4px solid #f59e0b">'
+        + '<h3 style="font-size:13px">📋 待完善清单 (检测与标注不符 ' + learnGaps.gap_count + ' 项)</h3>'
+        + '<table class="sc-mini-table"><thead><tr><th>场景</th><th>漏报线索</th><th>误报线索</th></tr></thead><tbody>';
+      (learnGaps.by_scenario || []).forEach(function (a) {
+        var info = scen[a.scenario] || {};
+        h += '<tr><td><span class="sc-tag">' + a.scenario + '</span> ' + escHtml(info.name || '') + '</td>'
+          + '<td>' + (a.missed ? '<b class="v-warn">' + a.missed + '</b>' : 0) + '</td>'
+          + '<td>' + (a.false_positive ? '<b class="v-warn">' + a.false_positive + '</b>' : 0) + '</td></tr>';
+      });
+      h += '</tbody></table>'
+        + '<p class="text-dim" style="font-size:11px;margin:6px 0 0">漏报 = 人工归属但检测未命中 (检测器规则待补) · 误报 = 检测命中但人工未归属 (规则待收紧) — 走 P5 工单流迭代检测器</p></div>';
+    }
+    // ── 场景 tab 条 (按大类分组; 徽章 = 案例数) ──
+    h += '<div class="card"><div class="sc-tabs">';
+    h += '<button class="sc-tab' + (activeScenario == null ? ' on' : '') + '" data-s="">📊 总览</button>';
+    GROUPS.forEach(function (g) {
+      var ids = Object.keys(scen).filter(function (sid) { return sid.indexOf(g + '-') === 0; });
+      if (!ids.length) return;
+      h += '<span class="sc-group">' + GROUP_NAMES[g] + '</span>';
+      ids.forEach(function (sid) {
+        var info = scen[sid];
+        var n = info.case_count || 0;
+        var cls = 'sc-tab' + (activeScenario === sid ? ' on' : '')
+          + (n > 0 ? ' sc-learned' : '') + (info.covered ? ' sc-covered' : '');
+        h += '<button class="' + cls + '" data-s="' + sid + '"'
+          + ' title="' + escHtml(sid + ' ' + info.name + (info.covered ? ' (有检测器)' : ' (未覆盖)')) + '">'
+          + '<span class="sc-tag">' + sid + '</span>' + escHtml(info.name)
+          + (n ? ' <span class="sc-badge">' + n + '</span>' : '') + '</button>';
+      });
+    });
+    h += '</div>';
+    // ── tab 内容 (总览 or 单场景案例列表) ──
+    h += '<div class="sc-tab-body">' + (activeScenario ? scenarioBody(activeScenario, scen) : overviewBody(scen)) + '</div>';
+    h += '</div>';
+    learnHtml = h;
+    renderH();
+    bindLearnEvents();
+  }
+
+  function overviewBody(scen) {
+    // 总览: 学习进度说明 + 已学场景案例速览 (全部案例按时间倒序, 截 20)
+    var h = '<p class="text-dim" style="font-size:12px;margin:4px 0 8px">点任意场景查看该场景已学案例; 灰色 tab = 该场景还没有案例 (待学习); 带 ✦ = 有检测器覆盖。</p>';
+    if (!learnCases.length) {
+      return h + '<div class="empty" style="padding:16px;color:#64748b">案例库为空 — 导入问题包后点「➕ 把当前包标为案例」开始学习。<br>场景案例越多, 诊断结论置信度越高; 未学场景结论显示"待学习"。</div>';
+    }
+    h += '<p class="text-dim" style="font-size:11px;margin:0 0 4px">最近案例 (前 20 条):</p>';
+    return h + caseRows(learnCases.slice(0, 20));
+  }
+
+  function scenarioBody(sid, scen) {
+    var info = scen[sid] || {};
+    var cases = learnCases.filter(function (c) { return (c.scenarios || []).indexOf(sid) !== -1; });
+    var h = '<h4 style="margin:2px 0 6px"><span class="sc-tag">' + sid + '</span> ' + escHtml(info.name) + ' '
+      + (info.covered ? '<span class="badge" title="检测器已覆盖此场景">✦ 有检测器</span>' : '<span class="badge" style="background:#f1f5f9;color:#64748b" title="此场景暂无检测器, 靠案例标注积累">待开发检测器</span>')
+      + ' · 案例数: <b>' + (info.case_count || 0) + '</b></h4>';
+    // 结论置信度标注 (grilling 决策: ≥3 = 多案例支撑; 少 = 待更多案例)
+    if (cases.length >= 3) {
+      h += '<p style="font-size:12px;color:#16a34a;margin:4px 0">✅ 多案例支撑 (' + cases.length + ' 条) — 该场景结论置信度高</p>';
+    } else if (cases.length > 0) {
+      h += '<p style="font-size:12px;color:#b45309;margin:4px 0">⚠️ 案例尚少 (' + cases.length + ' 条) — 结论弱化, 待更多案例 (≥3 条为多案例支撑)</p>';
+    } else {
+      h += '<p style="font-size:12px;color:#64748b;margin:4px 0">⬜ 待学习: 该场景还没有案例。'
+        + (info.covered ? '检测器已覆盖, 但结论还没有真实问题包核对。' : '需要导入对应问题包 + 标注建立案例。')
+        + ' <button class="btn-s" onclick="window.__caseAnnotate(\'' + sid + '\')">➕ 用当前包学此场景</button></p>';
+    }
+    return h + (cases.length ? caseRows(cases) : '');
+  }
+
+  function caseRows(cases) {
+    var h = '<table class="sc-mini-table"><thead><tr><th>时间</th><th>现象</th><th>根因</th><th>严重度</th><th>PAN/设备</th><th>归属场景</th><th>素材</th><th></th></tr></thead><tbody>';
+    cases.forEach(function (c) {
+      h += '<tr>'
+        + '<td class="text-dim" style="white-space:nowrap">' + fmtDate(c.ts) + '</td>'
+        + '<td style="max-width:260px">' + escHtml(c.phenomenon || '') + '</td>'
+        + '<td style="max-width:200px">' + escHtml(c.root_cause || '—') + '</td>'
+        + '<td>' + (SEV_TXT[c.severity] || c.severity || '—') + '</td>'
+        + '<td class="mono" style="white-space:nowrap">' + fmtPan(c.pan) + (c.device_addr != null ? ' / ' + fmtAddr(c.device_addr) : '') + '</td>'
+        + '<td>' + (c.scenarios || []).map(function (s) { return '<span class="sc-tag">' + s + '</span>'; }).join(' ') + '</td>'
+        + '<td>' + (c.has_material
+          ? '<a class="ev-jump" href="/api/cases/download?path=' + encodeURIComponent(c.material_path || '') + '" title="下载素材副本">📦</a>'
+          : '<span class="text-dim">—</span>') + '</td>'
+        + '<td><button class="btn-s text-danger" data-del-case="' + escHtml(c.id) + '" title="删除案例">✕</button></td>'
+        + '</tr>';
+    });
+    return h + '</tbody></table>';
+  }
+
+  function bindLearnEvents() {
+    var el = document.getElementById('diag-learn');
+    if (!el) return;
+    var tabs = el.querySelectorAll('.sc-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function () {
+        var v = this.dataset.s;
+        activeScenario = v ? v : null;
+        renderLearn();
+      });
+    }
+    var dels = el.querySelectorAll('[data-del-case]');
+    for (var j = 0; j < dels.length; j++) {
+      dels[j].addEventListener('click', function () {
+        var id = this.dataset.delCase;
+        if (!confirm('删除案例 ' + id + '? (素材副本一并删除)')) return;
+        fetch('/api/cases/' + id, { method: 'DELETE' }).then(function (r) { return r.json(); }).then(function (d) {
+          if (d.ok) { learnData = null; loadLearn(); }  // 强刷
+          else alert(d.error || '删除失败');
+        });
+      });
+    }
+    var imp = document.getElementById('case-import-file');
+    if (imp) imp.addEventListener('change', function () {
+      if (!imp.files || !imp.files.length) return;
+      var fd = new FormData(); fd.append('file', imp.files[0]); fd.append('merge', '1');
+      fetch('/api/cases/import', { method: 'POST', body: fd }).then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) {
+            var t = setInterval(function () {
+              A.get('/api/import/progress?task_id=' + d.task_id).then(function (p) {
+                if (p.status === 'done') {
+                  clearInterval(t); alert('导入完成: 新增 ' + (p.result ? p.result.added.length : 0) + ' / 跳过 ' + (p.result ? p.result.skipped.length : 0));
+                  learnData = null; loadLearn();
+                } else if (p.status === 'error') { clearInterval(t); alert('导入失败: ' + p.error); }
+              });
+            }, 400);
+          } else alert(d.error || '导入失败');
+        });
+    });
+  }
+
+  // ── U12: 案例标注表单 (当前包 + 标注 → 入库) ──
+  // ⚠️ 存在性校验查后端 import/status (曾用前端 S.pkts 内存态 — CDP/API 直接
+  // 导入时页面 S.pkts=0 误拒; 后端状态才反映真实数据)
+  window.__caseAnnotate = function (presetScenario) {
+    A.get('/api/import/status').then(function (st) {
+      if (!st || !st.total) { alert('请先导入抓包 (当前无数据)'); return; }
+      var sel = document.getElementById('diag-pan');
+      var curPan = (sel && sel.options.length) ? sel.value : '';
+      openAnnotate(presetScenario, curPan);
+    }).catch(function () { alert('后端不可达, 无法标注'); });
+  };
+  function openAnnotate(presetScenario, curPan) {
+    // 场景多选列表 (检测器覆盖的排前, 自动命中预勾选由后端算 — 表单先全展示)
+    var scenList = learnData ? learnData.scenarios : {};
+    var ids = Object.keys(scenList);
+    if (!ids.length) { alert('场景表加载中, 稍后再试'); return; }
+    var opts = '';
+    // 已有案例的 + 有检测器的排前
+    ids.sort(function (a, b) {
+      var wa = (scenList[a].covered ? 0 : 1) + (scenList[a].case_count ? 0 : 2);
+      var wb = (scenList[b].covered ? 0 : 1) + (scenList[b].case_count ? 0 : 2);
+      return wa - wb || (a < b ? -1 : 1);
+    });
+    ids.forEach(function (sid) {
+      var info = scenList[sid];
+      opts += '<label class="sc-check"><input type="checkbox" name="ann-scen" value="' + sid + '"'
+        + (sid === presetScenario ? ' checked' : '') + '> <span class="sc-tag">' + sid + '</span> '
+        + escHtml(info.name) + (info.covered ? ' ✦' : '') + '</label>';
+    });
+    var rcOpts = '<option value="">(可选 — 选建议或手填)</option>';
+    (learnRootCauses || []).forEach(function (rc) { rcOpts += '<option>' + escHtml(rc) + '</option>'; });
+    rcOpts += '<option value="__custom__">✏️ 手动输入…</option>';
+
+    var h = '<div class="sc-modal-mask" id="ann-modal">'
+      + '<div class="sc-modal">'
+      + '<h3>➕ 案例标注 <span class="text-dim" style="font-size:11px;font-weight:400">(当前导入包 → 案例库)</span></h3>'
+      + '<div class="sc-form">'
+      + '<label class="ai-lbl">现象 (必填) *</label>'
+      + '<input class="ai-in" id="ann-phenomenon" placeholder="例: 中继 838D 入网后 2s 被踢, 下行不通">'
+      + '<label class="ai-lbl">根因 (可选, 带建议列表)</label>'
+      + '<select class="ai-in" id="ann-rc-sel">' + rcOpts + '</select>'
+      + '<input class="ai-in" id="ann-rc-custom" placeholder="手填根因" style="display:none;margin-top:4px">'
+      + '<label class="ai-lbl">严重度</label>'
+      + '<select class="ai-in" id="ann-severity"><option value="high">严重</option><option value="medium" selected>中等</option><option value="low">轻微</option></select>'
+      + '<label class="ai-lbl">环境说明 (可选)</label>'
+      + '<input class="ai-in" id="ann-env" placeholder="例: 现场中继场景, DA13 网关">'
+      + '<label class="ai-lbl">归属场景 (自动命中会一并入库, 这里勾选人工确认的归属)</label>'
+      + '<div class="sc-check-grid">' + opts + '</div>'
+      + '<label class="ai-lbl">PAN / 问题设备 (自动预填, 可改)</label>'
+      + '<div style="display:flex;gap:6px">'
+      + '<input class="ai-in mono" id="ann-pan" style="width:110px" value="' + (curPan || '') + '" placeholder="580C">'
+      + '<input class="ai-in mono" id="ann-dev" style="width:130px" placeholder="838D">'
+      + '</div>'
+      + '<label class="sc-check" style="margin-top:8px"><input type="checkbox" id="ann-copy" checked> 复制素材副本 (导出传播时自带素材; 大包可取消)</label>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<button class="btn btn-p" id="ann-go">入库 (自动跑检测 + 场景归属)</button>'
+      + '<button class="btn btn-o" id="ann-cancel">取消</button>'
+      + '<span id="ann-msg" class="text-dim" style="font-size:11px;align-self:center"></span>'
+      + '</div>'
+      + '</div></div>';
+    var div = document.createElement('div');
+    div.innerHTML = h;
+    document.body.appendChild(div.firstChild);
+    document.getElementById('ann-rc-sel').addEventListener('change', function () {
+      document.getElementById('ann-rc-custom').style.display = this.value === '__custom__' ? 'block' : 'none';
+    });
+    document.getElementById('ann-cancel').addEventListener('click', function () {
+      var m = document.getElementById('ann-modal'); if (m) m.remove();
+    });
+    document.getElementById('ann-go').addEventListener('click', function () {
+      var phenomenon = document.getElementById('ann-phenomenon').value.trim();
+      if (!phenomenon) { document.getElementById('ann-msg').textContent = '现象必填'; return; }
+      var rcSel = document.getElementById('ann-rc-sel').value;
+      var rootCause = rcSel === '__custom__' ? document.getElementById('ann-rc-custom').value.trim()
+        : (rcSel && rcSel !== '' ? rcSel : '');
+      var manuals = [];
+      var boxes = document.querySelectorAll('#ann-modal input[name="ann-scen"]:checked');
+      for (var i = 0; i < boxes.length; i++) manuals.push(boxes[i].value);
+      var body = {
+        phenomenon: phenomenon,
+        root_cause: rootCause,
+        severity: document.getElementById('ann-severity').value,
+        environment: document.getElementById('ann-env').value.trim(),
+        manual_scenarios: manuals,
+        pan: (document.getElementById('ann-pan').value || '').trim(),
+        device_addr: (document.getElementById('ann-dev').value || '').trim(),
+        copy_material: document.getElementById('ann-copy').checked,
+        source_path: S.lastImportPath || '',
+      };
+      document.getElementById('ann-msg').textContent = '检测 + 入库中…';
+      document.getElementById('ann-go').disabled = true;
+      A.post('/api/cases/annotate', body).then(function (d) {
+        var m = document.getElementById('ann-modal'); if (m) m.remove();
+        if (d.ok) {
+          var c = d.case;
+          alert('案例入库 ✓ ' + c.id + '\n归属场景: ' + (c.scenarios || []).join(', ')
+            + '\n差距报告: ' + (d.gap_report ? d.gap_report.gap_count + ' 项未对齐' : '—'));
+          learnData = null; loadLearn();  // 强刷学习视图
+        } else {
+          alert('入库失败: ' + (d.error || '未知错误'));
+        }
+      }).catch(function (e) { alert('网络错误: ' + e.message); });
+    });
+  };
+
+  // ── U12: 导出 (后台任务 + 下载) / 导入入口 ──
+  window.__caseExport = function () {
+    A.post('/api/cases/export', {}).then(function (d) {
+      if (!d.ok) { alert('导出失败: ' + (d.error || '已有任务运行中')); return; }
+      var t = setInterval(function () {
+        A.get('/api/import/progress?task_id=' + d.task_id).then(function (p) {
+          if (p.status === 'done') {
+            clearInterval(t);
+            var r = p.result || {};
+            if (r.out_path) {
+              // 直接触发下载 (cases/ 目录内白名单)
+              location.href = '/api/cases/download?path=' + encodeURIComponent(r.out_path);
+            }
+          } else if (p.status === 'error') { clearInterval(t); alert('导出失败: ' + p.error); }
+        });
+      }, 400);
+    });
+  };
+  window.__caseImportClick = function () {
+    var imp = document.getElementById('case-import-file');
+    if (imp) imp.click();
+  };
+
 });
