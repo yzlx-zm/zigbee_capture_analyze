@@ -226,6 +226,72 @@
   如 中继入网抓包(1).cubx 或 问题整合五-重点 大包)
 ```
 
+### ⑧ U19 Ubiqua 直连导入窗口 (先实验后实现, 2026-09-18)
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 U19 实现窗口。任务: Ubiqua 直连导入 (导入页加"从 Ubiqua 导入当前抓包")。
+
+## 开工前必读 (按序)
+1. .scratch/wayfinder/README.md + map.md
+2. **.scratch/wayfinder/issues/U19-Ubiqua直连导入.md** (核心: 关键事实/阶段一实验清单/
+   阶段二两条路线/验证标准)
+3. backend/ubiqua_api.py (完整 Ubiqua 客户端 — 特别看 save_capture / get_status /
+   get_packet_count / list_keys) + backend/api/ubiqua.py (已有端点)
+
+## 工作流 (必须先实验!)
+1. **阶段一 可行性实验 (先做, 出结论再写实现代码)**:
+   让用户启动 Ubiqua 并抓到包 → 实测 ping/get_status/get_packet_count/save_capture
+   (导出临时 cubx → cubx_reader 解析对账: 帧数/MAC帧/LQI-RSSI/Keys表) + 耗时量化
+   + **顺带验证 list_keys() 是否带 key 类型** (供 U20-H)
+   实验结论写进 ticket (含实测数字)
+2. **阶段二 实现** (按实验结论选路线 A: save_capture 临时 cubx → 现有解析链 为预期方案)
+3. 前端 import.js: 📡 从 Ubiqua 导入按钮 + 连接状态 (已连接·N包 / 未连接);
+   未连接/未抓包 → 友好提示且**不影响现有拖拽/路径导入**; 大包接现有拆分面板
+4. 连接配置入口 (主机/端口, 默认 localhost:19501 — 用户环境可能不同机)
+5. 临时 cubx 清理 (与现有 _CUBX_STAGE_DIR 暂存机制一致, 不新建第二套临时目录)
+6. 版本号递增; CDP 验证 + 回归 (现有导入流程/S1 修复项)
+7. 收尾 (铁律 7): ticket Resolution + map.md 条目 + commit + push
+
+## 铁律
+- 一次会话只解 U19; **实验失败也要如实成文** (不做无效实现, 结论交用户决定)
+- 技术断言有依据 (实测); 遇阻塞/Ubiqua 不可用 → 停下汇报
+- 用户环境 Ubiqua 有时不在运行 → 本功能是增强路径, 绝不能破坏现有导入主路径
+- 后端: python -m backend --port 8720
+```
+
+### ⑨ U20 导入页增强三项窗口 (HIJ, 2026-09-18)
+
+```text
+项目: D:\ai_agent\zigbee_capture_analyze
+
+你是 U20 实现窗口。任务: 导入页三项增强 (H 密钥同步扩展 / I 导入选 PAN / J 一次拆多段)。
+
+## 开工前必读 (按序)
+1. .scratch/wayfinder/README.md + map.md
+2. **.scratch/wayfinder/issues/U20-导入页增强三项.md** (三项各自的现状缺口/决策/验证标准)
+3. U19 ticket 的实验结论 (H 依赖 list_keys 类型验证) + U18 实现 (J 依赖分段逻辑)
+4. 记忆: 解密瓶颈是设备 Link Key (中继包 99.98% key_type=0, 58.5% 失败=缺 link key 非 bug)
+
+## 工作流 (三项独立实现 + 独立提交, 便于单项回退)
+1. **H 密钥同步扩展**: 同步范围扩到全部 key 类型 (Network+Link) + 手动"刷新密钥"入口
+   + 同步结果可见; 未连接 Ubiqua 静默跳过不阻断
+2. **I 导入选 PAN**: 预扫加 PAN 分布 (轻量扫 Raw 头取 MAC PAN, 不做完整解析保持秒级)
+   → 面板列出各 PAN 帧数 → 用户选目标 PAN → 导入/拆分只保留该 PAN (未选=全量回归不变)
+3. **J 一次拆多段**: 面板加"按段长批量拆" (段长+范围→N 子包); 段数上限保护 + 越界提示;
+   优先单次扫描拆多段 (若需循环调用则如实记录耗时)
+4. 每项完成即 CDP 验证 + 回归 (现有导入/拆分 + S1 修复项 + U18 时间窗)
+5. 版本号递增 (index.html/app.js)
+6. 收尾 (铁律 7): ticket Resolution (三项分别记录实测结果) + map.md 条目 + commit + push
+
+## 铁律
+- 一次会话一个 ticket=U20 (含三项); 三项按 H→I→J 顺序, 每项独立提交
+- 诚实标注 (解密率提升需前后对比实测数字; 批量拆的性能如实记录)
+- 技术断言有依据; 遇阻塞停下汇报
+- 后端: python -m backend --port 8720; 素材: 多 PAN 包 (群控/中继) + 含缺 key 的包
+```
+
 ## 三、解析器工程 (抓包数据处理与 Python 解析层) 提示词
 
 ### ① 解析器工程通用模板
@@ -328,6 +394,8 @@ test_p1_contract.py check 1 挂: cubx 独有 14 字段 = 本次 11 + 既有 3 (r
 | U16 | 时间线看包体验优化 | UI 工程 (grilling 对齐产出, 2026-08-25) |
 | U17 | AI 侧边栏助手 | UI 工程 (grilling 对齐产出, 2026-08-25) |
 | U18 | 导入页时间窗输入体验 | UI 反馈优化 (外部反馈对齐, 2026-09-18) |
+| U19 | Ubiqua 直连导入 (含可行性实验) | UI 反馈优化 (头脑风暴 v3, 2026-09-18) |
+| U20 | 导入页增强三项 (key同步扩展/PAN过滤/批量拆段) | UI 反馈优化 (头脑风暴 v3, 2026-09-18) |
 | T1 | 设备分析 CLI 工具 | 独立工具 (grilling 对齐产出, 2026-08-28) |
 | T2 | 主工具打包分发 | 独立工具 (grilling 对齐产出, 2026-08-28) |
 | T3 | 使用手册 | 分发系列 (对齐产出, 2026-09-07) |
