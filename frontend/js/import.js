@@ -13,6 +13,7 @@ reg('import',function(){
     +'<div id="cubx-prescan" class="card hidden">'
       +'<h4>⏱ 大包时间窗拆分导入 (U11)</h4>'
       +'<p id="cs-info" class="t-11"></p>'
+      +'<div id="cs-pan-row" class="hidden mt-1"></div>'
       +'<div id="cs-hist" class="cs-hist"></div>'
       +'<div class="cs-sliders">'
         +'<input type="range" id="cs-s1" class="cs-range">'
@@ -54,9 +55,10 @@ reg('import',function(){
   setTimeout(function(){loadKeyPanel();},200);
 
   // ── 本地路径导入 (后台任务 + 轮询真实进度; 失败内联显示, 不弹 alert) ──
-  function importPath(url, paramName, p, fname){
+  function importPath(url, paramName, p, fname, extra){
     setProg('提交中...', 1);
     var fd=new FormData();fd.append(paramName,p);
+    if(extra){for(var k in extra){if(extra[k])fd.append(k,extra[k]);}}
     fetch(url,{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
       if(d&&d.ok&&d.task_id){pollImport(d.task_id,fname);}
       else{setProg('');setErr((d&&d.error)||'导入失败');}
@@ -110,12 +112,13 @@ reg('import',function(){
   function showPrescanPanel(d, path, fname){
     // U11: 面板状态持久化 (S.cubxPrescan) — 切页回来 reg() 重建时恢复
     var prev = S.cubxPrescan;
-    S.cubxPrescan={prescan:d, path:path, fname:fname};
+    S.cubxPrescan={prescan:d, path:path, fname:fname, pan:(prev&&prev.pan)||''};
     var panel=document.getElementById('cubx-prescan');
     // 概览
     document.getElementById('cs-info').innerHTML='文件 '+d.file_mb+'MB · 物理帧 '+d.total_frames.toLocaleString()
       +' · 时长 '+Math.round(d.duration_s/60)+' 分钟 · 信道 '+Object.keys(d.channels).join('/')
       +(d.lqi?(' · LQI '+d.lqi.avg):'')+(d.rssi?(' · RSSI '+d.rssi.avg+'dBm'):'');
+    renderPanRow(d, prev);
     // 直方图 (60 桶 div)
     var maxC=1;d.histogram.forEach(function(h){if(h.count>maxC)maxC=h.count;});
     document.getElementById('cs-hist').innerHTML='<div class="cs-hist-wrap">'+d.histogram.map(function(h){
@@ -142,6 +145,40 @@ reg('import',function(){
     panel.dataset.path=path; panel.dataset.fname=fname;
     panel.dataset.tsFirst=d.ts_first; panel.dataset.tsLast=d.ts_last;
   }
+  // U20-I: PAN 分布 + 目标 PAN 选择 (多网络混杂包只保留一个网络)
+  // 规则: 帧数最多的标"建议"(不自动应用); 单 PAN 素材不显示选择器 (无干扰);
+  // 未选 = 全量 (既有行为不变)
+  function panHex(p){return '0x'+p.toString(16).toUpperCase().padStart(4,'0');}
+  function curPan(){var s=document.getElementById('cs-pan');return s?s.value:'';}
+  function renderPanRow(d, prev){
+    var row=document.getElementById('cs-pan-row');
+    if(!row)return;
+    var pans=(d.pans||[]).filter(function(x){return x.frames>0;});
+    if(pans.length<=1){row.innerHTML='';row.classList.add('hidden');return;}
+    var total=pans.reduce(function(a,x){return a+x.frames;},0);
+    // 列表上限 20 项 (杂乱包 PAN 可达数百个, 帧数降序 → 尾部多为单帧噪声网络);
+    // 超出部分只报数量, 不列选项 (避免下拉不可用)
+    var TOPN=20, head=pans.slice(0,TOPN);
+    var rest=pans.length-head.length;
+    var restFrames=total-head.reduce(function(a,x){return a+x.frames;},0);
+    var h='<span class="t-11">🌐 PAN 过滤:</span> <select id="cs-pan" class="t-11">'
+      +'<option value="">全部 PAN (不过滤)</option>';
+    head.forEach(function(x,i){
+      h+='<option value="'+panHex(x.pan)+'">'+panHex(x.pan)+' — '+x.frames.toLocaleString()+' 帧'
+        +(i===0&&pans.length>1?' (建议)':'')+'</option>';
+    });
+    h+='</select> <span class="t-10 text-dim">共 '+pans.length+' 个 PAN / '+total.toLocaleString()
+      +' 帧计数'+(rest?(' · 未列出的 '+rest+' 个 PAN 合计 '+restFrames.toLocaleString()+' 帧'):'')
+      +' (多网络混杂包可只导入目标网络)</span>';
+    row.innerHTML=h;
+    var sel=document.getElementById('cs-pan');
+    var pv=(prev&&prev.pan)||'';
+    if(pv&&[].some.call(sel.options,function(o){return o.value===pv;}))sel.value=pv;
+    sel.addEventListener('change',function(){
+      if(S.cubxPrescan)S.cubxPrescan.pan=sel.value;
+    });
+    row.classList.remove('hidden');
+  }
   var csPanel=document.getElementById('cubx-prescan');
   if(csPanel){
     document.getElementById('cs-go').addEventListener('click',function(){
@@ -154,6 +191,7 @@ reg('import',function(){
       setProg('拆分中...',1);
       var fd=new FormData();fd.append('path',path);
       fd.append('ts_start',tsStart);fd.append('ts_end',tsEnd);
+      if(curPan())fd.append('pan',curPan());   // U20-I: 子包只保留选中 PAN
       fetch('/api/cubx/split',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){
         if(!(d&&d.ok&&d.task_id)){setProg('');setErr((d&&d.error)||'拆分失败');return;}
         var tries=0;
@@ -174,7 +212,8 @@ reg('import',function(){
               sb(S.pkts+'包 | '+S.nodes+'节点');
               S.cubxSubs=S.cubxSubs||[];
               S.cubxSubs.push({winStart:tsStart, winEnd:tsEnd,
-                               frames:p.result.out_frames, path:p.result.out_path});
+                               frames:p.result.out_frames, path:p.result.out_path,
+                               pan:curPan()});   // U20-I: 记录子包的 PAN 过滤条件
               renderSubs();
             }else{setProg('');setErr((p&&p.error)||'拆分失败');}
           }).catch(function(){if(++tries>1000){clearInterval(timer);setProg('');setErr('拆分超时');}});
@@ -182,10 +221,13 @@ reg('import',function(){
       }).catch(function(e){setErr('网络错误: '+e.message);});
     });
     document.getElementById('cs-cancel').addEventListener('click',function(){
+      var pan=curPan();
       csPanel.classList.add('hidden');
       S.cubxPrescan=null;
       S.lastImportPath=csPanel.dataset.path;  // U12: 案例素材副本源路径
-      importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname);
+      // U20-I: 整包导入同样按选中 PAN 过滤 (未选 = 全量)
+      importPath('/api/import/local-cubx','path',csPanel.dataset.path,csPanel.dataset.fname,
+                 {pan:pan});
     });
     // 关闭面板 (换别的包): 清面板状态 + 子包清单, 不导入 — 用户反馈 08-13
     document.getElementById('cs-close').addEventListener('click',function(){
@@ -240,9 +282,9 @@ reg('import',function(){
     subs.forEach(function(s){
       h+='<div class="cs-sub-row">'
         +'<span class="t-11 mono">'+fmtTsWin(s.winStart)+' → '+fmtTsWin(s.winEnd)
-        +' · '+s.frames.toLocaleString()+' 帧</span> '
+        +' · '+s.frames.toLocaleString()+' 帧'+(s.pan?(' · '+s.pan):'')+'</span> '
         +'<a class="btn btn-o btn-sm" href="/api/cubx/download?path='+encodeURIComponent(s.path)+'" download title="下载子包 (Ubiqua 复验)">⬇ 下载</a> '
-        +'<button class="btn btn-p btn-sm cs-sub-import" data-path="'+s.path+'">导入此子包</button>'
+        +'<button class="btn btn-p btn-sm cs-sub-import" data-path="'+s.path+'" data-pan="'+(s.pan||'')+'">导入此子包</button>'
         +'</div>';
     });
     el.innerHTML=h;
@@ -250,7 +292,9 @@ reg('import',function(){
       b.addEventListener('click',function(){
         var p=b.dataset.path;
         S.lastImportPath=p;  // U12: 案例素材副本源路径
-        importPath('/api/import/local-cubx','path',p,p.split(/[\\\\/]/).pop());
+        // U20-I: 子包保留其拆分时的 PAN 过滤 (子包已是该 PAN 的帧, 重复过滤幂等)
+        importPath('/api/import/local-cubx','path',p,p.split(/[\\\\/]/).pop(),
+                   {pan:b.dataset.pan||''});
       });
     });
   }

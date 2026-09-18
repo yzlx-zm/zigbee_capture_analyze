@@ -17,6 +17,11 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
   var btArr=Object.keys(bt).map(function(k){return k+':'+bt[k];});
   h+='</div><p class=\"t-11\">'+(btArr.join(', ')||'(无类型分布)').substr(0,300)+'</p>';
   if(d.decrypt_stats){h+='<p class=\"t-11 text-success\">解密: '+d.decrypt_stats.decrypted+'/'+d.decrypt_stats.total_data_frames+' 帧 ('+(d.decrypt_stats.decrypt_rate*100).toFixed(0)+'%) | Clusters: '+JSON.stringify(d.decrypt_stats.by_cluster)+'</p>';}
+  var uqs=fmtUbiquaSync(d.ubiqua_sync);   // U20-H: 密钥同步可见 (未运行/无新增不显示)
+  if(uqs)h+='<p class=\"t-11 text-muted\">'+esc(uqs)+'</p>';
+  if(d.pan_filter!=null){                 // U20-I: 当前数据为 PAN 过滤结果 (非全量)
+    h+='<p class=\"t-11 text-muted\">🌐 已按 PAN 0x'+(d.pan_filter).toString(16).toUpperCase().padStart(4,'0')+' 过滤 (仅该网络帧)</p>';
+  }
   if(d.verify){
     var v=d.verify;
     var vState=v.passed===true?'alert-ok':v.passed===false?'alert-bad':'';

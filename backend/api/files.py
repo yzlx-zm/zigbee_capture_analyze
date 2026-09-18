@@ -34,6 +34,7 @@ _parser_verify_report: dict | None = None  # 解析正确性校验报告 (P6) �
 _pcap_paths: list[str] = []         # 最近一次导入的 pcap 路径
 _last_ubiqua_sync: dict | None = None  # 最近一次 Ubiqua key 同步结果
 _last_import_summary: dict | None = None  # 最近一次导入摘要 (含文件名, 前端切页恢复用)
+_last_pan_filter: int | None = None    # U20-I: 最近一次导入的 PAN 过滤 (None=全量)
 
 # ── 后台导入任务 (真实进度) ──
 _import_tasks: dict[str, dict] = {}   # task_id -> {status, stage, percent, result/error}
@@ -132,17 +133,32 @@ async def cubx_upload_stage(file: UploadFile = File(...)):
         return JSONResponse({"error": f"暂存失败: {e}"}, 500)
 
 
+def _parse_pan(pan: str) -> int | None:
+    """'0x580C' / '580c' → int; 空串/非法 → None (不过滤)"""
+    s = (pan or "").strip().lower().replace("0x", "")
+    if not s:
+        return None
+    try:
+        v = int(s, 16)
+    except ValueError:
+        return None
+    return v if 0 <= v <= 0xFFFF else None
+
+
 @router.post("/cubx/split")
 async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
-                     ts_end: float = Form(...)):
+                     ts_end: float = Form(...), pan: str = Form(default="")):
     """U11: 时间窗拆分 — **只拆不导** (2026-08-13 用户定义核对:
     连续拆多子包 + 手动选择导入; 拆分走后台任务复用 _start_import 互斥,
     返回 {in_frames, out_frames, out_path}; 导入由用户对子包逐个触发
-    /api/import/local-cubx)."""
+    /api/import/local-cubx).
+
+    U20-I: pan 非空 → 子包只保留该 PAN 的帧 (轻量 MAC 头判定, 与导入侧同口径)."""
     if not os.path.exists(path):
         return JSONResponse({"error": f"路径不存在: {path}"}, 400)
     if ts_end <= ts_start:
         return JSONResponse({"error": "时间窗无效: ts_end 必须大于 ts_start"}, 400)
+    pan_int = _parse_pan(pan)
 
     def _run(task_id: str) -> dict:
         from .. import cubx_splitter as _cs
@@ -153,12 +169,12 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
             _task_update(task_id, stage="时间窗拆分",
                          percent=min(int(done / total * 90), 90))
         try:
-            r = _cs.split_cubx(path, ts_start, ts_end, progress_cb=_cb)
+            r = _cs.split_cubx(path, ts_start, ts_end, progress_cb=_cb, pan=pan_int)
         except Exception as e:
             raise RuntimeError(f"拆分失败: {e}") from e
         _task_update(task_id, stage="时间窗拆分", percent=100)
         return {"in_frames": r["in_frames"], "out_frames": r["out_frames"],
-                "out_path": r["out_path"]}
+                "out_path": r["out_path"], "pan": pan_int}
 
     return _start_import(_run)
 
@@ -313,9 +329,10 @@ def _parse_clock_time(time_str: str, base_ts: float) -> float | None:
 
 @router.delete("/import/clear")
 async def import_clear():
-    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary, _full_packets, _parser_verify_report
+    global _packets, _nodes, _file_type, _verify_report, _pcap_paths, _last_ubiqua_sync, _last_import_summary, _full_packets, _parser_verify_report, _last_pan_filter
     _packets = []; _nodes = {}; _file_type = ""; _verify_report = None; _pcap_paths = []
     _last_ubiqua_sync = None; _last_import_summary = None; _full_packets = []
+    _last_pan_filter = None
     global _parser_verify_report
     _parser_verify_report = None
     return {"ok": True}
@@ -343,12 +360,13 @@ async def import_pcap(files: list[UploadFile] = File(...)):
 
 def _run_pcap_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> dict:
     """后台: pcap 解析 + 校验 (进度: 同步→解析→MAC 帧→校验 6 项)"""
-    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report
+    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report, _last_pan_filter
     from .. import tshark as _tshark
     try:
         # 导入前透明同步 Ubiqua Network Key (不可达则静默跳过)
         _task_update(task_id, stage="同步 Ubiqua Key", percent=10)
         _last_ubiqua_sync = _sync_ubiqua_keys()
+        _last_pan_filter = None   # U20-I: pcap 路径不支持 PAN 过滤 (面板路径才有)
 
         # tshark 解析 (按文件推进)
         _packets = []
@@ -420,11 +438,12 @@ async def import_local_pcap(paths: str = Form(...)):
 
 def _run_pcap_local(task_id: str, path_list: list[str]) -> dict:
     """后台: 本地 pcap 路径解析 + 校验 (与上传流程一致)"""
-    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report
+    global _packets, _nodes, _file_type, _full_packets, _verify_report, _last_ubiqua_sync, _pcap_paths, _parser_verify_report, _last_pan_filter
     from .. import tshark as _tshark
     try:
         _task_update(task_id, stage="同步 Ubiqua Key", percent=10)
         _last_ubiqua_sync = _sync_ubiqua_keys()
+        _last_pan_filter = None   # U20-I: pcap 路径不支持 PAN 过滤 (面板路径才有)
 
         _packets = []
         total = len(path_list)
@@ -505,9 +524,10 @@ async def import_cubx(files: list[UploadFile] = File(...)):
 
 def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> dict:
     """后台: cubx 解析 (scapy 自解析, 无 tshark 校验; 进度按文件推进)"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report, _last_pan_filter
     from .. import cubx_reader as _cubx
     try:
+        _last_pan_filter = None   # U20-I: 上传导入路径不做 PAN 过滤 (面板路径才有)
         all_pkts = []
         all_full = []
         total = len(tmp_paths)
@@ -554,15 +574,20 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
 
 
 @router.post("/import/local-cubx")
-async def import_local_cubx(path: str = Form(...)):
-    """本地 .cubx 路径导入 (后台线程)"""
+async def import_local_cubx(path: str = Form(...), pan: str = Form(default="")):
+    """本地 .cubx 路径导入 (后台线程)
+
+    U20-I: pan 非空 → 只保留该 PAN 的帧 (解析后按 nwk/mac PAN 字段过滤, 权威口径);
+    未选 (默认) = 全量, 与既有行为一致。
+    """
     if not os.path.exists(path):
         return JSONResponse({"error": f"路径不存在: {path}"}, 400)
-    return _start_import(lambda tid: _run_cubx_local(tid, path))
+    pan_int = _parse_pan(pan)
+    return _start_import(lambda tid: _run_cubx_local(tid, path, pan_int))
 
-def _run_cubx_local(task_id: str, path: str) -> dict:
-    """后台: 本地 cubx 路径解析"""
-    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report
+def _run_cubx_local(task_id: str, path: str, pan: int | None = None) -> dict:
+    """后台: 本地 cubx 路径解析 (pan 非空时按 PAN 过滤)"""
+    global _packets, _nodes, _file_type, _pcap_paths, _last_ubiqua_sync, _full_packets, _parser_verify_report, _last_pan_filter
     from .. import cubx_reader as _cubx
     _task_update(task_id, stage="cubx 解析", percent=30)
     try:
@@ -572,7 +597,17 @@ def _run_cubx_local(task_id: str, path: str) -> dict:
         pkts, added, total = _cubx.parse_cubx(path, include_mac_frames=True, progress_cb=_cb)
     except Exception as e:
         raise RuntimeError(str(e)) from e
-    _last_ubiqua_sync = {"synced": added, "total_keys": total}
+    if pan is not None:
+        # U20-I: PAN 过滤 (解析后字段, 与预扫轻量扫描同口径 — 见 cubx_splitter.mac_pan_ids
+        # 对账记录); 过滤后为空 → 明确报错, 不静默给空数据
+        before = len(pkts)
+        pkts = [p for p in pkts if p.get("pan_src") == pan or p.get("pan_dst") == pan]
+        if not pkts:
+            raise RuntimeError(f"PAN 0x{pan:04X} 无帧 (该包共 {before} 帧, 预扫 PAN 列表可能已过期)")
+        _task_update(task_id, stage=f"PAN 0x{pan:04X} 过滤 {before}→{len(pkts)} 帧", percent=95)
+    _last_pan_filter = pan
+    _last_ubiqua_sync = {"connected": None, "source": "cubx_embedded",
+                         "synced": added, "total_keys": total}
     _full_packets = pkts
     # U16-7 全量化 (用户裁定 08-25): _packets = 全量帧 (含 poll/Beacon 等 MAC 帧)
     _packets = pkts
@@ -708,6 +743,7 @@ def _import_result(filename: str | None = None) -> dict:
         "verify": _verify_report,  # 校验报告
         "parser_verify": _parser_verify_report,  # 解析正确性校验 (P6)
         "ubiqua_sync": _last_ubiqua_sync,  # Ubiqua key 同步结果 (None=不可达)
+        "pan_filter": _last_pan_filter,  # U20-I: PAN 过滤 (None=全量)
     }
     # 持久化摘要 (后端内存, 不受前端页面切换影响)
     # S1 修复 (2026-08-26): 补 parser_verify — 此前摘要缺此项, 切页恢复时
@@ -718,6 +754,7 @@ def _import_result(filename: str | None = None) -> dict:
         "by_type": result["by_type"], "decrypt_stats": result["decrypt_stats"],
         "verify": result["verify"], "ubiqua_sync": result["ubiqua_sync"],
         "parser_verify": result["parser_verify"],  # S1: P6 卡随摘要持久化
+        "pan_filter": result["pan_filter"],       # U20-I: PAN 过滤状态持久化
         # U11: 拆分产物下载信息持久化 (切页回来结果区恢复下载按钮)
         "split_out_path": result.get("split_out_path"),
         "split_out_frames": result.get("split_out_frames"),

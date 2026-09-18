@@ -20,11 +20,150 @@ _HIST_BINS = 60
 _PROGRESS_ROWS = 50000
 
 
+def mac_pan_ids(raw: bytes | None) -> tuple[int | None, int | None]:
+    """Raw 帧头 → (dst_pan, src_pan); 只读 MAC FCF + 寻址字段, 不跑协议栈 (U20-I).
+
+    语义与权威解析器 (cubx_reader._raw_to_dict) 逐帧对齐, 依据 IEEE 802.15.4
+    FCF 定义 + scapy dot15d4 源码级规则:
+    - 帧类型 2 (ACK) / 4-7 (Reserved) → 无寻址字段
+    - 寻址模式 1 (Reserved) → scapy 无法寻址, 不猜测
+    - 信标 (类型 0): 仅 SrcPAN + SrcAddr, 且需容纳 2 字节 Superframe Spec
+      (素材实证: 15 字节信标 scapy 解析失败 → 无 PAN)
+    - 尾部 2 字节 FCS 不计入寻址 (Dot15d4FCS)
+    - 寻址块长度不足 → 不越界臆测 (None)
+    - pan_src 兜底 = pan_dst (对齐 cubx_reader.py `src_panid or dst_panid`)
+    对账 (U20 验证, 与权威解析器逐帧比对): 群控 1/108474、中继 1/8626、
+    标准入网 1/887 不一致 — 残余均为 scapy 同样拒绝寻址的畸形帧。
+    """
+    if not raw or len(raw) < 5:
+        return None, None
+    fcf = raw[0] | (raw[1] << 8)
+    ftype = fcf & 0x07
+    if ftype >= 4 or ftype == 2:
+        return None, None
+    pan_comp = (fcf >> 6) & 1
+    dst_mode = (fcf >> 10) & 0x03
+    src_mode = (fcf >> 14) & 0x03
+    # 保留寻址模式 (1) → scapy 无法寻址; 信标无 dst 地址, dst 位仅当噪声
+    # (素材实证 join2 id=135: 信标 dst_mode=1 但 scapy 正常解出 SrcPAN)
+    if src_mode == 1 or (dst_mode == 1 and ftype != 0):
+        return None, None
+    body = len(raw) - 2          # 扣 FCS
+    off = 3                      # FCF(2) + seq(1)
+    dst_pan = src_pan = None
+    if ftype == 0:               # Beacon
+        if src_mode == 0:
+            return None, None
+        if body < off + 2 + (8 if src_mode == 3 else 2) + 2:   # +Superframe Spec
+            return None, None
+        return None, raw[off] | (raw[off + 1] << 8)
+    if dst_mode:
+        if body < off + 2 + (8 if dst_mode == 3 else 2):
+            return None, None
+        dst_pan = raw[off] | (raw[off + 1] << 8)
+        off += 2 + (8 if dst_mode == 3 else 2)
+    if src_mode:
+        if pan_comp and dst_mode:
+            src_pan = dst_pan
+        elif body >= off + 2:
+            src_pan = raw[off] | (raw[off + 1] << 8)
+        else:
+            return None, None
+    if src_pan is None:
+        src_pan = dst_pan
+    return dst_pan, src_pan
+
+
+def zigbee_relevant(raw: bytes | None) -> bool:
+    """轻量"该帧会被解析器保留"判定 (U20-I: PAN 计数只算真正进数据的帧).
+
+    依据解析器保留规则 (parse_cubx: 有 Zigbee NWK 或 MAC 命令/信标/ACK 帧):
+    - 帧类型 0/3 (Beacon/MAC 命令) → 保留
+    - 帧类型 2 (ACK) → 保留 (无 PAN, 不计入分布)
+    - 帧类型 1 (Data) → 寻址块后须有合法 NWK 头 (FCF 帧类型 ≤1 且协议版本 ≤3)
+    素材实测 (群控 108474 帧): 有 NWK 的帧被误判 False 的数量 = 0;
+    排除的主要是异协议/畸形帧 (如中继包 PAN 0x47E4 的 45 帧扩展地址垃圾帧,
+    解析器完全不保留) — 这类 PAN 此前会出现在列表里但导入结果为空帧, 属误导。
+    """
+    if not raw or len(raw) < 5:
+        return False
+    fcf = raw[0] | (raw[1] << 8)
+    ftype = fcf & 0x07
+    if ftype in (0, 2, 3):
+        return True
+    if ftype >= 4:
+        return False
+    off = _nwk_offset(fcf)
+    if off is None or len(raw) - 2 < off + 2:
+        return False
+    nwk_fcf = raw[off] | (raw[off + 1] << 8)
+    return (nwk_fcf & 0x03) <= 1 and ((nwk_fcf >> 2) & 0x0F) <= 3
+
+
+def _nwk_offset(fcf: int) -> int | None:
+    """MAC 寻址块结束偏移 (即 NWK 头起点); 无法确定 → None"""
+    ftype = fcf & 0x07
+    if ftype >= 4 or ftype == 2:
+        return None
+    dst_mode = (fcf >> 10) & 0x03
+    src_mode = (fcf >> 14) & 0x03
+    if src_mode == 1 or (dst_mode == 1 and ftype != 0):
+        return None
+    off = 3
+    if ftype == 0:      # Beacon: SrcPAN + SrcAddr + Superframe Spec
+        if src_mode == 0:
+            return None
+        return off + 2 + (8 if src_mode == 3 else 2) + 2
+    if dst_mode:
+        off += 2 + (8 if dst_mode == 3 else 2)
+    if src_mode:
+        if (fcf >> 6) & 1 and dst_mode:
+            pass                      # src PAN 省略 (压缩 = dst PAN)
+        else:
+            off += 2
+        off += 8 if src_mode == 3 else 2
+    return off
+
+
+def scan_pans(db: sqlite3.Connection) -> list[dict]:
+    """PAN 分布 (轻量扫描: 只取 Raw 前 16 字节, 不解析协议) — U20-I.
+
+    返回按帧数降序 [{pan, frames}]; 帧同时含 dst/src PAN 时两者各计一次
+    (与"帧属于哪个 PAN"的过滤语义一致: dst==pan or src==pan)。
+    只统计解析器会保留的帧 (zigbee_relevant) — 异协议/畸形帧不虚增计数。
+    """
+    counts: dict[int, int] = {}
+    for (raw,) in db.execute("SELECT substr(Raw, 1, 32) FROM Packets"):
+        if not zigbee_relevant(raw):
+            continue
+        d, s = mac_pan_ids(raw)
+        if d is not None:
+            counts[d] = counts.get(d, 0) + 1
+        if s is not None and s != d:
+            counts[s] = counts.get(s, 0) + 1
+    return [{"pan": p, "frames": c} for p, c in sorted(counts.items(), key=lambda x: -x[1])]
+
+
+def row_in_pan(raw: bytes | None, pan: int | None) -> bool:
+    """帧是否属于 PAN (pan=None → 全量, 不过滤)
+
+    与 scan_pans 同口径: 先过 zigbee_relevant (解析器不保留的帧不计入/不保留),
+    避免子包混入导入时必被丢弃的异协议/畸形帧。
+    """
+    if pan is None:
+        return True
+    if not zigbee_relevant(raw):
+        return False
+    d, s = mac_pan_ids(raw)
+    return d == pan or s == pan
+
+
 def prescan_cubx(path: str) -> dict:
     """预扫 .cubx 元数据 (不解析 Raw, 秒级返回).
 
     返回: total_frames / ts_first / ts_last / duration_s /
-    histogram [{ts_start, count} x ~60] / channel 分布 / lqi-rssi 概要
+    histogram [{ts_start, count} x ~60] / channel 分布 / lqi-rssi 概要 /
+    pans [{pan, frames}] (U20-I: 多 PAN 混杂包过滤用; 单 PAN 时也只有 1 项)
     """
     cubx_path = Path(path).expanduser().resolve()
     if not cubx_path.is_file():
@@ -39,7 +178,7 @@ def prescan_cubx(path: str) -> dict:
         if total == 0:
             return {"total_frames": 0, "ts_first": None, "ts_last": None,
                     "duration_s": 0.0, "histogram": [], "channels": {},
-                    "lqi": None, "rssi": None}
+                    "lqi": None, "rssi": None, "pans": []}
 
         duration = (ts_last - ts_first) if ts_last is not None else 0.0
         # 帧密度直方图: 等宽 ~60 桶 (单次流式扫描, 秒级)
@@ -91,6 +230,7 @@ def prescan_cubx(path: str) -> dict:
             "rssi": ({"avg": round(s_rssi / n_rssi, 1), "min": rssi_min, "max": rssi_max}
                      if n_rssi else None),
             "file_mb": round(cubx_path.stat().st_size / 1048576, 1),
+            "pans": scan_pans(db),   # U20-I: PAN 分布 (轻量: 只读 Raw 前 16 字节)
         }
     finally:
         db.close()
@@ -119,17 +259,19 @@ def _default_out_path(src_path: Path, ts_start: float, ts_end: float) -> str:
 
 
 def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str] = None,
-               progress_cb: Optional[Callable[[int, int], None]] = None) -> dict:
+               progress_cb: Optional[Callable[[int, int], None]] = None,
+               pan: Optional[int] = None) -> dict:
     """按时间窗拆出同 schema 小 .cubx.
 
     - 读原库 CREATE TABLE schema → 新库建同 schema
     - 全量复制 Addresses/Keys/Metadata/Nodes (原样, 不解读)
     - Packets 选 Timestamp ∈ [ts_start, ts_end], 保原 Id
+    - pan 非空时只保留该 PAN 的帧 (U20-I: 轻量 MAC 头判定, 与导入侧过滤同口径)
     - sqlite_sequence 同步 (Packets Id 延续, Ubiqua 兼容)
     - progress_cb(done, total) 按扫描进度上报
     命名规范 (用户定义 08-13): <原名>_MMDD_HHMM-MMDD_HHMM.cubx, 同源文件
     多子包带序号 _01_/_02_ (同一分钟窗口重复拆分也递增不覆盖).
-    返回 {in_frames, out_frames, out_path}
+    返回 {in_frames, out_frames, out_path, pan}
     """
     src_path = Path(src).expanduser().resolve()
     if not src_path.is_file():
@@ -144,24 +286,7 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
     db = sqlite3.connect(f"{src_path.as_uri()}?mode=ro", uri=True)
     out = sqlite3.connect(str(out_p))
     try:
-        # schema 复制 (CREATE TABLE 原样) — sqlite_sequence 是 sqlite 内部表,
-        # 保留名不能 CREATE, 由 AUTOINCREMENT 自动创建
-        for (ddl,) in db.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
-                " AND name != 'sqlite_sequence'"):
-            out.execute(ddl)
-        out.commit()
-        # 辅助表全量复制 (Addresses/Keys/Metadata/Nodes — 原样不解读)
-        for tbl in ("Addresses", "Keys", "Metadata", "Nodes"):
-            try:
-                cols = [r[1] for r in db.execute(f"PRAGMA table_info({tbl})")]
-            except Exception:
-                continue
-            rows = db.execute(f"SELECT {', '.join(cols)} FROM {tbl}").fetchall()
-            if rows:
-                q = ",".join("?" * len(cols))
-                out.executemany(f"INSERT INTO {tbl} ({', '.join(cols)}) VALUES ({q})", rows)
-        out.commit()
+        _copy_aux_tables(db, out)
         # Packets 选窗 (保原 Id + 进度上报)
         total = db.execute("SELECT COUNT(*) FROM Packets").fetchone()[0]
         in_frames = 0
@@ -177,11 +302,10 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
             # S1 (2026-08-26): 半开区间 [ts_start, ts_end) 会把恰在 ts_end 的帧
             # 丢弃 (滑块最大值 = ts_last 时末帧必丢, P2) — 改为闭区间
             sel = [r for r in batch
-                   if r[4] is not None and ts_start <= r[4] <= ts_end]
+                   if r[4] is not None and ts_start <= r[4] <= ts_end
+                   and row_in_pan(r[1], pan)]
             if sel:
-                out.executemany(
-                    "INSERT INTO Packets (Id, Raw, Stack, Channel, Timestamp, TimeDelta,"
-                    " LQI, RSSI, Comment) VALUES (?,?,?,?,?,?,?,?,?)", sel)
+                _insert_packets(out, sel)
                 out_frames += len(sel)
             if progress_cb and in_frames % _PROGRESS_ROWS < 5000:
                 progress_cb(in_frames, total)
@@ -191,10 +315,43 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
             "INSERT OR REPLACE INTO sqlite_sequence (name, seq) SELECT 'Packets', MAX(Id) "
             "FROM Packets")
         out.commit()
-        return {"in_frames": total, "out_frames": out_frames, "out_path": str(out_p)}
+        return {"in_frames": total, "out_frames": out_frames, "out_path": str(out_p),
+                "pan": pan}
     finally:
         out.close()
         db.close()
+
+
+# Packets 列序 (拆分复制用, 保原 Id)
+_PKT_COLS = ("Id", "Raw", "Stack", "Channel", "Timestamp", "TimeDelta", "LQI", "RSSI",
+             "Comment")
+
+
+def _copy_aux_tables(db: sqlite3.Connection, out: sqlite3.Connection) -> None:
+    """建同 schema + 复制辅助表 (Addresses/Keys/Metadata/Nodes, 原样不解读)."""
+    # sqlite_sequence 是 sqlite 内部表, 保留名不能 CREATE, 由 AUTOINCREMENT 自动创建
+    for (ddl,) in db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+            " AND name != 'sqlite_sequence'"):
+        out.execute(ddl)
+    out.commit()
+    for tbl in ("Addresses", "Keys", "Metadata", "Nodes"):
+        try:
+            cols = [r[1] for r in db.execute(f"PRAGMA table_info({tbl})")]
+        except Exception:
+            continue
+        rows = db.execute(f"SELECT {', '.join(cols)} FROM {tbl}").fetchall()
+        if rows:
+            q = ",".join("?" * len(cols))
+            out.executemany(f"INSERT INTO {tbl} ({', '.join(cols)}) VALUES ({q})", rows)
+    out.commit()
+
+
+def _insert_packets(out: sqlite3.Connection, rows: list[tuple]) -> None:
+    """写入选中的 Packets 行 (列序 = _PKT_COLS)"""
+    out.executemany(
+        "INSERT INTO Packets (Id, Raw, Stack, Channel, Timestamp, TimeDelta,"
+        " LQI, RSSI, Comment) VALUES (?,?,?,?,?,?,?,?,?)", rows)
 
 
 if __name__ == "__main__":
