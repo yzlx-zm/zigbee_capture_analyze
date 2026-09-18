@@ -364,6 +364,34 @@ class UbiquaClient:
             "hex_normalized": k.hex_colon.replace(":", "").replace(" ", "").upper(),
         } for k in keys]
 
+    def list_typed_keys(self) -> Optional[list[dict]]:
+        """GET /keys → 全部类型的 16 字节密钥 [{type, hex_normalized}] (U20-H).
+
+        与 get_network_keys 的区别: **不筛类型** — Ubiqua Keys 表同时存 NetworkKey
+        与 LinkKey (cubx Keys 表 schema 实证: [Id, Key, Type], Type 取值
+        NetworkKey/LinkKey; 55 个素材共 196 NetworkKey / 92 LinkKey)。
+        解密瓶颈是设备 Link Key (P4: 中继包 99.98% 安全帧 key_type=0 用设备唯一
+        TC link key, 58.5% 失败 = 缺 link key 非 bug) → 必须一并同步。
+
+        Type 缺失/未知 → "Unknown" (仍同步: zigbee_pc_keys 不区分类型, 全部参与试解)。
+        去重按 hex; 非 16 字节条目丢弃 (zigbee_pc_keys 只接受 16 字节)。
+        """
+        code, body = self._get("/keys")
+        if code != 200:
+            return None
+        keys = self._xml_parse_keys(body)
+        if not keys:
+            return None
+        out: list[dict] = []
+        seen: set[str] = set()
+        for k in keys:
+            clean = k.hex_colon.replace(":", "").replace(" ", "").upper()
+            if len(clean) != 32 or clean in seen:
+                continue
+            seen.add(clean)
+            out.append({"type": k.key_type or "Unknown", "hex_normalized": clean})
+        return out
+
     def add_key(self, key_hex: str, key_type: str = "NetworkKey") -> bool:
         """POST /keys → 新增密钥"""
         body = urllib.parse.urlencode({"type": key_type, "key": key_hex})

@@ -1,6 +1,6 @@
 // import.js — 导入页面模块 (ES module)
 // S1 自审 (2026-08-26, 用户需求): CSV 导入已删除, 只保留抓包导入 (pcap/cubx)
-import { S, A, sb, sbTask, sr, setProg, setErr, doPI, pollImport } from './state.js';
+import { S, A, sb, sbTask, sr, setProg, setErr, doPI, pollImport, fmtUbiquaSync } from './state.js';
 
 reg('import',function(){
   var h='<div class="card"><h3>📂 数据导入</h3>'
@@ -279,7 +279,7 @@ reg('import',function(){
   function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function showKeyErr(msg){var el=document.getElementById('pk-err');if(el){el.textContent=msg;el.classList.remove('hidden');}}
   function clearKeyErr(){var el=document.getElementById('pk-err');if(el){el.textContent='';el.classList.add('hidden');}}
-  function loadKeyPanel(){
+  function loadKeyPanel(flash){
     A.get('/api/keys').then(function(d){
       var keys=d.keys||[],stats=d.stats;
       var h='';
@@ -287,16 +287,24 @@ reg('import',function(){
         h+='<div class="text-muted">📊 解密: '+stats.decrypted+'/'+stats.total_data_frames+' 帧 ('+(stats.decrypt_rate*100).toFixed(0)+'%)'
           +(mt.length?' <span class="badge badge-decrypted">'+mt.length+' 个 Key 命中</span>':'')
           +'</div>';}
+      // U20-H: 手动刷新入口 (Ubiqua 全类型密钥) + 同步结果可见
+      h+='<div class="mt-1"><button class="btn btn-o btn-sm" id="pk-ubiqua">🔄 从 Ubiqua 刷新密钥</button>'
+        +' <span id="pk-ubiqua-msg" class="t-11 text-dim"></span></div>';
       h+='<table class="tbl"><tr><th>Key</th><th>标签</th><th>状态</th><th></th></tr>';
       for(var i=0;i<keys.length;i++){
         var k=keys[i];
         var mk=stats&&stats.matched_keys&&stats.matched_keys.filter(function(m){return m.label===k.label})[0];
         var status=mk?'<span class="text-success">✓ 命中'+(mk.frame_count?' ('+mk.frame_count+'帧)':'')+'</span>':'<span class="text-dim">✗ 未命中</span>';
         var del=k.is_preset?'':'<button class="btn btn-o btn-s text-danger-strong" data-kl="'+escHtml(k.label)+'">✕</button>';
+        // U20-H: Ubiqua 同步来的 key 标类型 (Network/Link), 便于核对同步范围
+        var lbl=k.label||'';
+        var tbadge=lbl.indexOf('ubiqua_link_')===0?' <span class="badge">Link</span>'
+          :lbl.indexOf('ubiqua_net_')===0?' <span class="badge">Network</span>'
+          :lbl.indexOf('ubiqua_other_')===0?' <span class="badge">其他</span>':'';
         var full=k.hex;
         var disp=full.length>16?full.substring(0,16)+'…':full;
         h+='<tr><td class="mono t-10 key-hex" title="点击展开/收起" data-full="'+escHtml(full)+'" data-short="'+escHtml(disp)+'">'+escHtml(disp)+'</td>'
-          +'<td>'+escHtml(k.label)+(k.is_preset?' <span class="badge">预设</span>':'')+'</td>'
+          +'<td>'+escHtml(k.label)+(k.is_preset?' <span class="badge">预设</span>':'')+tbadge+'</td>'
           +'<td>'+status+'</td><td>'+del+'</td></tr>';
       }
       h+='</table>';
@@ -304,6 +312,8 @@ reg('import',function(){
       h+='<div id="pk-err" class="t-11 text-danger hidden"></div>';
       document.getElementById('pkey-body').innerHTML=h;
       document.getElementById('pk-add').addEventListener('click',addKey);
+      // U20-H: 手动刷新 Ubiqua 密钥 (导入前会自动静默同步一次; 这里是显式入口)
+      document.getElementById('pk-ubiqua').addEventListener('click',refreshUbiquaKeys);
       ['pk-hex','pk-label'].forEach(function(id){
         document.getElementById(id).addEventListener('keydown',function(e){if(e.key==='Enter')addKey();});
       });
@@ -313,6 +323,12 @@ reg('import',function(){
           this.textContent=(this.textContent===short)?this.dataset.full:short;
         });
       });
+      // U20-H: 重渲染后回填同步结果 (loadKeyPanel 是异步的 — 调用方在它返回时
+      // 新元素还没生成, flash 参数保证提示写在最终 DOM 上)
+      if(flash){
+        var fm=document.getElementById('pk-ubiqua-msg');
+        if(fm){fm.className='t-11 '+(flash.cls||'text-dim');fm.textContent=flash.text||'';}
+      }
       document.querySelectorAll('[data-kl]').forEach(function(btn){
         btn.addEventListener('click',function(){
           var kl=this.dataset.kl;
@@ -335,7 +351,27 @@ reg('import',function(){
       else{showKeyErr(r.error||'添加失败');}
     }).catch(function(e){showKeyErr('网络错误: '+e.message);});
   }
+  // U20-H: 手动刷新 Ubiqua 密钥 (全类型 Network + Link) — 结果就地显示
+  function refreshUbiquaKeys(){
+    var btn=document.getElementById('pk-ubiqua'), msg=document.getElementById('pk-ubiqua-msg');
+    if(!btn||!msg)return;
+    btn.disabled=true; msg.className='t-11 text-dim'; msg.textContent='同步中...';
+    fetch('/api/keys/refresh-ubiqua',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false;
+      if(d&&d.ok){
+        var okText=fmtUbiquaSync({connected:true,synced:d.synced,total_keys:d.total_keys,
+                                  added_by_type:d.added_by_type});
+        msg.className='t-11 text-success'; msg.textContent=okText;
+        // 命中统计随之刷新 (新 key 可能提升解密率) — 提示交给新渲染回填
+        loadKeyPanel({cls:'text-success', text:okText});
+      }else{
+        msg.className='t-11 text-danger';
+        msg.textContent='❌ '+((d&&d.error)||'Ubiqua 未运行');
+      }
+    }).catch(function(e){btn.disabled=false;msg.className='t-11 text-danger';msg.textContent='❌ 网络错误: '+e.message;});
+  }
   window._loadKeyPanel=loadKeyPanel;
+  window._refreshUbiquaKeys=refreshUbiquaKeys;
 
   // ── Common ──
   document.getElementById('gotopo').addEventListener('click',function(){location.hash='topo'});

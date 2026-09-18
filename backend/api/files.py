@@ -249,25 +249,35 @@ async def import_progress(task_id: str):
     }
 
 
-def _sync_ubiqua_keys() -> dict | None:
-    """导入前从 Ubiqua 同步 Network Key (localhost:19501).
+def _sync_ubiqua_keys() -> dict:
+    """从 Ubiqua 同步**全部类型**密钥 (Network + Link Key, localhost:19501).
 
-    Ubiqua 不可达 / 无新 key → 返回 None, 静默跳过, 不阻断导入。
-    成功 → 返回 {"synced": 新增数, "total_keys": 去重总数}。
+    U20-H: 此前只同步 NetworkKey (`get_network_keys`) 且结果静默 — 而解密瓶颈是
+    设备 Link Key (P4 实证: 中继包 99.98% 安全帧 key_type=0 = 设备唯一 TC link key,
+    58.5% 解密失败 = 缺 link key 非 bug); Ubiqua Keys 表本就同时存两类
+    (cubx Keys 表 schema 实证 Type ∈ {NetworkKey, LinkKey})。
+
+    Ubiqua 不可达 / 无 key → 返回 connected=False, 调用方静默跳过, 不阻断导入。
+    成功 → {"connected": True, "synced": 新增数, "total_keys": 去重总数,
+            "added_by_type": {...}, "by_type": {...}}
     """
     try:
         from .. import ubiqua_api
         from .. import key_store
         client = ubiqua_api.get_client()  # localhost:19501
         if not client.ping():
-            return None
-        keys = client.get_network_keys()
+            return {"connected": False, "synced": 0, "error": "Ubiqua 未运行 (19501 不可达)"}
+        keys = client.list_typed_keys()
         if not keys:
-            return None
+            return {"connected": True, "synced": 0,
+                    "total_keys": len(key_store.read_all_keys()),
+                    "error": "Ubiqua 未返回密钥 (或 Keys 表为空)"}
         result = key_store.merge_from_ubiqua(keys)
-        return {"synced": result["added"], "total_keys": result["total"]}
-    except Exception:
-        return None
+        return {"connected": True, "synced": result["added"],
+                "total_keys": result["total"],
+                "added_by_type": result["added_by_type"], "by_type": result["by_type"]}
+    except Exception as e:
+        return {"connected": False, "synced": 0, "error": f"Ubiqua 同步异常: {e}"}
 
 
 def get_packets():
@@ -514,7 +524,10 @@ def _run_cubx_import(task_id: str, tmp_paths: list[str], fnames: list[str]) -> d
             # U16-7 全量化 (用户裁定 08-25): _packets = 全量帧 (含 poll/Beacon 等 MAC 帧),
             # 时间线「报文」展示完整包; 检测器已用 full, 解析器/契约不变
             all_pkts.extend(pkts)
-            _last_ubiqua_sync = {"synced": added, "total_keys": total_keys}
+            # U20-H 口径澄清: 这里是 **cubx 内嵌 Keys 表** 的同步 (非 Ubiqua 实时接口);
+            # 标注 source 避免与 /keys/refresh-ubiqua 的实时同步混淆
+            _last_ubiqua_sync = {"connected": None, "source": "cubx_embedded",
+                                 "synced": added, "total_keys": total_keys}
         if not all_pkts:
             raise RuntimeError("无有效数据")
 

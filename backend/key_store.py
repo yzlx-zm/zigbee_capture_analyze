@@ -34,6 +34,7 @@ def read_all_keys() -> list[dict]:
         return _with_presets([])
 
     keys = []
+    preset_hexes = {v.upper() for v in PRESET_KEYS.values()}
     with open(KEYS_FILE, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -44,6 +45,12 @@ def read_all_keys() -> list[dict]:
             if len(parts) >= 1:
                 hex_val = parts[0].strip().strip('"')
                 label = parts[2].strip().strip('"') if len(parts) >= 3 else ""
+                # U20-H 修复: write_all_keys 会把预设 key 一并写入文件 (供 tshark 可见),
+                # 读回时曾当作自定义条目 + _with_presets 再加一条预设 → 预设 key
+                # 重复出现两次 (面板显示两条, 统计/去重都被多算一次)。
+                # 文件里的预设行跳过, 由 _with_presets 以规范标签补回。
+                if hex_val.upper() in preset_hexes:
+                    continue
                 keys.append({"hex": hex_val, "label": label})
 
     return _with_presets(keys)
@@ -96,33 +103,63 @@ def add_key(hex_raw: str, label: str) -> dict:
     return {"hex": clean, "label": label}
 
 
-def merge_from_ubiqua(ubiqua_keys: list[str]) -> dict:
-    """合并 Ubiqua Network Key 列表到 zigbee_pc_keys (按 hex 去重).
+def merge_from_ubiqua(ubiqua_keys) -> dict:
+    """合并 Ubiqua 密钥到 zigbee_pc_keys (按 hex 去重).
+
+    U20-H: 支持全类型密钥 (NetworkKey + LinkKey) —
+    - 入参 list[str]: 沿用旧调用 (cubx_reader 内嵌 NetworkKey 同步), 视为 NetworkKey
+    - 入参 list[dict{type, hex_normalized}]: 带类型 (Ubiqua /keys 全量同步)
+    类型仅用于**计数与标签**, zigbee_pc_keys 文件格式不区分类型 (tshark/cubx_reader
+    把所有 key 都作为候选参与试解), 故 LinkKey 与 NetworkKey 同库共存、同样生效。
 
     - 保留现有所有 key (预设 + 已有自定义), 追加新 key
     - 按 hex 去重 (大小写不敏感), 避免重复条目
-    - 标签格式: ubiqua_<hex前6位>
+    - 标签格式: ubiqua_<net|link|other>_<hex前6位>
 
-    返回: {"added": 新增数, "total": 合并后去重总数}
+    返回: {"added": 新增数, "total": 合并后去重总数,
+           "added_by_type": {类型: 新增数}, "by_type": {类型: 全量数}}
     """
     existing = read_all_keys()
     existing_hex = {k["hex"].upper() for k in existing}
     # 保留现有自定义 key (write_all_keys 会自动补预设)
     custom = [k for k in existing if not k.get("is_preset")]
 
+    def _norm(item) -> tuple[str, str]:
+        """条目 → (类型, 32 位大写 hex)"""
+        if isinstance(item, dict):
+            return (str(item.get("type") or "Unknown"),
+                    str(item.get("hex_normalized") or item.get("hex") or "").upper())
+        return ("NetworkKey", str(item).upper())
+
     added = 0
-    for hex_val in ubiqua_keys:
-        hex_up = hex_val.upper()
+    added_by_type: dict[str, int] = {}
+    for item in ubiqua_keys or []:
+        key_type, hex_up = _norm(item)
+        if len(hex_up) != 32:
+            continue
         if hex_up in existing_hex:
             continue
-        custom.append({"hex": hex_up, "label": f"ubiqua_{hex_up[:6]}"})
+        short = {"NetworkKey": "net", "LinkKey": "link"}.get(key_type, "other")
+        custom.append({"hex": hex_up, "label": f"ubiqua_{short}_{hex_up[:6]}"})
         existing_hex.add(hex_up)
         added += 1
+        added_by_type[key_type] = added_by_type.get(key_type, 0) + 1
 
     if added:
         write_all_keys(custom)
 
-    return {"added": added, "total": len(existing_hex)}
+    # 全量类型分布 (含历史条目: 标签前缀推断, 无类型信息 → 计入 NetworkKey)
+    by_type: dict[str, int] = {}
+    for k in read_all_keys():
+        if k.get("is_preset"):
+            continue
+        label = k.get("label", "")
+        t = "LinkKey" if label.startswith("ubiqua_link_") else (
+            "Unknown" if label.startswith("ubiqua_other_") else "NetworkKey")
+        by_type[t] = by_type.get(t, 0) + 1
+
+    return {"added": added, "total": len(existing_hex),
+            "added_by_type": added_by_type, "by_type": by_type}
 
 
 def remove_key(label: str) -> bool:

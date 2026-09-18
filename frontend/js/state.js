@@ -53,6 +53,25 @@ export function sr(d,fname){var el=document.getElementById('sout');if(!el)return
   A.get('/api/topology/graph').then(function(td){S.topo=td});
   // U17: AI 侧边栏上下文切换提示 (导入完成广播, ai.js 监听插入系统消息)
   window.dispatchEvent(new CustomEvent('zc:imported',{detail:{filename:fname||'',packets:d.packets||0}}));}
+// U20-H: Ubiqua 密钥同步结果文案 (密钥面板与导入结果卡共用, 口径一致)
+// u = {connected, source, synced, total_keys, added_by_type} | null
+// - source='cubx_embedded': cubx 内嵌 Keys 表同步 (非 Ubiqua 实时接口)
+// - connected=false: Ubiqua 未运行 → 导入流程静默 (返回空串), 手动入口另行提示
+export function fmtUbiquaSync(u){
+  if(!u) return '';
+  if(u.source==='cubx_embedded'){
+    return u.synced?('🔑 cubx 内嵌密钥同步 +'+u.synced+' · 总 '+(u.total_keys||0)):'';
+  }
+  if(u.connected!==true) return '';
+  if(!u.synced) return '🔑 Ubiqua 密钥已是最新 · 总 '+(u.total_keys||0);
+  var bt=u.added_by_type||{};
+  var parts=[];
+  if(bt.NetworkKey)parts.push(bt.NetworkKey+' Network');
+  if(bt.LinkKey)parts.push(bt.LinkKey+' Link');
+  if(bt.Unknown)parts.push(bt.Unknown+' 其他');
+  return '🔑 从 Ubiqua 同步 +'+u.synced+' 个密钥'+(parts.length?(' ('+parts.join(' / ')+')'):'')
+    +' · 总 '+(u.total_keys||0);
+}
 // XHR 上传 (可上报真实上传进度 0-10%), 完成后转任务轮询
 function uploadXHR(url, fd, fname, onDone){
   var xhr=new XMLHttpRequest();

@@ -50,6 +50,21 @@ async def delete_key(label: str):
         return JSONResponse({"ok": False, "error": str(e)}, 400)
 
 
+@router.post("/keys/refresh-ubiqua")
+async def refresh_ubiqua_keys():
+    """U20-H: 手动从 Ubiqua 刷新密钥 (全类型: Network + Link Key).
+
+    导入前会自动同步一次 (静默); 本端点供用户显式刷新 + 看到同步结果。
+    Ubiqua 未运行 → 503 + 明确提示 (不静默, 手动入口需告知原因)。
+    幂等: 按 hex 去重, 重复点击只更新统计。
+    """
+    from .files import _sync_ubiqua_keys
+    r = _sync_ubiqua_keys()
+    if not r.get("connected"):
+        return JSONResponse({"ok": False, "error": r.get("error") or "Ubiqua 未运行", **r}, 503)
+    return {"ok": True, **r}
+
+
 @router.post("/keys/reprocess")
 async def reprocess():
     """重新统计 Key 命中 (数据变化后更新)"""
