@@ -179,50 +179,6 @@ async def cubx_split(path: str = Form(...), ts_start: float = Form(...),
     return _start_import(_run)
 
 
-@router.post("/cubx/split-batch")
-async def cubx_split_batch(path: str = Form(...), ts_start: float = Form(...),
-                           ts_end: float = Form(...), seg_minutes: float = Form(...),
-                           pan: str = Form(default="")):
-    """U20-J: 按段长批量拆 — 一次扫描拆出 N 个子包 (只拆不导).
-
-    段划分 [start+i*seg, start+(i+1)*seg) 半开无重叠; 末段不足一段长按实际截断;
-    段数 > 20 直接 400 (防误操作)。返回 segments 列表 (前端进现有子包清单)。
-    """
-    if not os.path.exists(path):
-        return JSONResponse({"error": f"路径不存在: {path}"}, 400)
-    if ts_end <= ts_start:
-        return JSONResponse({"error": "时间窗无效: ts_end 必须大于 ts_start"}, 400)
-    if seg_minutes <= 0:
-        return JSONResponse({"error": "段长必须大于 0 分钟"}, 400)
-    pan_int = _parse_pan(pan)
-    from .. import cubx_splitter as _cs
-    n_seg = int((ts_end - ts_start) // (seg_minutes * 60)) + (
-        1 if (ts_end - ts_start) % (seg_minutes * 60) else 0)
-    if n_seg > _cs.MAX_SEGMENTS:
-        return JSONResponse({"error": f"段数过多: {(ts_end-ts_start)/60:.1f} 分钟按 "
-                                      f"{seg_minutes} 分钟拆分得 {n_seg} 段, 超过上限 "
-                                      f"{_cs.MAX_SEGMENTS} 段 — 请增大段长或缩小范围"}, 400)
-
-    def _run(task_id: str) -> dict:
-        _task_update(task_id, stage=f"批量拆分 {n_seg} 段", percent=0)
-
-        def _cb(done: int, total: int) -> None:
-            _task_update(task_id, stage=f"批量拆分 {n_seg} 段",
-                         percent=min(int(done / total * 90), 90))
-        try:
-            r = _cs.split_cubx_multi(path, ts_start, ts_end, seg_minutes * 60,
-                                     pan=pan_int, progress_cb=_cb)
-        except Exception as e:
-            raise RuntimeError(f"批量拆分失败: {e}") from e
-        _task_update(task_id, stage=f"批量拆分 {n_seg} 段", percent=100)
-        return {"in_frames": r["in_frames"], "out_frames": r["out_frames"],
-                "segments": r["segments"], "pan": r["pan"],
-                "seg_minutes": r["seg_minutes"],
-                "truncated_last": r["truncated_last"]}
-
-    return _start_import(_run)
-
-
 @router.get("/cubx/download")
 async def cubx_download(path: str = Query(default="")):
     """U11: 下载拆分产物 (人工复验, 如 Ubiqua 打开).

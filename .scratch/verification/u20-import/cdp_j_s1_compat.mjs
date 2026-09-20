@@ -17,7 +17,7 @@ let ok = false;
 for (let i = 0; i < 150; i++) {
   await sleep(1000);
   ok = await p.ev(`(function(){var el=document.getElementById('cubx-prescan');
-    return !!(el && !el.classList.contains('hidden') && document.getElementById('cs-seg-hint').innerText);})()`);
+    return !!(el && !el.classList.contains('hidden') && document.getElementById('cs-win').innerText);})()`);
   if (ok) break;
 }
 console.log('面板就绪:', ok);
@@ -51,6 +51,10 @@ for (let i = 0; i < 120; i++) {
   if (subs && subs.n > 0) break;
 }
 console.log('[子包清单]', JSON.stringify(subs));
+const removed = await p.ev(`(function(){return {batch:document.querySelectorAll('.cs-batch').length,
+  seg:document.getElementById('cs-seg')?1:0, hint:document.getElementById('cs-seg-hint')?1:0,
+  panRow:document.querySelectorAll('#cs-pan-row').length};})()`);
+console.log('[控件检查]', JSON.stringify(removed));
 console.log('exceptions:', p.exceptions.length ? p.exceptions : 'none');
 await p.close();
 
@@ -65,6 +69,10 @@ chk(applied.s1 >= applied.first - 0.001 && applied.s2 <= applied.last + 0.001
   `窗口在素材范围内 (起 Δ ${(applied.s1 - applied.first).toFixed(1)}s / 末 Δ ${(applied.last - applied.s2).toFixed(1)}s)`);
 chk(subs && subs.n >= 1, '拆分产出子包 (' + (subs && subs.text.slice(0, 50)) + ')');
 chk(subs && subs.dl === subs.n && subs.imp === subs.n, '每条子包含 下载 + 导入按钮');
+// 2026-09-20 用户反馈: 撤回"批量拆"控件 → DOM 中应无残留, PAN 选择器保留
+chk(removed && removed.batch === 0 && removed.seg === 0 && removed.hint === 0,
+  '批量拆控件已移除 (DOM 无 .cs-batch / #cs-seg / #cs-seg-hint)');
+chk(removed && removed.panRow === 1, 'PAN 选择器容器保留 (I 项)');
 chk(p.exceptions.length === 0, '无运行时异常');
 console.log(P.join('\n'));
 process.exit(P.some(s => s.startsWith('❌')) ? 1 : 0);

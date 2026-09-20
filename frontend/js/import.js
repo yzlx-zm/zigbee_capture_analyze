@@ -44,12 +44,6 @@ reg('import',function(){
         +'<button class="btn btn-o" id="cs-cancel">取消 (整包导入)</button> '
         +'<button class="btn btn-r btn-sm" id="cs-close">关闭面板 (换别的包)</button>'
       +'</div>'
-      +'<div class="cs-batch mt-1">'
-        +'<span class="t-11">批量拆:</span> '
-        +'<input id="cs-seg" class="mono w-40" value="5" maxlength="4"> <span class="t-11">分钟/段</span> '
-        +'<button class="btn btn-o btn-sm" id="cs-go-batch">按段长批量拆</button>'
-        +' <span id="cs-seg-hint" class="t-10 text-dim"></span>'
-      +'</div>'
       +'<div id="cs-subs" class="cs-subs mt-1"></div>'
     +'</div>'
     +'<div id="prog" class="prog hidden"><span class="spin"></span><span id="imsg" class="t-11"></span><div class="bar" id="pbar"><div class="bar-fill" id="pfill"></div></div></div></div>';
@@ -147,8 +141,7 @@ reg('import',function(){
     var lbl=document.getElementById('cs-win');
     function updWin(){ var w=csWindow();
       lbl.textContent='窗口: '+fmtTsWin(w[0])+' → '+fmtTsWin(w[1])
-      +' ('+Math.round((w[1]-w[0])/60)+' 分钟)';
-      updSegHint(); }   // U20-J: 窗口变化 → 段数预览同步
+      +' ('+Math.round((w[1]-w[0])/60)+' 分钟)'; }
     s1.oninput=s2.oninput=updWin; updWin();
     // 精确时间输入框重置 (数字框: 月-日 时:分, 解析/应用逻辑在 reg 一次性绑定区)
     ['cs-t1m','cs-t1d','cs-t1h','cs-t1n','cs-t2m','cs-t2d','cs-t2h','cs-t2n']
@@ -188,14 +181,9 @@ reg('import',function(){
     if(pv&&[].some.call(sel.options,function(o){return o.value===pv;}))sel.value=pv;
     sel.addEventListener('change',function(){
       if(S.cubxPrescan)S.cubxPrescan.pan=sel.value;
-      updSegHint();   // U20-J: PAN 选择影响批量拆的预览说明
     });
     row.classList.remove('hidden');
   }
-  // U20-J: 批量拆 UI 状态/预览 — ⚠️ 必须声明在 reg 函数作用域 (ES module 严格模式下
-  // 块内函数声明不会提升到外层: 曾放在 if(csPanel){} 里 → updWin 调用抛
-  // ReferenceError, 面板 dataset 未写入 (path/fname 全丢), 拆分与整包导入失效)
-  var SEG_MAX=20;
   // 窗口取值 (边界吸附): 滑块贴到两端时用素材精确边界 — range 控件的任何
   // 量化/取整漂移都在此兜住 (step 已设 any, 此处为二次保险; 群控实测曾有
   // 末端 0.79s/27 帧漂移致全窗拆分少帧)
@@ -209,29 +197,7 @@ reg('import',function(){
     if(s2.value===s2.max||Math.abs(t1-dl)<2)t1=dl;
     return [t0, t1];
   }
-  function segMinutes(){
-    var el=document.getElementById('cs-seg');
-    var v=el?parseFloat(el.value):NaN;
-    return (isFinite(v)&&v>0)?v:0;
-  }
-  function segCount(){
-    var w=csWindow(), t0=w[0], t1=w[1], seg=segMinutes()*60;
-    if(!seg||t1<=t0)return 0;
-    return Math.floor((t1-t0)/seg)+( ((t1-t0)%seg)>0 ? 1 : 0 );
-  }
-  function updSegHint(){
-    var el=document.getElementById('cs-seg-hint'), btn=document.getElementById('cs-go-batch');
-    if(!el)return;
-    var seg=segMinutes(), n=segCount();
-    if(!seg){el.className='t-10 text-danger';el.textContent='段长需 > 0';if(btn)btn.disabled=true;return;}
-    if(n>SEG_MAX){el.className='t-10 text-danger';
-      el.textContent='段数 '+n+' 超过上限 '+SEG_MAX+' — 请增大段长或缩小范围';
-      if(btn)btn.disabled=true;return;}
-    el.className='t-10 text-dim';
-    el.textContent='将拆为 '+n+' 段'+(curPan()?(' (仅 '+curPan()+')'):'');
-    if(btn)btn.disabled=false;
-  }
-  // 拆分任务运行器 (单窗拆分 / U20-J 批量拆分共用): 提交 → 轮询进度 → 回调结果.
+  // 拆分任务运行器 (单窗拆分): 提交 → 轮询进度 → 回调结果.
   // 行为与 S1 修复后的原单窗流程一致 (页内进度条同步 + 完成清理顶栏 + 5 分钟兜底)
   function runSplit(url, fd, label, onDone){
     setProg(label+'中...',1);
@@ -275,34 +241,6 @@ reg('import',function(){
                          frames:res.out_frames, path:res.out_path,
                          pan:curPan()});   // U20-I: 记录子包的 PAN 过滤条件
         renderSubs();
-      });
-    });
-    // U20-J: 按段长批量拆 — 一次扫描拆 N 段 (段数上限 20, 超额前端即拦)
-    var segInput=document.getElementById('cs-seg');
-    if(segInput)segInput.addEventListener('input',updSegHint);
-    var segBtn=document.getElementById('cs-go-batch');
-    if(segBtn)segBtn.addEventListener('click',function(){
-      var w=csWindow(), t0=w[0], t1=w[1];
-      var seg=segMinutes();
-      if(!seg){setErr('段长必须大于 0 分钟');return;}
-      if(t1<=t0){setErr('窗口无效: 结束时间必须大于开始时间');return;}
-      var n=segCount();
-      if(n>SEG_MAX){setErr('段数 '+n+' 超过上限 '+SEG_MAX+' — 请增大段长或缩小范围');return;}
-      if(S.cubxPrescan){S.cubxPrescan.winStart=t0;S.cubxPrescan.winEnd=t1;}
-      var fd=new FormData();fd.append('path',csPanel.dataset.path);
-      fd.append('ts_start',t0);fd.append('ts_end',t1);fd.append('seg_minutes',seg);
-      if(curPan())fd.append('pan',curPan());
-      runSplit('/api/cubx/split-batch', fd, '批量拆分', function(res){
-        S.cubxSubs=S.cubxSubs||[];
-        (res.segments||[]).forEach(function(s){
-          S.cubxSubs.push({winStart:s.win_start, winEnd:s.win_end, frames:s.frames,
-                           path:s.out_path, pan:curPan()});
-        });
-        renderSubs();
-        var msg='已拆 '+res.segments.length+' 段 · 合计 '+res.out_frames.toLocaleString()+' 帧';
-        if(res.truncated_last)msg+=' (末段不足一段长, 按实际截断)';
-        var el=document.getElementById('cs-seg-hint');
-        if(el){el.className='t-10 text-success';el.textContent=msg;}
       });
     });
     document.getElementById('cs-cancel').addEventListener('click',function(){

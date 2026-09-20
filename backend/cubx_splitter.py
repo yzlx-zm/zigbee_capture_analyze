@@ -18,8 +18,6 @@ from typing import Callable, Optional
 _HIST_BINS = 60
 # 复制/扫描进度上报粒度 (行)
 _PROGRESS_ROWS = 50000
-# 批量拆分段数上限 (U20-J: 防误操作产生海量文件)
-MAX_SEGMENTS = 20
 
 
 def mac_pan_ids(raw: bytes | None) -> tuple[int | None, int | None]:
@@ -321,100 +319,6 @@ def split_cubx(src: str, ts_start: float, ts_end: float, out_path: Optional[str]
                 "pan": pan}
     finally:
         out.close()
-        db.close()
-
-
-def split_cubx_multi(src: str, ts_start: float, ts_end: float, seg_seconds: float,
-                     pan: Optional[int] = None, max_segments: int = MAX_SEGMENTS,
-                     progress_cb: Optional[Callable[[int, int], None]] = None) -> dict:
-    """按段长一次拆出 N 个子包 (U20-J) — **单次扫描**分批写入, 不循环调用单窗拆分.
-
-    - 段划分: [ts_start + i*seg, ts_start + (i+1)*seg) 半开 (无重叠无遗漏),
-      末段到 ts_end 为止 (不足一段长按实际截断, 返回值 truncated_last 标注)
-    - 段数上限 max_segments (默认 20): 超出直接报错, 不产生海量文件
-    - pan 非空 → 只保留该 PAN 的帧 (与单窗拆分/导入同口径)
-    - 每个子包: 同 schema + 辅助表全量复制 + 保原 Id + sqlite_sequence 对齐
-    返回 {in_frames, out_frames, segments:[{out_path, frames, win_start, win_end,
-          minutes}], pan, seg_minutes, truncated_last}
-    """
-    src_path = Path(src).expanduser().resolve()
-    if not src_path.is_file():
-        raise FileNotFoundError(f"cubx 文件不存在: {src_path}")
-    if ts_end <= ts_start:
-        raise ValueError("时间窗无效: ts_end 必须大于 ts_start")
-    if seg_seconds <= 0:
-        raise ValueError("段长必须大于 0")
-    span = ts_end - ts_start
-    n_seg = int(span // seg_seconds) + (1 if span % seg_seconds else 0)
-    n_seg = max(n_seg, 1)
-    if n_seg > max_segments:
-        raise ValueError(
-            f"段数过多: 该范围 {span/60:.1f} 分钟按 {seg_seconds/60:.1f} 分钟拆分得 "
-            f"{n_seg} 段, 超过上限 {max_segments} 段 — 请增大段长或缩小范围")
-
-    # 段边界 (半开; 末段闭到 ts_end)
-    bounds: list[tuple[float, float]] = []
-    for i in range(n_seg):
-        s = ts_start + i * seg_seconds
-        e = min(ts_start + (i + 1) * seg_seconds, ts_end)
-        bounds.append((s, e))
-
-    db = sqlite3.connect(f"{src_path.as_uri()}?mode=ro", uri=True)
-    outs: list[sqlite3.Connection] = []
-    paths: list[str] = []
-    try:
-        for (s, e) in bounds:
-            p = _default_out_path(src_path, s, e)
-            paths.append(p)
-            conn = sqlite3.connect(p)
-            _copy_aux_tables(db, conn)      # 每个子包同 schema + 辅助表
-            outs.append(conn)
-
-        total = db.execute("SELECT COUNT(*) FROM Packets").fetchone()[0]
-        counts = [0] * n_seg
-        in_frames = 0
-        cur = db.execute(
-            "SELECT Id, Raw, Stack, Channel, Timestamp, TimeDelta, LQI, RSSI, Comment "
-            "FROM Packets ORDER BY Id")
-        while True:
-            batch = cur.fetchmany(5000)
-            if not batch:
-                break
-            in_frames += len(batch)
-            buckets: dict[int, list[tuple]] = {}
-            for r in batch:
-                ts = r[4]
-                if ts is None or ts < ts_start or ts > ts_end:
-                    continue
-                if not row_in_pan(r[1], pan):
-                    continue
-                idx = int((ts - ts_start) // seg_seconds)
-                if idx >= n_seg:
-                    idx = n_seg - 1                     # ts == ts_end → 末段
-                buckets.setdefault(idx, []).append(r)
-            for idx, rows in buckets.items():
-                _insert_packets(outs[idx], rows)
-                counts[idx] += len(rows)
-            if progress_cb and in_frames % _PROGRESS_ROWS < 5000:
-                progress_cb(in_frames, total)
-        if progress_cb:
-            progress_cb(total, total)
-        for i, conn in enumerate(outs):
-            conn.execute(
-                "INSERT OR REPLACE INTO sqlite_sequence (name, seq) SELECT 'Packets',"
-                " MAX(Id) FROM Packets")
-            conn.commit()
-        out_frames = sum(counts)
-        segments = [{"out_path": paths[i], "frames": counts[i],
-                     "win_start": bounds[i][0], "win_end": bounds[i][1],
-                     "minutes": round((bounds[i][1] - bounds[i][0]) / 60, 2)}
-                    for i in range(n_seg)]
-        return {"in_frames": total, "out_frames": out_frames, "segments": segments,
-                "pan": pan, "seg_minutes": round(seg_seconds / 60, 3),
-                "truncated_last": (bounds[-1][1] - bounds[-1][0]) < seg_seconds - 1e-6}
-    finally:
-        for conn in outs:
-            conn.close()
         db.close()
 
 
