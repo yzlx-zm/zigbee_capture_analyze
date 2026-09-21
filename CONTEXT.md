@@ -217,6 +217,32 @@ Silicon Labs UG105.2 "Device Association"
 
 ---
 
+### 拓扑时刻态 (Topology Moment State)
+
+> 2026-09-21 /grilling 对齐 (U21 会话)。用于拓扑页节点在**时刻游标 T** 的显示态,
+> 替代原"整段汇总"的 behavior (rejoining/offline/sleeping) 口径。
+
+**精确定义**：节点在时刻 T 的**证据状态** —— 依据 = 协议事件帧 (硬证据) + 证据缺口 (事实):
+
+| 状态 | 判据 | 依据强度 |
+|------|------|---------|
+| 正常 | T 附近有正常证据 (帧 / poll 规律) | 事实 |
+| 重入网中 | T 前 N 秒内有 rejoin 类事件 (Leave rejoin=1 / Rejoin Req/Rsp / Device Announce) | 硬证据 (设备自报) |
+| 已离网 | T 前最近生命周期事件 = Leave(rejoin=0) 且其后无重入证据 | 硬证据 (设备自报) |
+| 无证据 | T 落在证据缺口内 (距最近证据 > 阈值) | 事实 (不下结论) |
+
+**证据中断 (Evidence Gap)**：一段时间内既无该节点的帧、也无解释性事件。**区分于"离线"** —
+抓包漏帧会伪装成离线 (群控第二跳捕获率 64% 实证), 故"无证据"只陈述事实, 不判定设备状态。
+
+**事件窗 (Event Window, N)**：rejoin 类事件后 N 秒内视为"重入网中"(默认 60s, 待实测校准)。
+
+**数据来源**：NWK cmd 0x04 (Leave, bit5 rejoin / bit6 request) / 0x06-0x07 (Rejoin Req/Rsp) /
+ZDP 0x0013 (Device Announce) 的时间戳; 见上"生命周期状态机"。
+
+**区分于** 原 `behavior` 字段 (整段汇总、无时间窗、与 online 双轨) — U22 ticket 落地时替换。
+
+---
+
 ## 诊断分析 (Diagnostics)
 
 > 2026-07-30 新增。来源：Phase 6 /grilling 会话。独立于拓扑分析，聚焦网络问题的证据收集和诊断推断。
