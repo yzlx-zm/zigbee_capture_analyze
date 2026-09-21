@@ -142,12 +142,29 @@ export const P = {
     var A=vis[i].bb,B=vis[j].bb;
     var ox=Math.min(A.x2,B.x2)-Math.max(A.x1,B.x1),oy=Math.min(A.y2,B.y2)-Math.max(A.y1,B.y1);
     if(ox>1&&oy>1){lbOv++;if(lbp.length<4)lbp.push(vis[i].id+'/'+vis[i].lbl+' x '+vis[j].id+'/'+vis[j].lbl+' ('+Math.round(ox)+'x'+Math.round(oy)+')');}}
+  // ⚠️ 标签必须在节点**外侧** (径向往外) — U21 曾漏掉这条断言, 导致 halign 映射写反后
+  // 标签被压在节点图标内部, 只有肉眼能发现 (用户反馈)
+  var root=c.getElementById('0');
+  var CC=root.nonempty()?root.renderedPosition():null;
+  var lblOut=0, lblOutBad=[], branchH=0, branchV=0;
+  if(CC)ns.forEach(function(n){
+    var to=parseFloat(n.style('text-opacity')); if(isNaN(to))to=1;
+    if(to<0.5)return;
+    var rp=n.renderedPosition(), dx=rp.x-CC.x, dy=rp.y-CC.y, RR=Math.sqrt(dx*dx+dy*dy);
+    if(RR<1)return;                                   // 圆心节点 (标签在正下方, 不适用径向判据)
+    var ux=dx/RR, uy=dy/RR;
+    if(Math.abs(ux)>0.7)branchH++; else branchV++;
+    var bL=n.renderedBoundingBox(), bN=n.renderedBoundingBox({includeLabels:false});
+    var dot=function(b){return Math.max(b.x1*ux+b.y1*uy,b.x2*ux+b.y2*uy,b.x1*ux+b.y2*uy,b.x2*ux+b.y1*uy);};
+    var far=dot(bL)-dot(bN);
+    if(far>1)lblOut++; else lblOutBad.push(n.id()+'/'+String(n.data('label')).replace(/\\n/g,'|')+' far='+far.toFixed(1));
+  });
   var bb=c.nodes().boundingBox();
   var bh=[]; bd.forEach(function(n){bh.push({id:n.id(),lbl:String(n.data('label')).replace(/\\n/g,'|'),cnt:n.data('count'),pa:n.data('parent_aid'),open:n.hasClass('agg-open'),stats:n.data('stats')});});
   // 徽章与所属父节点的距离 (贴父节点)
   var bd2=[]; bd.forEach(function(n){var pp=c.getElementById(''+n.data('parent_aid'));
     bd2.push({id:n.id(),dist:pp.nonempty()?Math.round(Math.hypot(pp.position().x-n.position().x,pp.position().y-n.position().y)):-1});});
   return {n:ns.length,badge:bd.length,badges:bh,badgeDist:bd2,rings:ringR,ringBad:ringBad,ringInc:incOk,
-    segs:segs.length,cross:cross,cps:cps,collin:collin,nodeOv:ov,ovp:ovp,lblVis:vis.length,lblHid:hid,lblOv:lbOv,lbp:lbp,
+    segs:segs.length,cross:cross,cps:cps,collin:collin,lblOut:lblOut,lblOutBad:lblOutBad,branchH:branchH,branchV:branchV,nodeOv:ov,ovp:ovp,lblVis:vis.length,lblHid:hid,lblOv:lbOv,lbp:lbp,
     w:Math.round(bb.w),h:Math.round(bb.h),rows:rows};})()`,
 };

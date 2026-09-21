@@ -31,6 +31,7 @@ check('同跳数同半径 (孤儿单独成组)', geo.ringBad.length === 0, JSON.
 check('树边零交叉', geo.cross === 0, String(geo.cross));
 check('节点圆无重叠', geo.nodeOv === 0, String(geo.nodeOv));
 check('可见标签无重叠', geo.lblOv === 0, geo.lblOv + ' ' + JSON.stringify(geo.lbp));
+check('标签全在节点外侧 (横向' + geo.branchH + '/纵向' + geo.branchV + ')', geo.lblOutBad.length === 0, JSON.stringify(geo.lblOutBad.slice(0,3)));
 // 聚合一致性: 徽章数 + 展开后总数 = 实际节点数 (ticket 验收 2)
 const agg = await p.ev(`(function(){
   var c=window.__cy, n=c.nodes().length, b=c.nodes('[is_badge]');

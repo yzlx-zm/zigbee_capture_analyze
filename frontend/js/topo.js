@@ -578,12 +578,15 @@ reg('topo', function(){
         n.data('label',s);
         n.style('text-opacity',hide?0:1);
         // 外侧: 左/右半 → 水平对齐; 上/下 → 垂直对齐
-        var cosv=Math.cos(m.th);
+        // ⚠️ Cytoscape 语义实测 (2026-09-21, 最小图探针): text-halign 'left' = 标签在节点**左侧**,
+        // 'right' = 右侧; 且 text-margin-x/y **恒按屏幕方向偏移** (+x 右 / +y 下), 不随对齐翻转 —
+        // 曾把 halign 映射写反 + 右侧用 +6 → 标签被拉回节点身上 (用户反馈"地址显示在图标内部")
+        var cosv=Math.cos(m.th), sinv=Math.sin(m.th);
         if(m.r<1){ n.style({'text-halign':'center','text-valign':'bottom','text-margin-x':0,'text-margin-y':4}); continue; }
         if(Math.abs(cosv)>0.7){
-          n.style({'text-halign':cosv>0?'left':'right','text-valign':'center','text-margin-x':cosv>0?6:-6,'text-margin-y':0});
+          n.style({'text-halign':cosv>0?'right':'left','text-valign':'center','text-margin-x':cosv>0?6:-6,'text-margin-y':0});
         }else{
-          n.style({'text-halign':'center','text-valign':Math.sin(m.th)>0?'bottom':'top','text-margin-x':0,'text-margin-y':6});
+          n.style({'text-halign':'center','text-valign':sinv>0?'bottom':'top','text-margin-x':0,'text-margin-y':sinv>0?6:-6});
         }
       }
     }

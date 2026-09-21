@@ -18,6 +18,7 @@ check('0x8A41 无父证据 → 最外环 (dep 组 -1)', R['8A41'] && R['8A41'].d
 check('同跳数同半径', geo.ringBad.length === 0, JSON.stringify(geo.ringBad));
 check('树边零交叉', geo.cross === 0, String(geo.cross));
 check('节点/标签无重叠', geo.nodeOv === 0 && geo.lblOv === 0, `node=${geo.nodeOv} lbl=${geo.lblOv} ${JSON.stringify(geo.lbp)}`);
+check('标签全部在节点外侧 (横向分支 ' + geo.branchH + ' / 纵向 ' + geo.branchV + ')', geo.lblOutBad.length === 0, JSON.stringify(geo.lblOutBad.slice(0, 4)));
 check('小网络标签全显 (无隐藏)', geo.lblHid === 0, '隐藏 ' + geo.lblHid);
 
 await p.shot('u21_small_relay.jpg');

@@ -41,6 +41,7 @@ else {
     `${st1.nodes - st1.badges}+${inner} vs ${st0.nodes}`);
   check('徽章贴附父节点 (<80px)', geo1.badgeDist.every(b => b.dist > 0 && b.dist < 80), JSON.stringify(geo1.badgeDist));
   check('徽章标签 ×N 与成员数一致', geo1.badges.every(b => b.lbl.indexOf('×' + b.cnt) === 0), JSON.stringify(geo1.badges.map(b => b.lbl)));
+  check('聚合态: 标签全在节点外侧', geo1.lblOutBad.length === 0, JSON.stringify(geo1.lblOutBad.slice(0,3)));
   check('聚合态: 零交叉/零重叠', geo1.cross === 0 && geo1.nodeOv === 0 && geo1.lblOv === 0,
     JSON.stringify({ c: geo1.cross, n: geo1.nodeOv, l: geo1.lblOv, lbp: geo1.lbp }));
   // 状态汇总一致性: 徽章状态 = 折叠前同簇终端的实际状态 (U14 信息不丢)
