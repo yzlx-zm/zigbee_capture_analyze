@@ -60,7 +60,8 @@ export async function openTab(url, { width = 1440, height = 940 } = {}) {
     id: t.id, ws, send, ev: evf, exceptions,
     shot: async (path) => {
       const r = await send('Page.captureScreenshot', { format: 'jpeg', quality: 88 });
-      await fsp.mkdir(path.substring(0, path.lastIndexOf('/')), { recursive: true });
+      const dir = path.substring(0, path.lastIndexOf('/'));   // ⚠️ 无目录部分时 mkdir('') → ENOENT
+      if (dir) await fsp.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(path, Buffer.from(r.result.data, 'base64'));
       console.log('📷', path);
     },

@@ -82,10 +82,10 @@ for (const [v, name] of [['1', '列式'], ['2', '自由'], ['0', '放射']]) {
   console.log(`  切${name}: ${Date.now() - t}ms (布局计算 ${tm.last}ms)`);
   check('切' + name + ': 节点集完整', s3.nodes >= (v === '0' ? st.nodes : st.nodes - (geo.badge ? 0 : 0)), JSON.stringify(s3));
 }
-await p.shot(`.scratch/verification/u21-topo/u21_${tag}_after.jpg`);
+await p.shot(`u21_${tag}_after.jpg`);
 const ex = p.exceptions.length;
 check('全程无 JS 异常', ex === 0, '异常 ' + ex + (p.exceptions[0] ? ': ' + String(p.exceptions[0]).slice(0, 140) : ''));
-await p.shot(`.scratch/verification/u21-topo/u21_${tag}.jpg`);
+await p.shot(`u21_${tag}.jpg`);
 console.log(`\n首屏 ${loadMs}ms | 节点 ${geo.n} | 徽章 ${geo.badge}`);
 const ok = summary();
 await p.close();

@@ -3,9 +3,11 @@
 import { openTab, sleep, check, summary, P } from './u21_lib.mjs';
 
 const p = await openTab('http://localhost:8720/#topo');
-await sleep(8000);
-
-const st0 = await p.ev(P.state);
+// 大素材 (百万帧) 首次 /topology/events 计算慢 → 轮询等渲染完成, 顺便量首屏耗时
+const t0 = Date.now();
+let st0 = null;
+for (let i = 0; i < 150; i++) { await sleep(1000); st0 = await p.ev(P.state); if (st0 && st0.nodes > 0) break; }
+console.log('  首屏 ' + (Date.now() - t0) + 'ms');
 console.log('  素材:', JSON.stringify(st0));
 check('加载成功 (放射默认, 未聚合)', st0 && st0.nodes > 0 && st0.badges === 0 && st0.layout === '0', JSON.stringify(st0));
 
@@ -49,7 +51,7 @@ else {
   check('徽章状态汇总 = 折叠前同簇终端状态 (U14 信息不丢)', stCmp.every(b => b.ok), JSON.stringify(stCmp));
   check('有状态时徽章标签带图标', stCmp.every(b => (b.stats.rejoining || b.stats.offline || b.stats.sleeping) ? /⚠️|⛔|💤/.test(geo1.badges.find(x => x.id === b.id).lbl) : true),
     JSON.stringify(geo1.badges.map(b => b.lbl)));
-  await p.shot('.scratch/verification/u21-topo/u21_agg_on.jpg');
+  await p.shot('u21_agg_on.jpg');
 
   // 聚合态游标
   const posA = await p.ev(P.positions);
@@ -72,7 +74,7 @@ else {
   const openB = geo2.badges.filter(b => b.open);
   check('展开态徽章标 ▾', openB.length === 1 && /▾/.test(openB[0].lbl), JSON.stringify(openB.map(b => b.lbl)));
   check('展开后零交叉/零重叠', geo2.cross === 0 && geo2.nodeOv === 0 && geo2.lblOv === 0, JSON.stringify({ c: geo2.cross, n: geo2.nodeOv, l: geo2.lblOv, lbp: geo2.lbp }));
-  await p.shot('.scratch/verification/u21-topo/u21_agg_open.jpg');
+  await p.shot('u21_agg_open.jpg');
   await p.ev(`(function(){window.__cy.getElementById('${big.id}').emit('tap');return 1;})()`);
   await sleep(1800);
   const st3 = await p.ev(P.state);
@@ -88,7 +90,7 @@ else {
   const loc = await p.ev(`(function(){var n=window.__cy.getElementById('${member}');
     return {exists:n.nonempty(),hl:n.hasClass('highlight'),title:(document.getElementById('taddr')||{}).title};})()`);
   check('定位折叠终端 → 自动展开该簇 + 高亮', loc.exists && loc.hl, JSON.stringify(loc));
-  await p.shot('.scratch/verification/u21-topo/u21_agg_locate.jpg');
+  await p.shot('u21_agg_locate.jpg');
 
   // 关闭聚合
   await p.ev(`document.getElementById('tagg').click()`);

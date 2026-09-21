@@ -72,7 +72,7 @@ check('父链路树边零交叉 (子树扇区生效)', geo.cross === 0, '交叉 
 check('节点圆无重叠', geo.nodeOv === 0, geo.nodeOv + ' 对 ' + JSON.stringify(geo.ovp));
 check('标签不重叠 (bbox 同帧)', geo.lblOv === 0, geo.lblOv + ' 对 ' + JSON.stringify(geo.lbp));
 
-await p.shot('.scratch/verification/u21-topo/u21_radial_star.jpg');
+await p.shot('u21_radial_star.jpg');
 
 // ── 3. 时刻游标稳定性 (位置不得重算) ──
 const posA = await p.ev(P.positions);
@@ -122,7 +122,7 @@ const ui = await p.ev(`(function(){
 check('图例含聚合/放射说明', ui.openLg && ui.hasBadge && ui.hasRadial, JSON.stringify(ui));
 check('统计卡非空', /节点|PAN/.test(ui.stat || ''), ui.stat);
 
-await p.shot('.scratch/verification/u21-topo/u21_radial_after_switch.jpg');
+await p.shot('u21_radial_after_switch.jpg');
 console.log('\n异常总数: ' + p.exceptions.length);
 p.exceptions.slice(0, 5).forEach(e => console.log(' !', String(e).slice(0, 160)));
 const ok = summary();

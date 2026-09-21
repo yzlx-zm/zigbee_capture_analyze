@@ -20,7 +20,7 @@ check('树边零交叉', geo.cross === 0, String(geo.cross));
 check('节点/标签无重叠', geo.nodeOv === 0 && geo.lblOv === 0, `node=${geo.nodeOv} lbl=${geo.lblOv} ${JSON.stringify(geo.lbp)}`);
 check('小网络标签全显 (无隐藏)', geo.lblHid === 0, '隐藏 ' + geo.lblHid);
 
-await p.shot('.scratch/verification/u21-topo/u21_small_relay.jpg');
+await p.shot('u21_small_relay.jpg');
 
 // 游标稳定性
 const posA = await p.ev(P.positions);
@@ -46,7 +46,7 @@ for (const k in posA) { const a = posA[k], b = posC[k]; if (!b || Math.hypot(a[0
 check('切回放射位置还原', diff === 0, '差异 ' + diff);
 
 check('全程无 JS 异常', p.exceptions.length === 0, '异常 ' + p.exceptions.length + (p.exceptions[0] ? ': ' + String(p.exceptions[0]).slice(0, 120) : ''));
-await p.shot('.scratch/verification/u21-topo/u21_small_after.jpg');
+await p.shot('u21_small_after.jpg');
 const ok = summary();
 await p.close();
 process.exit(ok ? 0 : 1);
