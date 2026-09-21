@@ -4,7 +4,15 @@ import { S, A, sb, fmtTs } from './state.js';
 
 // ── 模块私有变量 (不可被其他模块 import) ──
 let cy = null, topoData = null, hlNode = null;
-let tCenter = null, tSliderTO = null, curLayout = 0;
+let tCenter = null, tSliderTO = null;
+// U21 (2026-09-21 用户对齐): 布局三档 — 0=放射(默认: 圆心=协调器, 半径=跳数) /
+// 1=列式(现有 S3 实现, 保留可回退) / 2=自由(Cytoscape 力导)
+const LAY_RADIAL = 0, LAY_COLUMN = 1, LAY_FORCE = 2;
+let curLayout = LAY_RADIAL;
+// U21 终端聚合: 手工展开的簇 {父aid:true} (徽章点击 / 搜索定位终端时自动置位)
+let expandedClusters = {};
+// U21 手动聚合开关 (用户 2026-09-21 裁定): 阈值内 (<50) 想只看骨架时手动打开
+let forceAgg = false;
 let tsStart = 0, tsEnd = 0;
 let topoNbt = null;   // 当前邻居表 (事件闭包引用, 实例复用时保持最新)
 let focusAid = null;  // S3: silentHidden 已删 (静默节点开关移除)
@@ -14,6 +22,14 @@ let dataTotal = 0;    // 导入数据总帧数 (空态引导判断用)
 // S3 (2026-08-28 用户选择): 路径色板优化 — 高区分度 8 色 (红蓝绿橙紫青黄粉,
 // 相邻 aid 撞色概率低; 曾暖色集中 #e74c3c/#e67e22/#f39c12/#e91e63 易混)
 const PATH_COLORS = ['#e6194B','#4363d8','#3cb44b','#f58231','#911eb4','#42d4f4','#d2a106','#f032e6'];
+
+// U21 放射布局参数 (全部为 px / 阈值, 可由实测校准)
+const R_FOLD_MIN   = 50;   // 节点总数 < 50 → 全展开不聚合 (小网络不打扰)
+const R_RING_GAP   = 120;  // 相邻跳数环的半径增量
+const R_GAP_SPARSE = 88;   // 稀疏 (双行标签 地址+型号) 环上最小弦距
+const R_GAP_DENSE  = 56;   // 密集 (单行地址) 环上最小弦距
+const R_LBL_MIN    = 46;   // 弦距低于此值 → 非路由节点标签隐藏 (仅 tooltip)
+const R_LBL_ONE    = 96;   // 弦距低于此值 → 只显单行地址 (型号进 tooltip)
 
 reg('topo', function(){
   // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
@@ -45,11 +61,16 @@ reg('topo', function(){
     +'<button class="btn btn-p btn-s" id="tgo" title="地址→定位 · PAN→过滤">🔍 全量</button>'
     +'<button class="btn btn-o btn-s" id="trst" title="重置所有过滤">🗑 重置</button>'
     +'<span class="toolbar-sep">|</span>'
-    // 视图组 (收纳): ⋯ 展开/收起 适应/层次/图例
+    // U21: 布局三档 (放射=默认 / 列式=现有 / 自由=力导) + 聚合开关 —
+    // 常显 (U21 主控件, 替换原二态「层次」按钮; 不随 ⋯ 视图 收纳)
+    +'<select id="tlaymode" title="布局方式: 放射 (圆心=协调器, 半径=跳数) / 列式 / 自由">'
+      +'<option value="0">◉ 放射</option><option value="1">▦ 列式</option><option value="2">🔄 自由</option>'
+    +'</select>'
+    +'<button class="btn btn-o btn-s" id="tagg" title="终端聚合: 折叠终端设备为 ×N 徽章 (≥50 节点自动)">⊞ 聚合</button>'
+    // 视图组 (收纳): ⋯ 展开/收起 适应/图例
     +'<button class="btn btn-o btn-s" id="tviews" title="视图选项">⋯ 视图</button>'
     +'<span id="tview-group" class="tview-group" style="display:none">'
     +'<button class="btn btn-o btn-s" id="tfit" title="适应全图">⤢ 适应</button>'
-    +'<button class="btn btn-o btn-s" id="tlay" title="切换布局">📐 层次</button>'
     +'<button class="btn btn-o btn-s" id="tlegend" title="显示/隐藏图例">📖 图例</button>'
     +'</span>'
     // 图例浮层 (C1: 折叠收纳, 点击切换)
@@ -63,6 +84,10 @@ reg('topo', function(){
       +'<div class="lp-row"><span class="edge-demo traffic"></span> 数据流 (通信)</div>'
       +'<div class="lp-row"><span class="edge-demo route"></span> 路由路径 (当前实线 / 历史虚线)</div>'
       +'<div class="lp-row"><span class="edge-demo parent"></span> 父链路 (poll/入网/下行证据)</div>'
+      +'<div class="lp-title mt-1">布局 (U21)</div>'
+      +'<div class="lp-row"><span class="lp-ic">◉</span> 放射: 圆心=协调器, 半径=跳数</div>'
+      +'<div class="lp-row"><span class="lp-ic">⌀</span> 最外圈 = 无链路证据 (未关联)</div>'
+      +'<div class="lp-row"><span class="lp-ic">⊞</span> 终端聚合 ×N (点击徽章展开/收起; 顶栏 ⊞ 聚合 手动开关)</div>'
       +'<div class="lp-title mt-1">状态</div>'
       +'<div class="lp-row"><span class="lp-ic">🔄</span> 重连中 (淡橙)</div>'
       +'<div class="lp-row"><span class="lp-ic">💤</span> 休眠 (灰半透明)</div>'
@@ -116,6 +141,7 @@ reg('topo', function(){
     if(t1!=null) params.push('time_end='+t1);
     var url='/api/topology/events'+(params.length?'?'+params.join('&'):'');
     A.get(url).then(function(d){
+      expandedClusters={};   // U21: 数据重载 (换素材/换 PAN/重置) → 聚合展开状态归零
       topoData=d; S.topo=d;
       try{ if(callback) callback(d); }catch(e){ console.error('renderGraph error:',e); }
       try{ renderSidebar(d); }catch(e){ console.error('renderSidebar error:',e); }
@@ -344,14 +370,251 @@ reg('topo', function(){
 
   // ═══ Cytoscape 力导向图 (路径着色 + 流量背景) ═══
 
+  // ═══════════════ U21: 放射布局 + 终端聚合 ═══════════════
+  // 用户对齐 (2026-09-21): ①放射 + 跳数分环 ②终端聚合 (小网络 <50 全展开)
+  // ③三档布局 (放射默认/列式现有/自由) ④标签外侧 + 密度自适应
+  //
+  // ⚠️ 位置稳定性铁律: 拖动时刻游标 / 时间过滤**只改样式不重算位置** —
+  // 因此层级只取自后端 link_evidence_parent 的父字段 (全量加载, 与 curT 无关),
+  // 不用 cy.edges() 现画边做 BFS (那条边集随时刻变化 → 节点会跳)
+  function halfSize(dt){ return dt==='coordinator'?30:(dt==='router'?16:11); }
+
+  // 树: 父表 → 断环 → 深度 → 折叠决策 (渲染集/折叠集/孤儿集)
+  function buildRadialTree(d){
+    var ns=(d&&d.nodes)||[], i, a;
+    var byAid={};
+    for(i=0;i<ns.length;i++)byAid[ns[i].aid]=ns[i];
+    // 聚合条件: 放射布局 + 非聚焦 + (节点数 ≥ 阈值 或 手动开关)
+    var foldEnabled=(curLayout===LAY_RADIAL)&&(focusAid==null)&&(ns.length>=R_FOLD_MIN||forceAgg);
+    var par={};
+    for(i=0;i<ns.length;i++){a=ns[i].aid;var p=ns[i].parent;par[a]=(p!=null&&p!==a&&byAid[p])?p:null;}
+    // 断环: 证据冲突 (A→B→A) 时环上节点视为无父 — 诚实: 不假装层级 (数量级极小)
+    for(i=0;i<ns.length;i++){
+      var x=ns[i].aid, seen={}, bad=false;
+      while(x!=null){ if(seen[x]){bad=true;break;} seen[x]=true; var pn=par[x]; x=(pn==null?null:pn); }
+      if(bad)par[ns[i].aid]=null;
+    }
+    var kids={};
+    for(i=0;i<ns.length;i++){a=ns[i].aid;var pp=par[a];if(pp!=null)(kids[pp]=kids[pp]||[]).push(a);}
+    for(var kk in kids)kids[kk].sort(function(x2,y2){return x2-y2;});  // 确定性
+    // 根: 优先协调器 (0x0000), 否则无父节点中 aid 最小者
+    var roots=[]; for(i=0;i<ns.length;i++){if(par[ns[i].aid]==null)roots.push(ns[i].aid);}
+    roots.sort(function(x2,y2){return x2-y2;});
+    var root=(byAid[0]!=null)?0:(roots.length?roots[0]:null);
+    var dep={}, q=[];
+    if(root!=null){dep[root]=0;q=[root];}
+    for(var qi=0;qi<q.length;qi++){var ks=kids[q[qi]]||[];for(i=0;i<ks.length;i++){if(dep[ks[i]]==null){dep[ks[i]]=dep[q[qi]]+1;q.push(ks[i]);}}}
+    // 折叠决策 (BFS 顺序 = 父先于子)
+    //   候选 = 有渲染父的 end_device 且父下候选 ≥2 台 (单台聚合成徽章无意义 → 直接显示)
+    //   候选但已展开 (expandedClusters) → 照常渲染, 徽章保留作"收起"入口
+    var rendered={}, foldSet={}, clusterBy={}, orphan=[];
+    if(root!=null)rendered[root]=true;
+    for(i=0;i<ns.length;i++){a=ns[i].aid;if(dep[a]==null)orphan.push(a);}
+    for(var oi=0;oi<q.length;oi++){
+      a=q[oi];
+      if(a===root)continue;
+      rendered[a]=true;
+      var n=byAid[a], p=par[a];
+      if(foldEnabled&&p!=null&&rendered[p]&&n.device_type==='end_device')(clusterBy[p]=clusterBy[p]||[]).push(a);
+    }
+    for(var cp in clusterBy){
+      if(clusterBy[cp].length<2||expandedClusters[cp])continue;
+      for(i=0;i<clusterBy[cp].length;i++){ delete rendered[clusterBy[cp][i]]; foldSet[clusterBy[cp][i]]=+cp; }
+    }
+    // 渲染可达性: 父不在渲染集 (自身被折叠) 的节点不能挂在树上 (徽章无锚点) → 归孤儿环
+    for(var oi3=0;oi3<q.length;oi3++){
+      a=q[oi3];
+      if(a===root||!rendered[a])continue;
+      if(par[a]==null||!rendered[par[a]]){ rendered[a]=false; orphan.push(a); }
+    }
+    // 子树权重 = 渲染子树节点数 (折叠的终端不占角度: 徽章贴父节点, 不需要扇区)
+    var w={};
+    for(i=q.length-1;i>=0;i--){ a=q[i]; if(!rendered[a])continue; var sum=1, ks2=kids[a]||[];
+      for(var j2=0;j2<ks2.length;j2++){if(rendered[ks2[j2]])sum+=w[ks2[j2]]||0;} w[a]=sum; }
+    return {ns:ns,byAid:byAid,par:par,kids:kids,dep:dep,root:root,rendered:rendered,
+            foldSet:foldSet,clusterBy:clusterBy,orphan:orphan,w:w,foldEnabled:foldEnabled,
+            dense:ns.length>40};
+  }
+
+  // 角度 (子树扇区递归) + 半径 (环上最小弦距) + 坐标
+  function computeRadialPositions(tree, gap, ringGap){
+    var rendered=tree.rendered, ang={}, i;
+    // ⚠️ 内部循环必须用**局部**变量: 曾与外层共用 i → 递归返回后外层索引被重置 → 死循环 (页面卡死实锤)
+    var alloc=function(a,a0,a1){
+      ang[a]=(a0+a1)/2;
+      var ks=[], tot=0, j;
+      var k=tree.kids[a]||[];
+      for(j=0;j<k.length;j++){if(rendered[k[j]]){ks.push(k[j]);tot+=tree.w[k[j]]||1;}}
+      if(!tot)return;
+      var cur=a0;
+      for(j=0;j<ks.length;j++){var span=(a1-a0)*((tree.w[ks[j]]||1)/tot);alloc(ks[j],cur,cur+span);cur+=span;}
+    };
+    var start=-Math.PI/2;   // 第 1 跳从正上方开始, 顺时针 (与参考图同方向)
+    if(tree.root!=null)alloc(tree.root,start,start+2*Math.PI);
+    // 每环节点角度排序 → 相邻角距 → 所需半径 (gap/Δθ, 取最大)
+    var byRing={}, aid;
+    for(aid in rendered){ if(aid==tree.root)continue; (byRing[tree.dep[aid]]=byRing[tree.dep[aid]]||[]).push(+aid); }
+    var r={}; if(tree.root!=null)r[tree.dep[tree.root]]=0;
+    var ringGapUsed={};
+    for(var dd in byRing){
+      var ids=byRing[dd]; ids.sort(function(x,y){return ang[x]-ang[y];});
+      var need=0;
+      if(ids.length<2){ need=0; }
+      else{
+        for(i=0;i<ids.length;i++){
+          var nx=(i+1)%ids.length;
+          var dth=(nx===0)?(ang[ids[0]]+2*Math.PI-ang[ids[i]]):(ang[ids[nx]]-ang[ids[i]]);
+          if(dth<1e-9)dth=1e-9;
+          if(gap/dth>need)need=gap/dth;
+        }
+      }
+      var prevR=(r[+dd-1]!=null)?r[+dd-1]:0;
+      r[dd]=Math.max(prevR+ringGap,need);
+      ringGapUsed[+dd]=need;
+    }
+    var pos={}, meta={}, maxD=0;
+    for(aid in tree.dep)if(tree.dep[aid]>maxD)maxD=tree.dep[aid];
+    for(aid in rendered){
+      var a2=+aid, R=r[tree.dep[a2]]||0, th=ang[a2];
+      pos[a2]= (a2===tree.root)?{x:0,y:0}:{x:R*Math.cos(th),y:R*Math.sin(th)};
+      meta[a2]={r:R,th:th,dep:tree.dep[a2]};
+    }
+    // 孤儿 (无链路证据 / 父不在集 / 断环) → 最外圈独立分环, 不假装挂在树上
+    if(tree.orphan.length){
+      var baseR=(maxD>0||r[maxD])?(r[maxD]||0)+ringGap:ringGap;
+      // 孤儿数 ≤ 单环容量 → 整圈均分 (避免少数孤儿挤在相邻槽位);
+      // 超出则按槽位分多环 (每环 +ringGap), 奇偶环错半格避让径向对齐
+      var cap=Math.max(6,Math.floor(2*Math.PI*baseR/gap));
+      var per=(tree.orphan.length<=cap)?tree.orphan.length:cap;
+      for(i=0;i<tree.orphan.length;i++){
+        var oi=Math.floor(i/per), k2=i%per;
+        var th2=start+(k2+0.5)/per*2*Math.PI+(oi%2?Math.PI/per:0);
+        var R2=baseR+oi*ringGap;
+        pos[tree.orphan[i]]={x:R2*Math.cos(th2),y:R2*Math.sin(th2)};
+        meta[tree.orphan[i]]={r:R2,th:th2,dep:null,orphan:true};
+      }
+    }
+    return {pos:pos,meta:meta,r:r,need:ringGapUsed,ang:ang,gapUsed:gap};
+  }
+
+  // 应用放射布局 (keepZoom/keepPan 非空 = 数据刷新时保留用户视野, 与列式同语义)
+  function applyRadialLayout(keepZoom, keepPan, treeIn){
+    var d=topoData||S.topo; if(!cy||!d)return null;
+    var tree=treeIn||buildRadialTree(d);
+    var gap=tree.dense?R_GAP_DENSE:R_GAP_SPARSE;
+    var res=computeRadialPositions(tree,gap,R_RING_GAP);
+    var positions={};
+    cy.nodes().forEach(function(n){
+      var id=n.id();
+      if(n.data('is_badge'))return;
+      if(res.pos[id])positions[id]=res.pos[id];
+    });
+    // 徽章: 贴父节点外侧 (半径方向) — 汇总折叠终端的数量与状态
+    var badges=[];
+    for(var p in tree.clusterBy){
+      var pa=+p, pm=res.meta[pa];
+      if(!pm)continue;                                    // 父不在渲染集 → 无锚点, 不画徽章
+      if(!cy.getElementById('agg-'+p).nonempty())continue; // 元素不存在 (未走 renderGraph 的路径) → 跳过
+      var R=pm.r+halfSize((tree.byAid[pa]||{}).device_type)+26;
+      var th=pm.th;
+      var bpos={x:R*Math.cos(th),y:R*Math.sin(th)};
+      positions['agg-'+p]=bpos;
+      badges.push(p);
+    }
+    cy.layout({name:'preset',positions:positions,fit:true,padding:40}).run();
+    if(keepZoom!=null){cy.zoom(keepZoom);cy.pan(keepPan);}
+    applyRadialLabels(tree, res);
+    document.getElementById('off-label').style.display='none';
+    return {tree:tree,res:res,badges:badges};
+  }
+
+  // 标签: 外侧 (按角度象限) + 密度自适应 (弦距决定 全显/单行/隐藏)
+  function applyRadialLabels(tree, res){
+    var byRing={};
+    cy.nodes().forEach(function(n){
+      if(n.data('is_badge'))return;
+      var a=n.data('aid'); if(a==null)return;
+      var m=res.meta[a]; if(!m)return;
+      var key=m.orphan?('o'+(m.r|0)):String(m.dep);
+      (byRing[key]=byRing[key]||[]).push({n:n,m:m});
+    });
+    var adiff=function(x,y){var d2=(y-x)%(2*Math.PI);if(d2<0)d2+=2*Math.PI;return d2;};
+    for(var rk in byRing){
+      var arr=byRing[rk];
+      arr.sort(function(x,y){return x.m.th-y.m.th;});
+      for(var i=0;i<arr.length;i++){
+        var it=arr[i], n=it.n, m=it.m;
+        var chord=1e9;
+        if(arr.length>1){
+          var prev=arr[(i-1+arr.length)%arr.length], next=arr[(i+1)%arr.length];
+          chord=Math.min(adiff(prev.m.th,m.th), adiff(m.th,next.m.th))*m.r;
+        }
+        var dt=n.data('device_type')||'unknown';
+        var isRouter=(dt==='router'||dt==='coordinator');
+        var oneLine=tree.dense||chord<R_LBL_ONE;
+        var hide=(!isRouter&&chord<R_LBL_MIN);
+        var aid=n.data('aid');
+        var s='0x'+aid.toString(16).toUpperCase().padStart(4,'0');
+        var ic={rejoining:'🔄',sleeping:'💤',offline:'⏻'}[n.data('behavior')]||'';
+        if(!hide&&ic)s+=' '+ic;
+        if(!hide&&!oneLine&&n.data('model_id'))s+='\n'+n.data('model_id');
+        if(n.data('stale'))s+=' ⏳';
+        n.data('label',s);
+        n.style('text-opacity',hide?0:1);
+        // 外侧: 左/右半 → 水平对齐; 上/下 → 垂直对齐
+        var cosv=Math.cos(m.th);
+        if(m.r<1){ n.style({'text-halign':'center','text-valign':'bottom','text-margin-x':0,'text-margin-y':4}); continue; }
+        if(Math.abs(cosv)>0.7){
+          n.style({'text-halign':cosv>0?'left':'right','text-valign':'center','text-margin-x':cosv>0?6:-6,'text-margin-y':0});
+        }else{
+          n.style({'text-halign':'center','text-valign':Math.sin(m.th)>0?'bottom':'top','text-margin-x':0,'text-margin-y':6});
+        }
+      }
+    }
+  }
+
+  // 布局 UI 同步 (select 值 + 待定区标签)
+  function syncLayoutUI(){
+    var sel=document.getElementById('tlaymode');
+    if(sel)sel.value=String(curLayout);
+    var ol=document.getElementById('off-label');
+    if(ol)ol.style.display=(curLayout===LAY_COLUMN)?'block':'none';
+    var ab=document.getElementById('tagg');
+    if(ab){
+      var nn=((topoData||S.topo||{}).nodes||[]).length;
+      ab.classList.toggle('on',curLayout===LAY_RADIAL&&(forceAgg||nn>=R_FOLD_MIN));
+      ab.title='终端聚合: 折叠终端设备为 ×N 徽章'
+        +(nn>=R_FOLD_MIN?' (本网络 ≥'+R_FOLD_MIN+' 节点, 自动)':' (小网络, 手动开关)')
+        +'; 当前 '+(forceAgg||nn>=R_FOLD_MIN?'开':'关');
+    }
+  }
+
+  // 搜索/定位到被折叠的终端 → 自动展开所在簇 (ticket 决策 2)
+  function ensureClusterVisible(aid){
+    var d=topoData||S.topo; if(!d||!d.nodes)return false;
+    var byAid={}, i; for(i=0;i<d.nodes.length;i++)byAid[d.nodes[i].aid]=d.nodes[i];
+    var cur=byAid[aid]; if(!cur)return false;
+    if(!(d.nodes.length>=R_FOLD_MIN||forceAgg))return false;   // 未启用聚合 → 节点本就可见
+    var changed=false, guard=0;
+    while(cur&&cur.parent!=null&&byAid[cur.parent]&&guard++<20){
+      if(cur.device_type==='end_device'&&!expandedClusters[cur.parent]){expandedClusters[cur.parent]=true;changed=true;}
+      cur=byAid[cur.parent];
+    }
+    return changed;
+  }
+
   function renderGraph(d){
     if(!d) return;
     var nbt=d.neighbor_tables||{};
     var ns=d.nodes||[];
     if(ns.length===0){if(cy){cy.destroy();cy=null;}document.getElementById('tinfo').textContent='无拓扑数据';showEmptyGuide();return;}
-    if(ns.length<10){curLayout=1;} // 小PAN默认力导, 固定列无意义
+    // U21: 小网络不再强制力导 — 放射布局对星形小网络 (参考图形态) 更可读,
+    // 用户可用顶栏三档自行切换
     var es=d.edges||[];
     var rps=d.route_paths||[];
+    // U21: 放射树 (父/深度/折叠决策) — 与布局函数共用同一棵树, 避免折叠集不一致;
+    // 非放射模式 foldEnabled=false → foldSet 空 = 全展开 (列式/自由保持现有行为)
+    var rTree=buildRadialTree(d);
 
     // ── 路径节点集合 ──
     var pathNodes={};
@@ -405,6 +668,7 @@ reg('topo', function(){
     for(var i=0;i<ns.length;i++){
       var n=ns[i]; var aid=n.aid;
       if(focusSet&&!focusSet[aid])continue;  // 聚焦: 非链路链节点不渲染
+      if(rTree.foldSet[aid]!=null)continue;  // U21: 折叠的终端不渲染元素, 由父节点徽章代表
       var dt=n.device_type||'unknown';
       // S3-C: ghost 节点 = 聚焦时历史链路段的父/中继 (灰淡, 对比显示)
       var isGhost=focusCore!=null&&!focusCore[aid]&&aid!==focusAid;
@@ -436,6 +700,25 @@ reg('topo', function(){
           inactive:!online},
         classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')+(online?'':' inactive')+(isGhost?' ghost-node':'')):(online?'offpath':'offpath inactive')
       });
+    }
+    // ── U21 终端聚合徽章: 普通节点 + 特殊样式 ──
+    // ⚠️ 不用 Cytoscape compound (data.parent 是保留字段, U13 a1d981a 踩过: 网关框住全部子设备)
+    // 徽章 = 独立节点, 靠 position 贴在父节点外侧 (布局阶段算)
+    for(var fpk in rTree.clusterBy){
+      var fpmem=rTree.clusterBy[fpk], fst={rejoining:0,offline:0,sleeping:0};
+      for(var fmi=0;fmi<fpmem.length;fmi++){
+        var fmb=(rTree.byAid[fpmem[fmi]]||{}).behavior;
+        if(fst[fmb]!=null)fst[fmb]++;
+      }
+      var fpop=!!expandedClusters[fpk];
+      var fbl='×'+fpmem.length;
+      if(fst.rejoining)fbl+=' ⚠️'+fst.rejoining;   // U14 信息不丢: 簇内状态汇总
+      if(fst.offline)fbl+=' ⛔'+fst.offline;
+      if(fst.sleeping)fbl+=' 💤'+fst.sleeping;
+      if(fpop)fbl+=' ▾';
+      cyNodes.push({data:{id:'agg-'+fpk, aid:null, is_badge:true, parent_aid:+fpk,
+        count:fpmem.length, members:fpmem.slice(), stats:fst, label:fbl},
+        classes:'agg-badge'+(fpop?' agg-open':'')});
     }
     // ⚠️ S3-重构 (2026-08-27, 用户对齐): 节点全量返回 (后端 nodes 含所有出现过节点),
     // 在线状态协议判定 (online 字段) — 窗内无在线证据的节点灰显, 不消失不跳变
@@ -584,6 +867,7 @@ reg('topo', function(){
 
     // ── 初始化 Cytoscape (U7: 实例复用 — 时间过滤只换元素不销毁重建) ──
     topoNbt=nbt;
+    var freshCy=!cy;   // U21: 新建实例 (重进页面/空态恢复) → 自由布局需重跑力导, 否则全堆原点
     if(!cy){
       cy=cytoscape({
         container: document.getElementById('cy-graph'),
@@ -596,6 +880,13 @@ reg('topo', function(){
         {selector:'node.router', style:{'background-color':'#3b82f6','shape':'diamond','width':32,'height':32}},
         {selector:'node.end_device', style:{'background-color':'#16a34a','shape':'ellipse','width':22,'height':22}},
         {selector:'node.unknown', style:{'background-color':'#94a3b8','shape':'triangle','width':22,'height':22}},
+        // U21 终端聚合徽章 (×N) — 紫牌贴父节点外侧, 点击展开/收起 (普通节点, 非 compound)
+        {selector:'node.agg-badge', style:{'background-color':'#7c3aed','shape':'round-rectangle',
+          'width':64,'height':20,'font-size':'9px','font-weight':'bold','color':'#fff',
+          'text-valign':'center','text-halign':'center','text-margin-x':0,'text-margin-y':0,
+          'text-wrap':'none','text-outline-width':0,'border-width':2,'border-color':'#fff',
+          'z-index':20,'opacity':0.95}},
+        {selector:'node.agg-badge.agg-open', style:{'background-color':'#a78bfa','border-style':'dashed'}},
         // U13-B2 (2026-08-25): 密集模式 — label 移入节点内部 (不依赖列间距)
         // + 节点缩小 (曾双行/单行 label 在节点下方, 间距 34px 只比节点 32px 多 2px → 文字必被压)
         // B3 (用户反馈样式丑): 深色字 + 白色描边 — 白字在亮色节点 (蓝/绿/橙) 对比差
@@ -662,7 +953,21 @@ reg('topo', function(){
       var tooltip=document.createElement('div');tooltip.id='cy-tt';tooltip.style.cssText='position:absolute;display:none;background:#1e293b;color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:999;max-width:280px;white-space:pre-line';
       document.getElementById('cy-graph').appendChild(tooltip);
 
-      cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;
+      cy.on('mouseover','node',function(e){var n=e.target;var d=n.data();
+        // U21: 聚合徽章 tooltip — 成员地址 + 状态汇总 (U14 信息不丢)
+        if(d.is_badge){
+          var hx=function(x){return '0x'+x.toString(16).toUpperCase().padStart(4,'0');};
+          var mem=(d.members||[]), ml=mem.slice(0,12).map(hx).join(' ');
+          var st=d.stats||{};
+          tooltip.innerHTML='<b>终端聚合 ×'+d.count+'</b> → 父 '+hx(d.parent_aid)+'\n'
+            +(st.rejoining?'⚠️ 重连中 '+st.rejoining+' 台\n':'')
+            +(st.offline?'⛔ 离线 '+st.offline+' 台\n':'')
+            +(st.sleeping?'💤 休眠 '+st.sleeping+' 台\n':'')
+            +ml+(mem.length>12?' …(共'+mem.length+'台)':'')
+            +'\n点击徽章'+(n.hasClass('agg-open')?'收起':'展开')+'该簇';
+          tooltip.style.display='block';updateTooltipPos(e);return;
+        }
+        var nbtEntry=topoNbt[d.aid];var nbCount=nbtEntry?Object.keys(nbtEntry).length:0;
         // S3-重构: 无在线证据节点 tooltip (终端窗内无 poll / 路由窗内无帧)
         if(d.inactive){tooltip.innerHTML='<b>'+d.label+'</b>\n当前时间窗无在线证据 (终端无 poll / 路由无帧)';tooltip.style.display='block';updateTooltipPos(e);return;}
         // U14-4: tooltip 增强 — EUI64/厂商型号/行为状态/poll 间隔/帧量收/发/LS 邻居数
@@ -718,14 +1023,18 @@ reg('topo', function(){
     // ⚠️ S3 交互重构 (2026-08-28, 用户选择): 单击=高亮 / 双击=聚焦
     // (曾单击进聚焦/双击高亮 — 容易误触; 交换后单击轻量查看, 双击才进入聚焦)
     cy.on('tap','node',function(e){var n=e.target;var d=n.data();
+      // U21 聚合徽章: 点击 = 展开/收起该父节点下的终端簇
+      if(d.is_badge){var bp=d.parent_aid;expandedClusters[bp]=!expandedClusters[bp];
+        if(S.topo)renderGraph(S.topo);return;}
       if(d.inactive)return;
       var aid=n.data('aid');
+      if(aid==null)return;
       if(hlNode===aid){clearHighlight();return;}   // 再点同节点取消高亮
       hlNode=aid;highlightNode(aid);
     });
     // 双击 → 聚焦 (再双击同节点退出)
     cy.on('dbltap','node',function(e){var n=e.target;var aid=n.data('aid');
-      if(n.data('inactive'))return;
+      if(n.data('inactive')||n.data('is_badge'))return;
       if(focusAid===aid){exitFocus();return;}
       enterFocus(aid);
     });
@@ -733,6 +1042,10 @@ reg('topo', function(){
       cy.json({elements: cyNodes.concat(cyEdges)});   // 实例复用: 只替换元素, 保留样式表/事件/视图
     }
 
+    // U21: 布局调度 — 放射 (默认) / 列式 (现有, 原样保留) / 自由 (位置保持, 由布局切换触发)
+    if(curLayout===LAY_RADIAL){
+      applyRadialLayout(userZoom,userPan,rTree);
+    }else if(curLayout===LAY_COLUMN){
     // 默认固定列 — 深度+布局+fit一体化
     (function(){
       // ⚠️ U13 步骤 A (2026-08-25): 层级只基于**协议链路证据** (route 边 = RR 路径,
@@ -774,18 +1087,25 @@ reg('topo', function(){
       cy.layout({name:'preset',positions:pos,fit:true,padding:40}).run();
       if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}  // 恢复用户缩放
       document.getElementById('off-label').style.display='block';
-      // ⚠️ S3 修复: 按实际布局状态显示按钮文本 (小网络 <10 节点默认力导,
-      // 曾无条件写 '▦ 固定列' → 显示与实际布局不一致)
-      document.getElementById('tlay').textContent=curLayout===1?'🔄 力导':'▦ 固定列';
     })();
+    }else{
+      // 自由 (力导): 位置由 cose 计算, 数据刷新时保留 (不重排 = 不跳动)
+      if(freshCy)runLayout();   // 新建实例上无历史位置 → 必须跑一次力导
+      else if(userZoom!=null){cy.zoom(userZoom);cy.pan(userPan);}
+    }
+    syncLayoutUI();
   }
 
   // ═══ 布局引擎 ═══
   function runLayout(){
     if(!cy) return;
+    // U21: 放射模式直接走新布局 (层级取自父链路证据的父字段, 与时刻无关)
+    if(curLayout===LAY_RADIAL){ applyRadialLayout(); syncLayoutUI(); return; }
     // BFS深度: 协议链路证据 (route 边 = RR 路径 / parent 边 = poll/Assoc 父链路)
     // ⚠️ U13 步骤 A: 曾混入 LS 邻居扩展 (物理可达 ≠ 转发层级) — 已移除;
     // LS 仅作辅助边显示, 不参与层级
+    // (⚠️ U21: 此 BFS 走 cy.edges() 现画边 = 随时刻游标变化, 仅列式布局使用 —
+    //  放射布局不得使用它, 否则拖动游标节点会跳)
     var nodeDepth={}; nodeDepth[0]=0;
     var chg=true;while(chg){chg=false;
       cy.edges().forEach(function(e){
@@ -799,9 +1119,9 @@ reg('topo', function(){
     var pathMax=0; for(var k in nodeDepth)if(nodeDepth[k]>pathMax)pathMax=nodeDepth[k];
     cy.nodes().forEach(function(n){var aid=n.data('aid');if(nodeDepth[aid]==null)nodeDepth[aid]=99;});
 
-    if(curLayout===0){  // fixed column
+    if(curLayout===LAY_COLUMN){  // 列式 (U21 前的原"固定列", 保留可回退)
       // off-path节点换琥珀色+连线换可见色 (inactive 窗外节点跳过, 保持灰度)
-      cy.nodes().forEach(function(n){if(n.data('inactive'))return;n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;
+      cy.nodes().forEach(function(n){if(n.data('inactive')||n.data('is_badge'))return;n.style('display','element');var d=nodeDepth[n.data('aid')];if(d==null)d=99;
         var isOnPath=n.data('on_path')===true; // 严格true才算路径节点
         if(!isOnPath){n.style('background-color','#f59e0b');n.style('border-color','#d97706');n.style('opacity','0.9');
           n.connectedEdges().forEach(function(e){if(e.data('edge_type')==='traffic'){e.style('line-color','#f59e0b');e.style('target-arrow-color','#f59e0b');e.style('opacity','0.6');}});
@@ -846,12 +1166,14 @@ reg('topo', function(){
       // ⚠️ S3 修复: 删除引用 renderGraph 局部变量 userZoom/userPan 的失效行
       // (切换布局后 fit 全图, 无需保留缩放)
       document.getElementById('off-label').style.display='block';
-      document.getElementById('tlay').textContent='▦ 固定列';
-    }else{
+      syncLayoutUI();
+    }else{  // 自由 (力导)
       document.getElementById('off-label').style.display='none';
-      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');n.style('width','');n.style('height','');n.style('text-opacity','');n.style('font-size','');n.removeClass('offpath');});
+      // 清除放射模式的 per-node 标签覆盖 (text-halign/valign/margin) → 回落到样式表
+      cy.nodes().forEach(function(n){n.style('display','element');n.style('opacity','1');n.style('background-color','');n.style('border-color','');n.style('width','');n.style('height','');n.style('text-opacity','');n.style('font-size','');n.removeClass('offpath');
+        if(!n.data('is_badge'))n.removeStyle('text-halign text-valign text-margin-x text-margin-y');});
       cy.layout({name:'cose',animate:true,animationDuration:800,nodeRepulsion:function(n){return n.degree()>3?12000:6000},idealEdgeLength:function(e){return 80},gravity:20,numIter:2000}).run();
-      document.getElementById('tlay').textContent='🔄 力导';
+      syncLayoutUI();
     }
   }
 
@@ -1248,6 +1570,8 @@ reg('topo', function(){
     if(!av||!cy) return;
     var aid=parseInt(av,16);
     if(isNaN(aid)){document.getElementById('taddr').title='无效地址 (hex)';return;}
+    // U21: 目标是被聚合的终端 → 先展开所在簇 (否则找不到元素)
+    if(ensureClusterVisible(aid)&&S.topo)renderGraph(S.topo);
     var n=cy.getElementById(''+aid);
     if(n&&n.nonempty()){
       S.topoAddr='0x'+aid.toString(16).toUpperCase().padStart(4,'0');
@@ -1256,7 +1580,7 @@ reg('topo', function(){
       cy.animate({center:{eles:n},zoom:Math.max(cy.zoom(),1.5)},{duration:300});
       document.getElementById('taddr').title='';
     }else{
-      document.getElementById('taddr').title='节点不在当前图 (可能被 PAN 过滤)';
+      document.getElementById('taddr').title='节点不在当前图 (可能被 PAN 过滤/无链路证据)';
     }
   }
   document.getElementById('taddr').addEventListener('keydown',function(e){if(e.key==='Enter')locateAddr();});
@@ -1334,9 +1658,24 @@ reg('topo', function(){
   document.addEventListener('click',function(){var p=document.getElementById('legend-pop');if(p&&!p.classList.contains('hidden'))p.classList.add('hidden');});
 
   document.getElementById('tfit').addEventListener('click',function(){if(cy){cy.zoom(1);cy.pan({x:0,y:0});cy.fit(undefined,30);}});
-  document.getElementById('tlay').addEventListener('click',function(){
-    curLayout=(curLayout+1)%2; runLayout();
-    if(curLayout===1) setTimeout(function(){cy.fit(undefined,30);},900);
+  // U21: 布局三档切换 — 不丢过滤/时刻游标状态; 切换后 fit 视野
+  // (放射/列式有"聚合/展开"差异 → 需重建元素集, 故走 renderGraph; 自由再跑力导)
+  document.getElementById('tlaymode').addEventListener('change',function(){
+    curLayout=parseInt(this.value,10);
+    if(!isFinite(curLayout))curLayout=LAY_RADIAL;
+    if(!cy)return;
+    if(S.topo)renderGraph(S.topo);
+    if(curLayout===LAY_FORCE){ runLayout(); setTimeout(function(){if(cy)cy.fit(undefined,30);},900); }
+    else setTimeout(function(){if(cy)cy.fit(undefined,30);},60);
+  });
+  // U21: 手动聚合开关 (用户裁定 2026-09-21) — 小网络想只看"路由骨架 + ×N 徽章"时打开;
+  // 非放射布局下点击 → 顺带切回放射 (聚合只在放射生效)
+  document.getElementById('tagg').addEventListener('click',function(){
+    forceAgg=!forceAgg;
+    if(curLayout!==LAY_RADIAL){curLayout=LAY_RADIAL;var sel=document.getElementById('tlaymode');if(sel)sel.value='0';}
+    if(S.topo)renderGraph(S.topo);
+    syncLayoutUI();
+    setTimeout(function(){if(cy)cy.fit(undefined,30);},80);
   });
   // ⚠️ S3 交互重构 (用户选择): 删 thl-clear (单击 toggle 已能清高亮) + tshow-all (待定区标签已标注)
   // ⚠️ S3 交互重构: 视图组收纳 (⋯ 视图 展开/收起 适应/层次/图例)
@@ -1447,7 +1786,10 @@ reg('topo', function(){
     loadData(initPan,function(d){
       try{renderGraph(d);}catch(e){console.error(e);}
       try{renderRoutePaths(d);}catch(e){console.error(e);}
-      try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);highlightNode(aid);}}catch(e){}
+      // U21: 跳转定位到被聚合的终端 → 先展开其所在簇再高亮
+      try{if(S.topoAddr&&cy){var aid=parseInt(S.topoAddr,16);
+        if(ensureClusterVisible(aid))renderGraph(S.topo);
+        highlightNode(aid);}}catch(e){}
     });
   });
 });

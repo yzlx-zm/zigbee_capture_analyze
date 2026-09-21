@@ -297,6 +297,8 @@ input.mono, select.mono { font-family: var(--font-mono); }
 .time-scale .ts-track { flex: 1; height: 4px; background: var(--c-border-strong); border-radius: 2px; position: relative; }
 /* S3 交互重构: 视图组收纳 (⋯ 视图 展开) */
 .tview-group { display: inline-flex; gap: 4px; }
+/* U21: 布局三档选择 (放射/列式/自由) */
+#tlaymode { font-size: var(--fs-xs); padding: 1px 4px; }
 .time-scale .ts-window { position: absolute; top: -1px; height: 6px; background: var(--c-primary); border-radius: 2px; opacity: 0.55; }
 /* S3 交互重构 (用户选择): 刻度条当前时刻指针 */
 .time-scale .ts-cursor { position: absolute; top: -3px; bottom: -3px; width: 2px;
