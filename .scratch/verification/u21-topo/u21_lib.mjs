@@ -117,10 +117,16 @@ export const P = {
     segs.push({a:n.position(),b:pp.position(),ids:[n.id(),''+lp]});});
   function ccw(A,B,C){return (C.y-A.y)*(B.x-A.x)>(B.y-A.y)*(C.x-A.x);}
   function inter(A,B,C,D){return (ccw(A,C,D)!==ccw(B,C,D))&&(ccw(A,B,C)!==ccw(A,B,D));}
-  var cross=0,cps=[];
+  var cross=0,cps=[],collin=0;
   for(var i=0;i<segs.length;i++)for(var j=i+1;j<segs.length;j++){
     var s=segs[i],t=segs[j];
     if(s.ids[0]===t.ids[0]||s.ids[0]===t.ids[1]||s.ids[1]===t.ids[0]||s.ids[1]===t.ids[1])continue;
+    // ⚠️ 共线/平行对 → 跳过: 单子链上祖父与父在同一射线 (垂直距离 0), 半径区间又不重叠,
+    // ccw 浮点判据会误报交叉 (test2 实测 1 条假阳性, 已用四点同角+半径区间证明)
+    var d1x=s.b.x-s.a.x,d1y=s.b.y-s.a.y,d2x=t.b.x-t.a.x,d2y=t.b.y-t.a.y;
+    var n1=Math.sqrt(d1x*d1x+d1y*d1y),n2=Math.sqrt(d2x*d2x+d2y*d2y);
+    if(n1<1e-9||n2<1e-9)continue;
+    if(Math.abs(d1x*d2y-d1y*d2x)<1e-6*n1*n2){collin++;continue;}
     if(inter(s.a,s.b,t.a,t.b)){cross++;if(cps.length<4)cps.push(s.ids.join('+')+' x '+t.ids.join('+'));}}
   var ov=0,ovp=[];
   for(var i=0;i<ns.length;i++)for(var j=i+1;j<ns.length;j++){
@@ -142,6 +148,6 @@ export const P = {
   var bd2=[]; bd.forEach(function(n){var pp=c.getElementById(''+n.data('parent_aid'));
     bd2.push({id:n.id(),dist:pp.nonempty()?Math.round(Math.hypot(pp.position().x-n.position().x,pp.position().y-n.position().y)):-1});});
   return {n:ns.length,badge:bd.length,badges:bh,badgeDist:bd2,rings:ringR,ringBad:ringBad,ringInc:incOk,
-    segs:segs.length,cross:cross,cps:cps,nodeOv:ov,ovp:ovp,lblVis:vis.length,lblHid:hid,lblOv:lbOv,lbp:lbp,
+    segs:segs.length,cross:cross,cps:cps,collin:collin,nodeOv:ov,ovp:ovp,lblVis:vis.length,lblHid:hid,lblOv:lbOv,lbp:lbp,
     w:Math.round(bb.w),h:Math.round(bb.h),rows:rows};})()`,
 };

@@ -30,6 +30,13 @@ const R_GAP_SPARSE = 88;   // 稀疏 (双行标签 地址+型号) 环上最小�
 const R_GAP_DENSE  = 56;   // 密集 (单行地址) 环上最小弦距
 const R_LBL_MIN    = 46;   // 弦距低于此值 → 非路由节点标签隐藏 (仅 tooltip)
 const R_LBL_ONE    = 96;   // 弦距低于此值 → 只显单行地址 (型号进 tooltip)
+// U21-2 (2026-09-21 用户裁定, 附实测对比图): 扇区权重指数 —
+//   第 1 环 α=0.5 (平方根平滑): "网关周围一圈"观感均匀 (子树大的中继不再独占 300°);
+//   更深层 α=1.0 (按子树规模): 保紧凑 (纯平滑会让深层中继的子设备挤进小扇区 → 环半径胀 35%)
+// 实测 (模拟多级 44 节点): hybrid 环 125/530/650/770 vs 纯平滑 125/408/926/1154 vs
+//   现状(α=1) 455/575/695/815; 完全均分 (α=0) 环 4 胀到 9358 = 灾难
+const R_ALPHA_L1   = 0.5;
+const R_ALPHA_DEEP = 1.0;
 
 reg('topo', function(){
   // 页面重建清理: 旧 cy 实例绑定已移除的容器, 必须销毁; 播放/防抖定时器同步停
@@ -439,15 +446,17 @@ reg('topo', function(){
   // 角度 (子树扇区递归) + 半径 (环上最小弦距) + 坐标
   function computeRadialPositions(tree, gap, ringGap){
     var rendered=tree.rendered, ang={}, i;
+    // 扇区权重: 第 1 环平滑 (均匀观感) / 深层按子树规模 (紧凑) — 见 R_ALPHA_L1 注释
+    var sectW=function(a){var w2=tree.w[a]||1;return Math.pow(w2,(tree.dep[a]||1)<=1?R_ALPHA_L1:R_ALPHA_DEEP);};
     // ⚠️ 内部循环必须用**局部**变量: 曾与外层共用 i → 递归返回后外层索引被重置 → 死循环 (页面卡死实锤)
     var alloc=function(a,a0,a1){
       ang[a]=(a0+a1)/2;
       var ks=[], tot=0, j;
       var k=tree.kids[a]||[];
-      for(j=0;j<k.length;j++){if(rendered[k[j]]){ks.push(k[j]);tot+=tree.w[k[j]]||1;}}
+      for(j=0;j<k.length;j++){if(rendered[k[j]]){ks.push(k[j]);tot+=sectW(k[j]);}}
       if(!tot)return;
       var cur=a0;
-      for(j=0;j<ks.length;j++){var span=(a1-a0)*((tree.w[ks[j]]||1)/tot);alloc(ks[j],cur,cur+span);cur+=span;}
+      for(j=0;j<ks.length;j++){var span=(a1-a0)*(sectW(ks[j])/tot);alloc(ks[j],cur,cur+span);cur+=span;}
     };
     var start=-Math.PI/2;   // 第 1 跳从正上方开始, 顺时针 (与参考图同方向)
     if(tree.root!=null)alloc(tree.root,start,start+2*Math.PI);
@@ -472,8 +481,7 @@ reg('topo', function(){
       r[dd]=Math.max(prevR+ringGap,need);
       ringGapUsed[+dd]=need;
     }
-    var pos={}, meta={}, maxD=0;
-    for(aid in tree.dep)if(tree.dep[aid]>maxD)maxD=tree.dep[aid];
+    var pos={}, meta={};
     for(aid in rendered){
       var a2=+aid, R=r[tree.dep[a2]]||0, th=ang[a2];
       pos[a2]= (a2===tree.root)?{x:0,y:0}:{x:R*Math.cos(th),y:R*Math.sin(th)};
@@ -481,7 +489,12 @@ reg('topo', function(){
     }
     // 孤儿 (无链路证据 / 父不在集 / 断环) → 最外圈独立分环, 不假装挂在树上
     if(tree.orphan.length){
-      var baseR=(maxD>0||r[maxD])?(r[maxD]||0)+ringGap:ringGap;
+      // ⚠️ baseR 必须取「实际摆出来的最外环」+ ringGap —
+      // 曾用 tree.dep 的最大深度: 聚合态下最深层只剩被折叠的终端 (无环半径),
+      // r[maxD] 落空 → baseR 退化成 ringGap → 孤儿与环上节点重叠 (实锤: 0xD516 压在 0xE091 上)
+      var maxRR=0;
+      for(aid in pos){var _r=Math.sqrt(pos[aid].x*pos[aid].x+pos[aid].y*pos[aid].y);if(_r>maxRR)maxRR=_r;}
+      var baseR=maxRR+ringGap;
       // 孤儿数 ≤ 单环容量 → 整圈均分 (避免少数孤儿挤在相邻槽位);
       // 超出则按槽位分多环 (每环 +ringGap), 奇偶环错半格避让径向对齐
       var cap=Math.max(6,Math.floor(2*Math.PI*baseR/gap));
@@ -515,7 +528,10 @@ reg('topo', function(){
       var pa=+p, pm=res.meta[pa];
       if(!pm)continue;                                    // 父不在渲染集 → 无锚点, 不画徽章
       if(!cy.getElementById('agg-'+p).nonempty())continue; // 元素不存在 (未走 renderGraph 的路径) → 跳过
-      var R=pm.r+halfSize((tree.byAid[pa]||{}).device_type)+26;
+      // 偏移 = 半径 + 节点半宽 + 26 + 标签高度 (标签与徽章同在"外侧"方向 → 不避让会擦边)
+      var pn=cy.getElementById(''+pa);
+      var lh=(pn.nonempty()&&String(pn.data('label')||'').indexOf('\n')>=0)?16:0;
+      var R=pm.r+halfSize((tree.byAid[pa]||{}).device_type)+26+lh;
       var th=pm.th;
       var bpos={x:R*Math.cos(th),y:R*Math.sin(th)};
       positions['agg-'+p]=bpos;
