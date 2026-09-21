@@ -253,7 +253,7 @@ Zigbee 网络场景检测体系 (L1-L7 文档→测试→工具闭环) 在拓扑
   聚合 19/19 (徽章计数·展开收起·定位自动展开·状态汇总逐项一致);
   **ticket 假设修正 (诚实标注)**: "群控 85 / test2 401-2628" 是全设备数, 单 PAN 实际 21/92 →
   用户裁定阈值保持 50 + 增 `⊞ 聚合` 手动开关; 千级单 PAN 素材不存在 (未实测);
-  提交 a149d95; 脚本 .scratch/verification/u21-topo/
+  提交 3a4c962; 脚本 .scratch/verification/u21-topo/
 
 ## Not yet specified
 
