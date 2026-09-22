@@ -7,6 +7,22 @@ const fsp = await import('fs/promises');
 // ⚠️ 必须用 defineProperty 拦截赋值: document-start 时 cytoscape.min.js 还没加载
 // (曾直接读 window.cytoscape → undefined → 钩子静默失效)
 const HOOK = `(function(){
+  // 网络计时钩子 (性能诊断): fetch/XHR 的 start(相对文档) 与耗时 → window.__net
+  try{
+    var _f=window.fetch;
+    window.fetch=function(){
+      var t0=performance.now();
+      var u=String((arguments[0]&&arguments[0].url)||arguments[0]||'');
+      return _f.apply(this,arguments).then(function(r){
+        (window.__net=window.__net||[]).push({u:u.slice(0,90),start:Math.round(t0),dur:Math.round(performance.now()-t0),status:r.status});
+        return r;});
+    };
+    var _o=XMLHttpRequest.prototype.open,_s=XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open=function(m,u){this.__u=m+' '+u;this.__t0=performance.now();return _o.apply(this,arguments);};
+    XMLHttpRequest.prototype.send=function(){var x=this;var fin=function(){if(x.__done)return;x.__done=1;
+      (window.__net=window.__net||[]).push({u:String(x.__u).slice(0,90),start:Math.round(x.__t0),dur:Math.round(performance.now()-x.__t0),status:x.status});};
+      x.addEventListener('load',fin);x.addEventListener('error',fin);x.addEventListener('abort',fin);return _s.apply(this,arguments);};
+  }catch(e){}
   var _v;
   Object.defineProperty(window,'cytoscape',{configurable:true,get:function(){return _v;},
     set:function(v){
