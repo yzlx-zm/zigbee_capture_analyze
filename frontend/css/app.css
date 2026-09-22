@@ -312,6 +312,15 @@ input.mono, select.mono { font-family: var(--font-mono); }
 #cy-graph { position: relative; flex: 1; min-height: 360px; background: var(--c-canvas); }
 #off-frame { position: absolute; border: 2px dashed var(--c-text-4); border-radius: var(--r-md);
   background: rgba(148,163,184,.06); pointer-events: none; display: none; z-index: 2; }
+/* U23: 拓扑计算中的加载遮罩 (大包冷算十几秒; 原先一片空白被当成"卡死") */
+.cy-load { position: absolute; inset: 0; background: rgba(248,250,252,.85); display: flex;
+  align-items: center; justify-content: center; z-index: 8; }
+.cy-load.hidden { display: none; }
+.cy-load-box { text-align: center; font-size: var(--fs-sm); color: var(--c-text-2); }
+.cy-load-spin { font-size: 26px; animation: cySpin 1.6s linear infinite; }
+@keyframes cySpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.cy-load-hint { font-size: var(--fs-xs); color: var(--c-text-4); margin-top: 4px; }
+
 #off-label { position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
   writing-mode: vertical-rl; font-size: var(--fs-xs); color: var(--c-warning-text);
   padding: 6px 10px; border: 2px solid var(--c-warning); border-radius: var(--r-sm);

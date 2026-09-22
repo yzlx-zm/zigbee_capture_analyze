@@ -1,7 +1,10 @@
 """拓扑 + 节点 API"""
 import json
+import threading
+from collections import OrderedDict
 
 from fastapi import APIRouter, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from .files import get_packets, get_nodes, get_full_packets, _detail_dict
 from .. import topology as topo
@@ -16,8 +19,12 @@ _events_packet_count: int = 0  # 用于检测 packets 是否变化
 _cache_ls_tables: dict | None = None  # Link Status 邻居表缓存
 _cache_ls_key: tuple | None = None    # 邻居表缓存键 (包数, pan, t0, t1)
 _cache_asym: list | None = None       # 不对称链路缓存
-_cache_events: dict | None = None     # S3 (2026-08-27): events 端点整体缓存 (O(full)×4 重算)
-_cache_events_key: tuple | None = None  # 缓存键 (pkts 数, full 数, pan, t0, t1)
+# U23 (2026-09-22): events 结果缓存改为**按 key 的多条** (原单条) — 拓扑页常用的"全量无窗"
+# 与少量时间窗结果可并存; 计算走线程池 + 计算锁 (不再阻塞事件循环 + 同 key 去重)
+_events_cache: "OrderedDict[tuple, dict]" = OrderedDict()
+_events_cache_lock = threading.Lock()
+_events_compute_lock = threading.Lock()   # 串行化计算 (CPU 密集; 也天然去重同 key)
+_EVENTS_CACHE_MAX = 3
 
 
 def _build_phase3_supplements(pkts: list[dict], pan: int | None,
@@ -304,7 +311,14 @@ def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
 
     S3 变更: ①max_gap 默认 60→30 (与证据窗一致, 用户对齐)
     ②加 assoc 父证据 ③加源路由下行证据 (nwk_relays, 仅作父子判定不上图)
-    ④段带 evidence 字段 (poll/assoc/rr/down)."""
+    ④段带 evidence 字段 (poll/assoc/rr/down).
+
+    U23 变更 (2026-09-22, 用户反馈大包 payload 5.1MB/段数 4.2 万):
+    **分段依据从"签名含证据类型"改为"链路身份"** (父 = 父地址; 路径 = dst+relays),
+    段内 evidence 取**最高优先级** (poll>assoc>rr>down)。原因: 同一父会被 poll/down/rr
+    三类证据帧交替刷新 → 旧实现按证据类型切段 → 实测 173 万帧素材产生 19522 poll 段 +
+    20003 down 段 (同一父!); 合并后段数 ≈ 真实链路变化次数, 且与前端 `segSig`
+    (按 parent/dst+relays 判切换点) 的口径一致。"""
     frames: dict[int, list] = {}
     for p in full:
         ts = p.get("ts", 0)
@@ -326,49 +340,52 @@ def _all_link_segments(full: list[dict], t0: float | None, t1: float | None,
                 for _i in range(len(chain) - 1):
                     if chain[_i] != 0:  # 协调器无父
                         frames.setdefault(chain[_i], []).append(
-                            (ts, "parent", ("parent", chain[_i + 1], "rr")))
+                            (ts, "parent", ("parent", chain[_i + 1]), "rr"))
                 frames.setdefault(src, []).append(
-                    (ts, "route", (dst, tuple(relays))))  # src 全链彩色可视化
+                    (ts, "route", ("route", dst, tuple(relays)), "rr"))  # src 全链彩色可视化
         elif p.get("mac_cmd_id") == 4 and p.get("mac_src") is not None \
                 and isinstance(p.get("mac_dst"), int):
             frames.setdefault(p["mac_src"], []).append(
-                (ts, "parent", ("parent", p["mac_dst"], "poll")))
+                (ts, "parent", ("parent", p["mac_dst"]), "poll"))
         elif p.get("mac_cmd_id") == 2 and p.get("mac_src") is not None \
                 and isinstance(p.get("mac_dst"), int):
             frames.setdefault(p["mac_dst"], []).append(
-                (ts, "parent", ("parent", p["mac_src"], "assoc")))
+                (ts, "parent", ("parent", p["mac_src"]), "assoc"))
         elif p.get("nwk_relays") and isinstance(p.get("nwk_src"), int) \
                 and isinstance(p.get("nwk_dst"), int):
             # 源路由下行: chain=[src]+relays+[dst], 每节点父 = 前一个 (下行证据)
             chain = [p["nwk_src"]] + list(p.get("nwk_relays") or []) + [p["nwk_dst"]]
             for i in range(1, len(chain)):
                 frames.setdefault(chain[i], []).append(
-                    (ts, "parent", ("parent", chain[i - 1], "down")))
+                    (ts, "parent", ("parent", chain[i - 1]), "down"))
     out: dict[int, list] = {}
     for aid, fl in frames.items():
         segs: list[dict] = []
         cur: dict | None = None
-        for ts, kind, sig in sorted(fl):
-            if cur is None or kind != cur["kind"] or sig != cur["sig"] or ts - cur["t1"] > max_gap:
+        for ts, kind, ident, ev in sorted(fl, key=lambda f: f[0]):
+            if cur is None or ident != cur["ident"] or ts - cur["t1"] > max_gap:
                 if cur:
                     segs.append(cur)
-                cur = {"kind": kind, "sig": sig, "t0": ts, "t1": ts}
+                cur = {"kind": kind, "ident": ident, "t0": ts, "t1": ts, "ev": ev}
             else:
                 cur["t1"] = ts
+                if _EVIDENCE_PRIO.get(ev, 9) < _EVIDENCE_PRIO.get(cur["ev"], 9):
+                    cur["ev"] = ev      # 段内最高优先级证据 (poll>assoc>rr>down)
         if cur:
             segs.append(cur)
         out[aid] = [{
             "kind": s["kind"], "t0": s["t0"], "t1": s["t1"],
-            "relays": list(s["sig"][1]) if s["kind"] == "route" else None,
-            "dst": s["sig"][0] if s["kind"] == "route" else None,
-            "parent": s["sig"][1] if s["kind"] == "parent" else None,
-            "evidence": s["sig"][2] if s["kind"] == "parent" else "rr",
+            "relays": list(s["ident"][2]) if s["kind"] == "route" else None,
+            "dst": s["ident"][1] if s["kind"] == "route" else None,
+            "parent": s["ident"][1] if s["kind"] == "parent" else None,
+            "evidence": s["ev"],
         } for s in segs]
     return out
 
 
 def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
-                  t0: float | None, t1: float | None) -> None:
+                  t0: float | None, t1: float | None,
+                  parents_pre: dict | None = None) -> None:
     """U14: 节点身份 (U9 同源统计) + 行为状态 (poll/rejoin 窗内单遍扫描).
     U13: 协议级父链路 (poll/assoc/RR 推断) + 下行 source-route 路径 (relay 反转).
     S3-重构 (2026-08-27): 父证据四来源 (poll>assoc>rr>down, 证据窗+顺延 30s)
@@ -380,7 +397,9 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
     effective_pan = pan_int if pan_int is not None else graph.get("main_pan")
     stats, _ls, _asym = _node_stats(pkts, effective_pan)
     beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
-    parents = _link_evidence_parent(full if full else pkts, t0, t1, effective_pan)
+    # U23: parents_pre = 调用方已算好的父表 (同参数时避免重复全量扫描)
+    parents = parents_pre if parents_pre is not None else \
+        _link_evidence_parent(full if full else pkts, t0, t1, effective_pan)
     # 在线判定 (协议证据): 终端须窗内有 poll; 路由/未知 = 窗内任意帧
     dev_types = {nd["aid"]: nd.get("device_type", "unknown") for nd in graph.get("nodes", [])}
     online = _online_map(full if full else pkts, t0, t1, effective_pan, dev_types)
@@ -464,23 +483,50 @@ async def topology_graph(pan: str = Query(default=""),
     return graph
 
 
+def events_payload(pan_int: int | None, t0: float | None, t1: float | None) -> dict:
+    """U23 (2026-09-22): events 响应构建 (**同步/CPU 密集**) — 由 `run_in_threadpool`
+    或导入完成后的预计算线程调用; 不再直接跑在事件循环里 (曾把 173 万帧 ×8 遍扫描跑在
+    async 端点内 → 整个后端被阻塞 19.8s, 用户反馈"卡顿")。
+    缓存 (最多 _EVENTS_CACHE_MAX 条) + 计算锁 (同 key 并发去重)。
+    """
+    pkts = get_packets()
+    if not pkts:
+        return {"nodes": [], "edges": [], "coord": None}
+    key = (len(pkts), len(get_full_packets() or pkts), pan_int, t0, t1)
+    with _events_compute_lock:                      # 同一时刻只算一个 (大计算串行化)
+        with _events_cache_lock:
+            hit = _events_cache.get(key)
+            if hit is not None:
+                _events_cache.move_to_end(key)
+                return hit
+        graph = _build_events(pan_int, t0, t1)
+        with _events_cache_lock:
+            _events_cache[key] = graph
+            _events_cache.move_to_end(key)
+            while len(_events_cache) > _EVENTS_CACHE_MAX:
+                _events_cache.popitem(last=False)
+        return graph
+
+
 @router.get("/topology/events")
 async def topology_from_events(pan: str = Query(default=""),
                                time_start: float | None = Query(default=None),
                                time_end: float | None = Query(default=None)):
-    """事件时间线推导的拓扑 (Phase 3: 含 Link Status 邻居表)."""
+    """事件时间线推导的拓扑 (Phase 3: 含 Link Status 邻居表).
+
+    U23: 计算移入线程池 (原实现跑在事件循环里, 大包冷算 ~20s 期间其它请求全部排队)。
+    """
+    pan_int = int(pan, 16) if pan else None
+    return await run_in_threadpool(events_payload, pan_int, time_start, time_end)
+
+
+def _build_events(pan_int: int | None, time_start: float | None,
+                  time_end: float | None) -> dict:
+    """events 响应体构建 (原端点实现, 含 S3 整体缓存语义 → 见 events_payload)."""
     pkts = get_packets()
     nodes = get_nodes()
     if not pkts:
         return {"nodes": [], "edges": [], "coord": None}
-    pan_int = int(pan, 16) if pan else None
-    # ⚠️ S3 (2026-08-27): 整体缓存 — 滑块拖动/时间窗切换每次请求都全量重算
-    # (_node_stats/_behavior_map/_parent_map/_all_link_segments 均 O(full)),
-    # 大包 (179 万帧) 时每个请求数秒; 键含包数/全量数/PAN/时间窗
-    global _cache_events, _cache_events_key
-    key = (len(pkts), len(get_full_packets() or pkts), pan_int, time_start, time_end)
-    if _cache_events is not None and key == _cache_events_key:
-        return _cache_events
     timeline = _ensure_events_timeline()
     ls_tables, asym = _build_phase3_supplements(pkts, pan_int, time_start, time_end)
     graph = rev.derive_topology(timeline, nodes, pan=pan_int,
@@ -561,12 +607,12 @@ async def topology_from_events(pan: str = Query(default=""),
     # (0xa3d4 实锤: RR relay 链地址, 报文 0 帧, 曾入拓扑)
     graph["nodes"] = [nd for nd in full_graph["nodes"]
                       if nd["aid"] == 0 or nd["aid"] in seen_aids]
-    _enrich_nodes(graph, pkts, pan_int, time_start, time_end)  # U14 身份+行为 + S3 online/父证据
+    # U14 身份+行为 + S3 online/父证据; U23: 全量无窗时复用上面已算好的父表 (原实现重复算一遍)
+    _enrich_nodes(graph, pkts, pan_int, time_start, time_end,
+                  parents_pre=(ev_nodes if time_start is None and time_end is None else None))
     # ② 链路时刻分段 (30s 窗 + assoc/down 证据): 前端拖动游标纯本地过滤
     graph["link_snapshots"] = _all_link_segments(_full_pkts, time_start, time_end,
                                                  pan_int=graph.get("main_pan"))
-    _cache_events = graph
-    _cache_events_key = key
     return graph
 
 

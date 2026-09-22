@@ -123,6 +123,12 @@ reg('topo', function(){
     +'<div id="off-frame"></div>'
     +'<div id="focus-bar" style="display:none"></div>'
     +'<div id="off-label">◌ 未关联 (无链路证据)</div>'
+    // U23: 冷算加载遮罩 (大包首次十几秒)
+    +'<div id="cy-load" class="cy-load hidden"><div class="cy-load-box">'
+      +'<div class="cy-load-spin">⏳</div>'
+      +'<div>正在计算拓扑…<span id="cy-load-sec"></span></div>'
+      +'<div class="cy-load-hint">大包首次加载需要十几秒; 之后走缓存会很快</div>'
+    +'</div></div>'
     +'</div>'
     // 底部面板 (路由路径链 + 层级树)
     +'<div id="bottom-panels">'
@@ -141,7 +147,24 @@ reg('topo', function(){
   // ═══ 状态变量 ═══
 
   // ═══ 数据加载 ═══
+  // U23: 冷算加载遮罩 (大包 events 冷算 ~十几秒, 原先白屏像卡死)
+  var topoLoadTimer=null;
+  function showTopoLoading(){
+    var el=document.getElementById('cy-load'); if(!el)return;
+    el.classList.remove('hidden');
+    var t0=Date.now(), sec=document.getElementById('cy-load-sec');
+    if(topoLoadTimer)clearInterval(topoLoadTimer);
+    topoLoadTimer=setInterval(function(){
+      if(sec)sec.textContent=' '+Math.round((Date.now()-t0)/1000)+'s';
+    },200);
+  }
+  function hideTopoLoading(){
+    var el=document.getElementById('cy-load'); if(el)el.classList.add('hidden');
+    if(topoLoadTimer){clearInterval(topoLoadTimer);topoLoadTimer=null;}
+  }
+
   function loadData(panVal, callback, t0, t1){
+    showTopoLoading();
     var params=[];
     if(panVal) params.push('pan='+panVal);
     if(t0!=null) params.push('time_start='+t0);
@@ -152,9 +175,11 @@ reg('topo', function(){
       topoData=d; S.topo=d;
       try{ if(callback) callback(d); }catch(e){ console.error('renderGraph error:',e); }
       try{ renderSidebar(d); }catch(e){ console.error('renderSidebar error:',e); }
+      hideTopoLoading();
     }).catch(function(e){
       console.error('loadData error:',e);
       document.getElementById('tinfo').textContent='数据加载失败';
+      hideTopoLoading();
     });
   }
 

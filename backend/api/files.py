@@ -49,6 +49,22 @@ def _task_update(task_id: str, **fields) -> None:
         task.update(fields)
 
 
+def _precompute_topology_async() -> None:
+    """U23 (2026-09-22): 导入完成后后台预计算主 PAN 的拓扑 events 结果。
+
+    拓扑页请求的永远是"全量 + 无时间窗"(时间游标在前端过滤) → 可预计算并命中缓存,
+    用户首次进拓扑页从 ~20s (冷算) 降到 <1s, 且不再有 CPU 突发把其它请求拖住。
+    失败静默 (预计算不是导入的必要环节); 大包计算期间其它请求排队等待属预期。
+    """
+    def _work() -> None:
+        try:
+            from .topology import events_payload   # 延迟导入 (topology 依赖本模块)
+            events_payload(None, None, None)
+        except Exception:
+            pass
+    threading.Thread(target=_work, daemon=True, name="topo-precompute").start()
+
+
 def _start_import(fn) -> dict:
     """启动后台导入线程, 返回 {ok, task_id} 或 400 错误 (已有任务运行中)"""
     global _import_running
@@ -64,6 +80,7 @@ def _start_import(fn) -> dict:
         try:
             result = fn(task_id)
             _task_update(task_id, status="done", stage="完成", percent=100, result=result)
+            _precompute_topology_async()   # U23: 预计算拓扑 (拓扑页首屏 ~20s → <1s)
         except Exception as e:
             _task_update(task_id, status="error", stage="失败", error=str(e))
         finally:
