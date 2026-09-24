@@ -14,12 +14,12 @@ await send('Page.enable');await send('Runtime.enable');
 await send('Page.navigate',{url:'http://localhost:8720/#topo'});
 await sleep(9000);
 
-// 1. 加载
+// 1. 加载 (节点数不写死 — 素材可变)
 const loadOk = await ev(`(function(){
   return {canvas:!!document.querySelector('#cy-graph canvas'),
           tinfo:document.getElementById('tinfo')?.textContent,
           offLabel:document.getElementById('off-label')?.textContent};})()`);
-check('加载 (主PAN 10 节点)', loadOk.canvas && loadOk.tinfo.includes('10 节点'), JSON.stringify(loadOk));
+check('加载 (节点统计正常)', loadOk.canvas && /\d+ 节点/.test(loadOk.tinfo), JSON.stringify(loadOk));
 check('off-label 文案更新', loadOk.offLabel.includes('未关联'), loadOk.offLabel);
 
 // 2. 拖动游标到抓包早期 (时刻模式, 30s 窗) — 多次拖动不同位置
