@@ -696,7 +696,8 @@ reg('topo', function(){
         var hide=(m2===0);
         var oneLine=(m2<2);
         var s='0x'+aid.toString(16).toUpperCase().padStart(4,'0');
-        var ic={rejoining:'🔄',sleeping:'💤',offline:'⏻'}[n.data('behavior')]||'';
+        // U22: 标签图标 = 时刻态 (rejoin/left/nogap), 非整段 behavior
+        var ic={rejoin:'🔄',left:'⛻',nogap:'⏳'}[n.data('mv')||'ok']||'';
         if(!hide&&ic)s+=' '+ic;
         if(!hide&&!oneLine&&n.data('model_id'))s+='\n'+n.data('model_id');
         if(n.data('stale'))s+=' ⏳';
@@ -759,6 +760,44 @@ reg('topo', function(){
     // U21: 放射树 (父/深度/折叠决策) — 与布局函数共用同一棵树, 避免折叠集不一致;
     // 非放射模式 foldEnabled=false → foldSet 空 = 全展开 (列式/自由保持现有行为)
     var rTree=buildRadialTree(d);
+    // ═══ U22 (2026-09-24): 节点**时刻态证据状态** — 在游标时刻 curT 评估 ═══
+    // 依据 CONTEXT.md 生命周期状态机 + 事件全是设备/网关自报帧 (硬证据):
+    //   rejoin = curT 前 60s 内有 rejoin 类事件 (Leave rejoin=1 / Rejoin Req·Rsp / Device Announce / Assoc)
+    //   left   = curT 前最近事件是 Leave(rejoin=0, 永久离网), 其后无重入证据  ← 只有这档叫"已离网"
+    //   nogap  = curT 落在"无证据区间"内 (后端 ev_gaps, 帧间隔 ≥60s) — 事实陈述, 不下结论
+    //   ok     = 其余 (默认, 不加任何标记)
+    // 旧口径 (behavior: 整段汇总的 rejoin 粘性标记 / 末 25% 无帧判 offline) 已由本表取代 —
+    // 视觉复用既有语义 (重连橙 / 离网灰红框 / 无证据虚灰+⏳), 只换判定来源。
+    var MOMENT_REJOIN=60;
+    var mvState={};
+    (function(){
+      // ⚠️ 事件/缺口挂在**每个节点**上 (n.node_events / n.ev_gaps), 不是顶层字典
+      var evs={}, gaps={};
+      for(var ni2=0;ni2<ns.length;ni2++){
+        if(ns[ni2].node_events)evs[ns[ni2].aid]=ns[ni2].node_events;
+        if(ns[ni2].ev_gaps)gaps[ns[ni2].aid]=ns[ni2].ev_gaps;
+      }
+      var now=(curT!=null)?curT:Infinity;
+      for(var i2=0;i2<ns.length;i2++){
+        var a2=ns[i2].aid, st='ok';
+        // 协调器是网络中心: 它发的 Leave 是**踢人指令** (L1-4), 不代表它自己离网/重连 → 不标记
+        if(a2===0){ mvState[a2]='ok'; continue; }
+        var list=evs[''+a2]||evs[a2]||[];
+        var last=null;
+        for(var j2=0;j2<list.length;j2++){ if(list[j2].ts<=now) last=list[j2]; else break; }
+        if(last){
+          var t=last.type;
+          if((t==='rejoin_req'||t==='rejoin_rsp'||t==='announce'||t==='assoc')&&(now-last.ts)<=MOMENT_REJOIN) st='rejoin';
+          else if(t==='leave'&&last.rejoin===1&&(now-last.ts)<=MOMENT_REJOIN) st='rejoin';
+          else if(t==='leave'&&!last.rejoin) st='left';
+        }
+        if(st==='ok'){
+          var gl=gaps[''+a2]||gaps[a2]||[];
+          for(var k2=0;k2<gl.length;k2++){ if(now>=gl[k2].t0&&now<=gl[k2].t1){ st='nogap'; break; } }
+        }
+        mvState[a2]=st;
+      }
+    })();
 
     // ── 路径节点集合 ──
     var pathNodes={};
@@ -828,7 +867,10 @@ reg('topo', function(){
       var online=n.online!==false;
       // S3 (2026-08-28 用户选择): 行为状态图标上 label (非密集, 地址行尾)
       //  🔄重连中 / 💤休眠 / ⏻离线; stale ⏳ 由后置循环追加
-      var stIcon={rejoining:'🔄',sleeping:'💤',offline:'⏻'}[n.behavior]||'';
+      // U22: 图标/状态类由**时刻态**驱动 (原 n.behavior = 整段汇总)
+      var mv=mvState[aid]||'ok';
+      var stIcon={rejoin:'🔄',left:'⛻',nogap:'⏳'}[mv]||'';
+      var mvCls=mv==='rejoin'?'rejoining':(mv==='left'?'offline':(mv==='nogap'?'moment-silent':''));
       cyNodes.push({
         data:{id:''+aid,
           label:'0x'+aid.toString(16).toUpperCase().padStart(4,'0')+(stIcon&&!dense?' '+stIcon:'')+(model&&!dense?'\n'+model:''),
@@ -841,8 +883,9 @@ reg('topo', function(){
           // (2026-08-25 自审: 曾导致网关框住全部子设备), 改名 link_parent/link_ev
           link_parent:n.parent, link_ev:n.parent_evidence||'',
           downlink:n.downlink||null,
+          mv:mv,   // U22: 时刻态 (供 tooltip/标签图标用; ⚠️ 必须在 data 内)
           inactive:!online},
-        classes:onPath?(dt+' onpath'+(n.behavior?' '+n.behavior:'')+(dense?' dense':'')+(online?'':' inactive')+(isGhost?' ghost-node':'')):(online?'offpath':'offpath inactive')
+        classes:onPath?(dt+' onpath'+(mvCls?' '+mvCls:'')+(dense?' dense':'')+(online?'':' inactive')+(isGhost?' ghost-node':'')):(online?'offpath':'offpath inactive')
       });
     }
     // ── U21 终端聚合徽章: 普通节点 + 特殊样式 ──
@@ -852,16 +895,18 @@ reg('topo', function(){
       // ⚠️ U24 修复: 单成员簇不建徽章 (曾 ×1 徽章与该节点同时出现 → 重复表示 + 徽章压在节点上);
       // 已展开的簇保留徽章 (作为"收起"入口)
       if(!(rTree.foldedBy[fpk]&&rTree.foldedBy[fpk].length)&&!expandedClusters[fpk])continue;
-      var fpmem=rTree.clusterBy[fpk], fst={rejoining:0,offline:0,sleeping:0};
+      var fpmem=rTree.clusterBy[fpk], fst={rejoining:0,offline:0,silent:0};
       for(var fmi=0;fmi<fpmem.length;fmi++){
-        var fmb=(rTree.byAid[fpmem[fmi]]||{}).behavior;
-        if(fst[fmb]!=null)fst[fmb]++;
+        var fmb=mvState[fpmem[fmi]]||'ok';   // U22: 徽章汇总 = 折叠成员的**时刻态**
+        if(fmb==='rejoin')fst.rejoining++;
+        else if(fmb==='left')fst.offline++;
+        else if(fmb==='nogap')fst.silent++;
       }
       var fpop=!!expandedClusters[fpk];
       var fbl='×'+fpmem.length;
       if(fst.rejoining)fbl+=' ⚠️'+fst.rejoining;   // U14 信息不丢: 簇内状态汇总
       if(fst.offline)fbl+=' ⛔'+fst.offline;
-      if(fst.sleeping)fbl+=' 💤'+fst.sleeping;
+      if(fst.silent)fbl+=' ⏳'+fst.silent;   // 无证据 (事实)"""
       if(fpop)fbl+=' ▾';
       cyNodes.push({data:{id:'agg-'+fpk, aid:null, is_badge:true, parent_aid:+fpk,
         count:fpmem.length, members:fpmem.slice(), stats:fst, label:fbl},
@@ -1086,6 +1131,8 @@ reg('topo', function(){
         // ⚠️ 2026-08-28 用户方案B: 残影**边**不再灰淡化 (误导离线) — 保持原色实线,
         // 节点 ⏳ + 淡化表达"静默连接"; stale-path 边样式已删
         {selector:'node.stale-node', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5,'opacity':0.65}},
+        // U22: 时刻态"无证据" (T 处于证据缺口) — 事实陈述, 不用离线的灰红配色避免下结论
+        {selector:'node.moment-silent', style:{'border-color':'#94a3b8','border-style':'dashed','border-width':1.5,'opacity':0.7}},
         // S3-C: 聚焦历史叠加 — ghost 节点 (历史链路段的父/中继, 灰淡) + ghost 边 (z 低于当前边)
         {selector:'node.ghost-node', style:{'opacity':0.35,'background-color':'#94a3b8','border-color':'#cbd5e1','border-width':1,'width':16,'height':16,'text-opacity':0.5}},
         {selector:'edge.ghost-edge', style:{'z-index':-1,'opacity':0.18,'line-style':'dashed','width':2,'line-color':'#94a3b8','target-arrow-color':'#94a3b8','target-arrow-shape':'none'}},
@@ -1119,7 +1166,9 @@ reg('topo', function(){
         if(d.inactive){tooltip.innerHTML='<b>'+d.label+'</b>\n当前时间窗无在线证据 (终端无 poll / 路由无帧)';tooltip.style.display='block';updateTooltipPos(e);return;}
         // U14-4: tooltip 增强 — EUI64/厂商型号/行为状态/poll 间隔/帧量收/发/LS 邻居数
         var tName={coordinator:'协调器',router:'路由器',end_device:'终端设备',unknown:'未知'}[d.device_type]||d.device_type;
-        var bName={active:'活跃',sleeping:'休眠',rejoining:'重连中',offline:'离线',unknown:'未知'}[d.behavior]||'未知';
+        // U22: 状态行 = **游标时刻**的证据状态 (词汇从"设备状态"改为"证据状态")
+        var mvName={ok:'正常 (T 时刻有证据)',rejoin:'🔄 重入网中',left:'⛻ 已离网 (Leave rejoin=0)',nogap:'⏳ 无证据 (T 落在证据缺口内)'}[d.mv||'ok']||'正常';
+        var bName=mvName;
         var h='<b>'+String(d.label).replace(/\n/g,' ')+'</b> ('+tName+')';
         if(d.manufacturer_name)h+='\n厂商: '+d.manufacturer_name;
         if(d.model_id)h+='\n型号: '+d.model_id;

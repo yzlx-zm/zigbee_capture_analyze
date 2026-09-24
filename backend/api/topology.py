@@ -159,6 +159,79 @@ def _behavior_of(aid: int, inf: dict | None, late_cut: float | None,
     return "unknown"
 
 
+def _moment_evidence(full: list[dict], pan_int: int | None,
+                     gap: float = 60.0) -> tuple[dict, dict]:
+    """U22 (2026-09-24): 每节点**事件时间线** + **无证据区间** (时刻态拓扑用, 单趟扫描).
+
+    事件 = 设备/网关自己发的帧 (硬证据, 与 CONTEXT.md 生命周期状态机同源):
+      leave        NWK cmd 0x04 (带 nwk_leave_rejoin / nwk_leave_request 标志)
+      rejoin_req   NWK cmd 0x06 (设备申请重新入网)
+      rejoin_rsp   NWK cmd 0x07 (入网申请被响应)
+      announce     ZDP 0x0013 (Device Announce, 入网后通告身份)
+      assoc        MAC cmd 2 (Assoc Resp → 目的节点)
+    无证据区间 = 相邻帧间隔 ≥ gap 秒 (默认 60s; 含首帧前/末帧后 — 诚实: 没听到就是没听到).
+    返回 ({aid: [{ts,type,rejoin,request}]}, {aid: [{t0,t1}]}) — 均已按 PAN 过滤 (修
+    _behavior_map 未过滤的同源问题: 多 PAN 素材同址异 PAN 会串)."""
+    ev: dict[int, list] = {}
+    gaps: dict[int, list] = {}
+    last_ts: dict[int, float] = {}
+    first_ts: dict[int, float] = {}
+    cap_lo = None; cap_hi = None
+    for p in full:
+        ts = p.get("ts", 0)
+        if pan_int is not None and (p.get("pan_src") != pan_int and p.get("pan_dst") != pan_int):
+            continue
+        if cap_lo is None or ts < cap_lo: cap_lo = ts
+        if cap_hi is None or ts > cap_hi: cap_hi = ts
+        srcs = {p.get("nwk_src"), p.get("mac_src")} - {None}
+        dsts = {p.get("nwk_dst"), p.get("mac_dst")} - {None}
+        for aid in srcs | dsts:
+            if not topo.is_unicast(aid):
+                continue
+            lts = last_ts.get(aid)
+            if lts is None:
+                first_ts[aid] = ts
+            elif ts - lts >= gap:
+                gaps.setdefault(aid, []).append({"t0": lts, "t1": ts})
+            last_ts[aid] = ts
+        ncmd = p.get("nwk_cmd_id"); mcmd = p.get("mac_cmd_id")
+        if ncmd == 4:      # Leave (src = 离网方)
+            for aid in srcs:
+                if topo.is_unicast(aid):
+                    ev.setdefault(aid, []).append({"ts": ts, "type": "leave",
+                        "rejoin": 1 if p.get("nwk_leave_rejoin") else 0,
+                        "request": 1 if p.get("nwk_leave_request") else 0})
+        elif ncmd == 6:    # Rejoin Request (src)
+            for aid in srcs:
+                if topo.is_unicast(aid):
+                    ev.setdefault(aid, []).append({"ts": ts, "type": "rejoin_req"})
+        elif ncmd == 7:    # Rejoin Response (dst)
+            for aid in dsts:
+                if topo.is_unicast(aid):
+                    ev.setdefault(aid, []).append({"ts": ts, "type": "rejoin_rsp"})
+        elif p.get("aps_cluster") == 0x0013:   # Device Announce (src)
+            for aid in srcs:
+                if topo.is_unicast(aid):
+                    ev.setdefault(aid, []).append({"ts": ts, "type": "announce"})
+        elif mcmd == 2:    # Assoc Resp (dst)
+            for aid in dsts:
+                if topo.is_unicast(aid):
+                    ev.setdefault(aid, []).append({"ts": ts, "type": "assoc"})
+    for aid, fl in ev.items():
+        fl.sort(key=lambda e: e["ts"])
+    # 首帧前 / 末帧后也计入无证据区间 (否则开头一片"有证据"是假象)
+    if cap_lo is not None and cap_hi is not None:
+        for aid, lts in last_ts.items():
+            fts = first_ts.get(aid, lts)
+            if fts - cap_lo >= gap:
+                gaps.setdefault(aid, []).insert(0, {"t0": cap_lo, "t1": fts})
+            if cap_hi - lts >= gap:
+                gaps.setdefault(aid, []).append({"t0": lts, "t1": cap_hi})
+    for aid in gaps:
+        gaps[aid].sort(key=lambda g: g["t0"])
+    return ev, gaps
+
+
 def _parent_map(full: list[dict], t0: float | None, t1: float | None,
                 pan_int: int | None = None) -> dict:
     """U13: 协议级父链路证据 (单遍扫描, 窗内语义).
@@ -397,6 +470,8 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
     effective_pan = pan_int if pan_int is not None else graph.get("main_pan")
     stats, _ls, _asym = _node_stats(pkts, effective_pan)
     beh, late_cut = _behavior_map(full if full else pkts, t0, t1)
+    # U22: 时刻态证据 (事件时间线 + 无证据区间) — 拓扑页在游标时刻评估节点状态
+    m_ev, m_gaps = _moment_evidence(full if full else pkts, effective_pan)
     # U23: parents_pre = 调用方已算好的父表 (同参数时避免重复全量扫描)
     parents = parents_pre if parents_pre is not None else \
         _link_evidence_parent(full if full else pkts, t0, t1, effective_pan)
@@ -415,6 +490,9 @@ def _enrich_nodes(graph: dict, pkts: list[dict], pan_int: int | None,
         nd["eui64"] = st["eui64"] if st else None
         inf = beh.get(aid)
         nd["behavior"] = _behavior_of(aid, inf, late_cut, nd.get("device_type"))
+        # U22: 时刻态字段 (前端在 curT 评估: rejoin/left/nogap/ok)
+        nd["node_events"] = m_ev.get(aid, [])
+        nd["ev_gaps"] = m_gaps.get(aid, [])
         nd["poll_interval"] = inf["poll_gap"] if inf else None
         nd["tx_count"] = inf["tx"] if inf else 0
         nd["rx_count"] = inf["rx"] if inf else 0
