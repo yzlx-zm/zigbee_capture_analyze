@@ -142,7 +142,10 @@ reg('topo', function(){
     +'<button class="btn bp-tab on" onclick="togBpTab(\'routes\',this)">🛤️ 路由路径链</button>'
     +'<button class="btn bp-tab" onclick="togBpTab(\'history\',this)">🕐 链路历史</button>'
     +'<button class="btn bp-tab" onclick="togBpTab(\'neighbors\',this)">📡 邻居关系</button>'
+    // U25 (2026-09-24 用户反馈"节点太小"): 收起/展开 + 拖拽缩放 → 扩大绘图区
+    +'<button class="btn bp-tab" id="bp-tog" title="收起底部面板 (扩大绘图区)">▾ 收起</button>'
     +'</div>'
+    +'<div id="bp-resize" title="拖动调整面板高度"></div>'
     +'<div id="bp-routes" class="bp-body"></div>'
     +'<div id="bp-history" class="bp-body hidden"></div>'
     +'<div id="bp-neighbors" class="bp-body hidden"></div>'
@@ -1533,7 +1536,65 @@ reg('topo', function(){
   }
 
   // ═══ 底部面板 Tab 切换 (层级树已移除 2026-08-05) ═══
+  // ═══ U25: 底部面板 收起/展开 + 拖拽缩放 (扩大绘图区) ═══
+  function bpSyncTog(){
+    var bp=document.getElementById('bottom-panels'), b=document.getElementById('bp-tog');
+    if(!bp||!b)return;
+    var col=bp.classList.contains('bp-collapsed');
+    b.textContent=col?'▴ 展开':'▾ 收起';
+    b.title=col?'展开底部面板':'收起底部面板 (扩大绘图区)';
+  }
+  function bpApplyFit(){ if(cy){cy.resize();cy.fit(undefined,30);} }
+  (function(){
+    var bp=document.getElementById('bottom-panels'), tog=document.getElementById('bp-tog'), rz=document.getElementById('bp-resize');
+    if(!bp)return;
+    try{
+      var h=localStorage.getItem('topoBpHeight');
+      if(h&&parseFloat(h)>40){bp.style.height=h+'px';bp.style.maxHeight=h+'px';}
+      if(localStorage.getItem('topoBpCollapsed')==='1')bp.classList.add('bp-collapsed');
+    }catch(e){}
+    bpSyncTog();
+    if(tog)tog.addEventListener('click',function(){
+      bp.classList.toggle('bp-collapsed');
+      if(bp.classList.contains('bp-collapsed')){
+        bp.dataset.prevH=bp.style.height||''; bp.style.height=''; bp.style.maxHeight='';
+      }else if(bp.dataset.prevH){ bp.style.height=bp.dataset.prevH; bp.style.maxHeight=bp.dataset.prevH; }
+      bpSyncTog();
+      try{localStorage.setItem('topoBpCollapsed',bp.classList.contains('bp-collapsed')?'1':'0');}catch(e){}
+      bpApplyFit();
+    });
+    if(rz){
+      var drag=false, y0=0, h0=0;
+      rz.addEventListener('pointerdown',function(e){
+        drag=true; y0=e.clientY; h0=bp.getBoundingClientRect().height;
+        if(bp.classList.contains('bp-collapsed')){bp.classList.remove('bp-collapsed');bpSyncTog();}
+        try{rz.setPointerCapture(e.pointerId);}catch(err){}
+        e.preventDefault();
+      });
+      rz.addEventListener('pointermove',function(e){
+        if(!drag)return;
+        var hh=Math.max(40,Math.min(window.innerHeight*0.72,h0-(e.clientY-y0)));
+        bp.style.height=hh+'px'; bp.style.maxHeight=hh+'px';
+        if(cy)cy.resize();   // 拖动中实时重算画布 (fit 放松手时, 避免抖动)
+      });
+      var endDrag=function(){
+        if(!drag)return; drag=false;
+        try{localStorage.setItem('topoBpHeight',String(Math.round(bp.getBoundingClientRect().height)));}catch(e){}
+        bpApplyFit();
+      };
+      rz.addEventListener('pointerup',endDrag);
+      rz.addEventListener('pointercancel',endDrag);
+    }
+  })();
+
   window.togBpTab=function(bp,btn){
+    // U25: 收起状态下点 tab → 自动展开 (否则点了没反应)
+    var bpc=document.getElementById('bottom-panels');
+    if(bpc&&bpc.classList.contains('bp-collapsed')){
+      bpc.classList.remove('bp-collapsed'); bpSyncTog();
+      try{localStorage.setItem('topoBpCollapsed','0');}catch(e){}
+      bpApplyFit();
+    }
     document.querySelectorAll('.bp-tab').forEach(function(b){b.classList.remove('on');b.style.borderBottomColor='transparent'});
     if(btn){btn.classList.add('on');btn.style.borderBottomColor='#3b82f6';}
     document.getElementById('bp-routes').style.display=bp==='routes'?'block':'none';

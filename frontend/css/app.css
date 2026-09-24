@@ -329,6 +329,13 @@ input.mono, select.mono { font-family: var(--font-mono); }
   max-height: 220px; overflow-y: auto; }
 #nb-detail { max-height: 140px; }
 #bottom-panels .bp-head { display: flex; border-bottom: 1px solid var(--c-border); }
+/* U25 (2026-09-24 用户反馈"节点太小"): 底部面板可收起/可拖拽缩放 → 扩大绘图区 */
+#bp-resize { position: absolute; top: -4px; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 6; }
+#bp-resize:hover { background: var(--c-primary); opacity: .22; }
+#bp-tog { margin-left: auto; border-bottom-color: transparent !important; color: var(--c-text-3); }
+.center { margin-left: auto; }
+#bottom-panels.bp-collapsed .bp-body { display: none !important; }
+#bottom-panels.bp-collapsed { max-height: 34px; height: 34px; }
 #bottom-panels .bp-body { padding: var(--sp-2); }
 #bottom-panels .bp-body.hidden { display: none; }
 .bp-tab { background: var(--c-surface); color: var(--c-text-3); cursor: pointer; transition: all .2s;
