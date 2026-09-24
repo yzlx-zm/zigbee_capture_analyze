@@ -56,13 +56,13 @@ else {
 
   // 聚合态游标
   const posA = await p.ev(P.positions);
-  for (const v of [150, 500, 850]) {
+  for (const v of [150, 500, 850, 500]) {   // ⚠️ 必须回到起始值 (500): U24 后位置随时刻链路变, 不同时刻比较无意义
     await p.ev(`(function(){var sl=document.getElementById('tsl');sl.value=${v};onTimeSlide();return 1;})()`);
     await sleep(500);
   }
   const posB = await p.ev(P.positions);
   let mv = 0; for (const k in posA) { const a = posA[k], b = posB[k]; if (!b || Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.01) mv++; }
-  check('聚合态拖动游标位置零变化', mv === 0, '位移 ' + mv);
+  check('聚合态: 回到同一时刻位置逐点还原 (U24 稳定版)', mv === 0, '位移 ' + mv);
 
   // 展开/收起
   const big = geo1.badges.reduce((a, b) => b.cnt > a.cnt ? b : a);

@@ -111,9 +111,22 @@ export const P = {
   var c=window.__cy;
   var ns=c.nodes().filter(function(n){return !n.data('is_badge');});
   var bd=c.nodes('[is_badge]');
+  // U24: 深度/交叉一律按**页面当前时刻画出的边**推 (曾用 data.link_parent = 整段静态父 →
+  // 布局改成"位置随时刻链路"后两者口径不一致, 会误报"同环不同半径/交叉")。
+  // 与页面同源: parent 边 ls-<aid>-<p> (source=子,target=父) / route 边 source=链首
   var par={};
-  ns.forEach(function(n){par[n.data('aid')]=n.data('link_parent');});
-  // 深度: 沿父链走到根 (0x0000); 走不到根 (无父证据/父不在集) → -1 = 孤儿 (最外环, 单独成组)
+  (function(){
+    var pe=c.edges('[edge_type="parent"]'), re=c.edges('[edge_type="route"]');
+    ns.forEach(function(n){
+      var a=''+n.data('aid'), p=null;
+      var e1=pe.filter(function(x){return x.data('source')===a;});
+      if(e1.nonempty())p=parseInt(e1.first().data('target'));
+      else{var e2=re.filter(function(x){return x.data('source')===a;});
+           if(e2.nonempty())p=parseInt(e2.first().data('target'));}
+      par[n.data('aid')]=p;
+    });
+  })();
+  // 深度: 沿**时刻父链**走到根 (0x0000); 走不到 → -1 = 孤儿 (最外环, 单独成组)
   function dep(a){var d=0,cur=a,g=0;
     while(cur!=null&&g++<30){var pp=par[cur];if(pp==null||pp===cur)break;cur=pp;d++;}
     return (cur===0||a===0)?d:-1;}
@@ -128,7 +141,7 @@ export const P = {
   var ds=Object.keys(ringR).map(Number).sort(function(a,b){return a-b;});
   var incOk=true,prev=-1;ds.forEach(function(d){if(ringR[d]<prev)incOk=false;prev=ringR[d];});
   var segs=[];
-  ns.forEach(function(n){var lp=n.data('link_parent');if(lp==null)return;
+  ns.forEach(function(n){var lp=par[n.data('aid')];if(lp==null)return;
     var pp=c.getElementById(''+lp); if(!pp.nonempty())return;
     segs.push({a:n.position(),b:pp.position(),ids:[n.id(),''+lp]});});
   function ccw(A,B,C){return (C.y-A.y)*(B.x-A.x)>(B.y-A.y)*(C.x-A.x);}

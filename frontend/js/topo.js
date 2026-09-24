@@ -25,11 +25,17 @@ const PATH_COLORS = ['#e6194B','#4363d8','#3cb44b','#f58231','#911eb4','#42d4f4'
 
 // U21 放射布局参数 (全部为 px / 阈值, 可由实测校准)
 const R_FOLD_MIN   = 50;   // 节点总数 < 50 → 全展开不聚合 (小网络不打扰)
-const R_RING_GAP   = 120;  // 相邻跳数环的半径增量
-const R_GAP_SPARSE = 88;   // 稀疏 (双行标签 地址+型号) 环上最小弦距
-const R_GAP_DENSE  = 56;   // 密集 (单行地址) 环上最小弦距
+const R_RING_GAP   = 132;  // 相邻跳数环的半径增量 (U24: 120→132)
+const R_GAP_SPARSE = 96;   // 双行标签 (地址+型号) 环上最小弦距 (= R_LBL_ONE, 口径一致)
+const R_GAP_DENSE  = 56;   // 单行地址 环上最小弦距
+const R_GAP_NODE   = 34;   // 标签隐藏 (仅 tooltip) 时的节点最小弦距 (节点本体 22~32px)
 const R_LBL_MIN    = 46;   // 弦距低于此值 → 非路由节点标签隐藏 (仅 tooltip)
 const R_LBL_ONE    = 96;   // 弦距低于此值 → 只显单行地址 (型号进 tooltip)
+// U24 (2026-09-23): 标签**切向占用**按朝向区分 — 左右两侧节点标签沿半径向外伸,
+// 切向只占文本高度; 上下方向节点标签横向铺开, 切向占整行宽。旧模型一律按行宽要空间
+// → 大环被顶到 R=1155, fit 0.53, 9px 字号上屏 4.8px (用户反馈"距离太大/很稀疏")。
+const R_TANG_H2    = 34;   // 侧向节点·双行标签 切向占用 (两行高度)
+const R_TANG_H1    = 20;   // 侧向节点·单行标签 切向占用 (一行高度)
 // U21-2 (2026-09-21 用户裁定, 附实测对比图): 扇区权重指数 —
 //   第 1 环 α=0.5 (平方根平滑): "网关周围一圈"观感均匀 (子树大的中继不再独占 300°);
 //   更深层 α=1.0 (按子树规模): 保紧凑 (纯平滑会让深层中继的子设备挤进小扇区 → 环半径胀 35%)
@@ -418,8 +424,41 @@ reg('topo', function(){
     for(i=0;i<ns.length;i++)byAid[ns[i].aid]=ns[i];
     // 聚合条件: 放射布局 + 非聚焦 + (节点数 ≥ 阈值 或 手动开关)
     var foldEnabled=(curLayout===LAY_RADIAL)&&(focusAid==null)&&(ns.length>=R_FOLD_MIN||forceAgg);
-    var par={};
-    for(i=0;i<ns.length;i++){a=ns[i].aid;var p=ns[i].parent;par[a]=(p!=null&&p!==a&&byAid[p])?p:null;}
+    // U24 (2026-09-23 用户反馈): 父表取**时刻 T 的链路结构** (link_snapshots 中 t0<=curT
+    // 的最近一段; T 早于该节点全部证据时取最早一段 = 位置稳定不跳)。
+    // 曾用 n.parent (整段最后证据, 与时刻无关) → 用户反馈"关系变了圆环位置却不变"。
+    // 与边的时刻语义同源 (snapState 同样取 t0<=curT 的最近一段), 因此"位置=边"始终自洽。
+    var snaps=(d&&d.link_snapshots)||{};
+    var nowT=(curT!=null)?curT:Infinity;
+    // 父表 = **时刻 T 的链路结构** (角度/环半径随时刻重排) — U24 定稿: 只有"每个时刻的图都正确
+    // 可读"才成立; 曾试"稳定版"(静态角度 + 只按时刻跳数移环): 结构差异大的时刻角度会聚类
+    // (实测 12 个节点挤到 1.5° 间距 → 外环半径被迫 1261px, fit 0.4 字号 4px), 反而更糟。
+    // U24-稳定版 (2026-09-23 用户裁定): 时刻父表**只用于判定"时刻跳数"** —
+    // 跳数变了 → 该节点沿半径移到对应环 (整图不重排, 角度/环半径基准不动)
+    var mpar={};
+    for(i=0;i<ns.length;i++){
+      a=ns[i].aid;
+      var p=ns[i].parent;   // 兜底: 该节点无快照数据 → 用整段父证据
+      var segs=snaps[''+a];
+      if(segs&&segs.length){
+        // 优先取 t0<=T 的**最近 parent 段** (poll/assoc 是父的权威证据, 与后端 _EVIDENCE_PRIO 一致);
+        // 无 parent 段才退到 route 段首跳。⚠️ 曾"取最近段不看类型" → parent/route 段交替时
+        // 父值来回翻 → 每拖一格整图重排 (假变化), 实测 11 次拖动 31 次"父变化"。
+        var bestP=null, bestR=null, firstSeg=segs[0];
+        for(var si=0;si<segs.length;si++){
+          if(segs[si].t0>nowT)break;
+          if(segs[si].kind==='parent')bestP=segs[si];
+          else if(segs[si].kind==='route')bestR=segs[si];
+        }
+        var use=bestP||bestR||firstSeg;   // T 早于首段证据 → 用首段 (避免开头全成孤儿)
+        if(use){
+          if(use.kind==='parent')p=use.parent;
+          else if(use.kind==='route')p=(use.relays&&use.relays.length)?use.relays[0]:use.dst;
+        }
+      }
+      mpar[a]=(p!=null&&p!==a&&byAid[p])?p:null;
+    }
+    var par=mpar;   // U24: 树 = 时刻结构 (角度/半径/折叠全按 T 计算)
     // 断环: 证据冲突 (A→B→A) 时环上节点视为无父 — 诚实: 不假装层级 (数量级极小)
     for(i=0;i<ns.length;i++){
       var x=ns[i].aid, seen={}, bad=false;
@@ -449,9 +488,11 @@ reg('topo', function(){
       var n=byAid[a], p=par[a];
       if(foldEnabled&&p!=null&&rendered[p]&&n.device_type==='end_device')(clusterBy[p]=clusterBy[p]||[]).push(a);
     }
+    var foldedBy={};
     for(var cp in clusterBy){
       if(clusterBy[cp].length<2||expandedClusters[cp])continue;
-      for(i=0;i<clusterBy[cp].length;i++){ delete rendered[clusterBy[cp][i]]; foldSet[clusterBy[cp][i]]=+cp; }
+      foldedBy[cp]=[];
+      for(i=0;i<clusterBy[cp].length;i++){ delete rendered[clusterBy[cp][i]]; foldSet[clusterBy[cp][i]]=+cp; foldedBy[cp].push(clusterBy[cp][i]); }
     }
     // 渲染可达性: 父不在渲染集 (自身被折叠) 的节点不能挂在树上 (徽章无锚点) → 归孤儿环
     for(var oi3=0;oi3<q.length;oi3++){
@@ -463,8 +504,8 @@ reg('topo', function(){
     var w={};
     for(i=q.length-1;i>=0;i--){ a=q[i]; if(!rendered[a])continue; var sum=1, ks2=kids[a]||[];
       for(var j2=0;j2<ks2.length;j2++){if(rendered[ks2[j2]])sum+=w[ks2[j2]]||0;} w[a]=sum; }
-    return {ns:ns,byAid:byAid,par:par,kids:kids,dep:dep,root:root,rendered:rendered,
-            foldSet:foldSet,clusterBy:clusterBy,orphan:orphan,w:w,foldEnabled:foldEnabled,
+    return {ns:ns,byAid:byAid,par:par,mpar:mpar,kids:kids,dep:dep,root:root,rendered:rendered,
+            foldSet:foldSet,clusterBy:clusterBy,foldedBy:foldedBy,orphan:orphan,w:w,foldEnabled:foldEnabled,
             dense:ns.length>40};
   }
 
@@ -488,24 +529,71 @@ reg('topo', function(){
     // 每环节点角度排序 → 相邻角距 → 所需半径 (gap/Δθ, 取最大)
     var byRing={}, aid;
     for(aid in rendered){ if(aid==tree.root)continue; (byRing[tree.dep[aid]]=byRing[tree.dep[aid]]||[]).push(+aid); }
-    var r={}; if(tree.root!=null)r[tree.dep[tree.root]]=0;
-    var ringGapUsed={};
-    for(var dd in byRing){
-      var ids=byRing[dd]; ids.sort(function(x,y){return ang[x]-ang[y];});
-      var need=0;
-      if(ids.length<2){ need=0; }
-      else{
-        for(i=0;i<ids.length;i++){
-          var nx=(i+1)%ids.length;
-          var dth=(nx===0)?(ang[ids[0]]+2*Math.PI-ang[ids[i]]):(ang[ids[nx]]-ang[ids[i]]);
-          if(dth<1e-9)dth=1e-9;
-          if(gap/dth>need)need=gap/dth;
+    for(var kk2 in byRing) byRing[kk2].sort(function(x,y){return ang[x]-ang[y];});
+    // U24 密度自适应迭代 (2026-09-23 用户反馈"距离太大/字体被缩小"):
+    // 每个节点按**标签模式**要求弦距 (双行 96 / 单行 56 / 标签隐藏 34), 每轮用实际弦距
+    // 重判模式并**只收紧** (req 单调下降 → 收敛), 半径 = max(前环+ringGap, max_pair(gap/Δθ))。
+    // 旧实现: 半径一律按"双行 88"预留, 而标签 pass 又会把弦距<96 的降级成单行 →
+    // 布局白撑: 实测 15 节点环被顶到 R=1155, fit 缩到 0.53 → 9px 字号上屏只剩 4.8px。
+    // 标签模式: 2=双行(地址+型号) 1=单行地址 0=隐藏; 切向需求按朝向 (见 R_TANG_*)
+    var isRtr=function(a){var dt=tree.byAid[a]?(tree.byAid[a].device_type||'unknown'):'unknown';
+      return dt==='router'||dt==='coordinator';};
+    var sideNode=function(a){return Math.abs(Math.cos(ang[a]))>0.7;};
+    var modeTang=function(a,mode){                       // 该节点在 mode 下的切向占用
+      if(sideNode(a)) return mode>=2?R_TANG_H2:(mode===1?R_TANG_H1:R_GAP_NODE);
+      return mode>=2?R_LBL_ONE:(mode===1?R_LBL_MIN:R_GAP_NODE);
+    };
+    var modeFor=function(a,avail){                       // 可用切向空间 → 允许的标签模式
+      if(!isRtr(a)&&avail<R_LBL_MIN) return 0;           // 终端: 放不下就隐藏
+      if(sideNode(a)) return avail>=R_TANG_H2?2:(avail>=R_TANG_H1?1:(isRtr(a)?1:0));
+      return avail>=R_LBL_ONE?2:(avail>=R_LBL_MIN?1:(isRtr(a)?1:0));
+    };
+    var req={}, mode={};
+    for(aid in rendered){ req[aid]= tree.dense?R_GAP_DENSE:R_GAP_SPARSE; mode[aid]= tree.dense?1:2; }
+    var r={}, ringGapUsed={};
+    var allocRadii=function(){
+      r={}; if(tree.root!=null)r[tree.dep[tree.root]]=0;
+      for(var dd2 in byRing){
+        var ids=byRing[dd2], need=0;
+        if(ids.length>=2){
+          for(var ii=0;ii<ids.length;ii++){
+            var nx2=(ii+1)%ids.length;
+            var dth2=(nx2===0)?(ang[ids[0]]+2*Math.PI-ang[ids[ii]]):(ang[ids[nx2]]-ang[ids[ii]]);
+            if(dth2<1e-9)dth2=1e-9;
+            var pairGap=Math.max(req[ids[ii]]||R_GAP_DENSE, req[ids[nx2]]||R_GAP_DENSE);
+            if(pairGap/dth2>need)need=pairGap/dth2;
+          }
+        }
+        var prevR=(r[+dd2-1]!=null)?r[+dd2-1]:0;
+        r[dd2]=Math.max(prevR+ringGap,need);
+        ringGapUsed[+dd2]=need;
+      }
+    };
+    for(var it=0;it<4;it++){
+      allocRadii();
+      var changed=false;
+      for(var dd3 in byRing){
+        var ids3=byRing[dd3], R3=r[dd3];
+        for(var j3=0;j3<ids3.length;j3++){
+          var a3=ids3[j3];
+          var avail;
+          if(ids3.length<2) avail=1e9;
+          else{
+            var nxt=ids3[(j3+1)%ids3.length];
+            var g1=(j3+1<ids3.length)?(ang[nxt]-ang[a3]):(ang[ids3[0]]+2*Math.PI-ang[a3]);
+            var prv=ids3[(j3-1+ids3.length)%ids3.length];
+            var g0=(j3-1>=0)?(ang[a3]-ang[prv]):(ang[a3]+2*Math.PI-ang[ids3[ids3.length-1]]);
+            avail=Math.min(g0,g1)*R3;
+          }
+          var nm=modeFor(a3,avail), nreq=modeTang(a3,nm);
+          // ⚠️ 必须按 mode 重算 req 并比较 (曾只在 mode 变化时更新 → 侧向节点需求卡在整行宽 96)
+          if(nm!==mode[a3]||nreq!==req[a3]){ mode[a3]=nm; req[a3]=nreq; changed=true; }
         }
       }
-      var prevR=(r[+dd-1]!=null)?r[+dd-1]:0;
-      r[dd]=Math.max(prevR+ringGap,need);
-      ringGapUsed[+dd]=need;
+      if(!changed)break;
     }
+    allocRadii();   // 用收敛后的 req 定稿半径
+    tree.lblMode=mode;   // 供标签 pass 使用 (与布局同一口径, 避免"布局按双行预留/显示却单行")
     var pos={}, meta={};
     for(aid in rendered){
       var a2=+aid, R=r[tree.dep[a2]]||0, th=ang[a2];
@@ -554,8 +642,9 @@ reg('topo', function(){
       if(!pm)continue;                                    // 父不在渲染集 → 无锚点, 不画徽章
       if(!cy.getElementById('agg-'+p).nonempty())continue; // 元素不存在 (未走 renderGraph 的路径) → 跳过
       // 偏移 = 半径 + 节点半宽 + 26 + 标签高度 (标签与徽章同在"外侧"方向 → 不避让会擦边)
-      var pn=cy.getElementById(''+pa);
-      var lh=(pn.nonempty()&&String(pn.data('label')||'').indexOf('\n')>=0)?16:0;
+      // 双行标签才多让 16px; 模式取**布局阶段**判定 (确定性) — 曾读节点当前 label 数据
+      // (随上一次渲染变) → 徽章每次重渲染抖动 (实测拖动后 18 处位移)
+      var lh=((tree.lblMode&&tree.lblMode[pa]>=2)?16:0);
       var R=pm.r+halfSize((tree.byAid[pa]||{}).device_type)+26+lh;
       var th=pm.th;
       var bpos={x:R*Math.cos(th),y:R*Math.sin(th)};
@@ -592,9 +681,17 @@ reg('topo', function(){
         }
         var dt=n.data('device_type')||'unknown';
         var isRouter=(dt==='router'||dt==='coordinator');
-        var oneLine=tree.dense||chord<R_LBL_ONE;
-        var hide=(!isRouter&&chord<R_LBL_MIN);
         var aid=n.data('aid');
+        // U24: 标签模式**直接取布局阶段定下的 mode** (同一口径) — 曾在这里用弦距重判,
+        // 与布局的预留口径不一致 (布局按双行留空间 / 这里降级成单行 → 图被白撑大)
+        var m2=(tree.lblMode&&tree.lblMode[aid]!=null)?tree.lblMode[aid]:(tree.dense?1:2);
+        // 稳定版安全网: 该时刻环上挤了 → **只降级不升级** (布局按常规结构预留的空间, 时刻态可能更挤)
+        var side2=Math.abs(Math.cos(m.th))>0.7;
+        var allow=(side2?(chord>=R_TANG_H2?2:(chord>=R_TANG_H1?1:0))
+                       :(chord>=R_LBL_ONE?2:(chord>=R_LBL_MIN?1:0)));
+        if(allow<m2)m2=allow;
+        var hide=(m2===0);
+        var oneLine=(m2<2);
         var s='0x'+aid.toString(16).toUpperCase().padStart(4,'0');
         var ic={rejoining:'🔄',sleeping:'💤',offline:'⏻'}[n.data('behavior')]||'';
         if(!hide&&ic)s+=' '+ic;
@@ -749,6 +846,9 @@ reg('topo', function(){
     // ⚠️ 不用 Cytoscape compound (data.parent 是保留字段, U13 a1d981a 踩过: 网关框住全部子设备)
     // 徽章 = 独立节点, 靠 position 贴在父节点外侧 (布局阶段算)
     for(var fpk in rTree.clusterBy){
+      // ⚠️ U24 修复: 单成员簇不建徽章 (曾 ×1 徽章与该节点同时出现 → 重复表示 + 徽章压在节点上);
+      // 已展开的簇保留徽章 (作为"收起"入口)
+      if(!(rTree.foldedBy[fpk]&&rTree.foldedBy[fpk].length)&&!expandedClusters[fpk])continue;
       var fpmem=rTree.clusterBy[fpk], fst={rejoining:0,offline:0,sleeping:0};
       for(var fmi=0;fmi<fpmem.length;fmi++){
         var fmb=(rTree.byAid[fpmem[fmi]]||{}).behavior;
